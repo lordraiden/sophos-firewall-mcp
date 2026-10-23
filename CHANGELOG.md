@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Unbounded `mcp` dependency (`pyproject.toml`, `requirements.txt`)**: `mcp[cli]>=1.2.0,<3.0.0` resolved to `mcp` 2.x on a clean install, where `mcp.server.fastmcp` no longer exists, so the server failed to import and the test suite could not even be collected. Pinned to `<2.0.0`, which keeps the v1 import path this code targets.
+- **Service status queried the wrong module (`tools/system.py`, `resources.py`)**: `sophos_get_service_status` and the `sophos://services/status` resource read the `Services` module, which returns service *definitions* (AH, AOL, HTTP…), so the documented operational state was never returned. They now read `SystemServices` (AntiVirus, IPS, DNSServer, WebProxy, WAF…) as verified against SFOS 22.
+- **Nested API errors returned as data (`client.py`)**: SFOS nests `<Status code="529">` *inside* the echoed tag, so `send_request` only inspected the top-level status and the raw error came back as a successful payload. Errors are now detected anywhere in the response tree, which makes `sophos_get_system_info` fail with an explicit, actionable message instead of raw XML.
+- **Credential material leaked to callers (`client.py`)**: `get_tag` returned the `<Interface>` `Username` and `Password` (PPPoE credentials) verbatim. Credential-bearing keys are now stripped from every `Get` payload, with a per-tag denylist for `Username` on `Interface` only, so `sophos_list_users` keeps its identifier field.
+
 ## [0.2.0] - 2026-07-27
 
 ### Changed

@@ -33,11 +33,11 @@ async def test_sophos_get_system_info_unsupported_module(mock_client):
 @pytest.mark.asyncio
 async def test_sophos_get_service_status(mock_client):
     mock_client.send_request.return_value = {
-        "Services": {"DNS": "Running", "IPS": "Running"}
+        "SystemServices": {"IPS": {"Action": "Start", "Status": "RUNNING"}}
     }
     res = await sophos_get_service_status(client=mock_client)
-    assert res["DNS"] == "Running"
-    mock_client.send_request.assert_called_once_with("Get", "Services", None)
+    assert res["IPS"]["Status"] == "RUNNING"
+    mock_client.send_request.assert_called_once_with("Get", "SystemServices", None)
 
 
 @pytest.mark.asyncio
