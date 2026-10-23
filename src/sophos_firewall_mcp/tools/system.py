@@ -30,8 +30,13 @@ async def sophos_get_system_info(
             return {
                 "Status": "Unsupported XML Module",
                 "Message": (
-                    "Sophos SFOS XML API does not support querying 'SystemInformation' directly. "
-                    "Use object-specific API tools (such as sophos_get_interface_list or sophos_get_service_status)."
+                    "The SFOS XML API exposes no read-only module for appliance model, "
+                    "serial number, firmware version or uptime. Modules rejected by the "
+                    "appliance: SystemInformation, SystemInfo, System, SystemStatus, "
+                    "Up2Date (all answer 529 'Input request module is Invalid'). Working "
+                    "alternatives: sophos_get_service_status (SystemServices), "
+                    "sophos_get_interface_list, or a raw Get on AdminSettings. For "
+                    "firmware/uptime use SNMP or the appliance syslog stream."
                 ),
                 "Error": str(err),
             }
@@ -45,6 +50,11 @@ async def sophos_get_service_status(
     client: Any = None,
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
     """Retrieve current operational status of system services (DNS, DHCP, IPS, Web Protection, AntiVirus).
+
+    Reads the SFOS XML module ``SystemServices``, which reports the runtime state
+    of each background service (RUNNING / Stop / UNREGISTERED). Service
+    *definitions* live in a different module and are exposed by
+    ``sophos_list_services``.
 
     Use when monitoring background service health or diagnosing firewall subsystem failures.
 
@@ -60,7 +70,7 @@ async def sophos_get_service_status(
         close_client = True
 
     try:
-        res = await client.get_tag("Services")
+        res = await client.get_tag("SystemServices")
         return cast(Union[Dict[str, Any], List[Dict[str, Any]]], res)
     finally:
         if close_client:

@@ -27,5 +27,5 @@ def register(mcp: FastMCP) -> None:
     async def get_service_status_resource() -> str:
         """Resource providing operational status of core firewall background services."""
         async with SophosFirewallClient() as client:
-            services = await client.get_tag("Services")
+            services = await client.get_tag("SystemServices")
         return json.dumps(services, indent=2)
