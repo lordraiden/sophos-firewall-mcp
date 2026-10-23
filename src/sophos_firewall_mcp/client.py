@@ -2,11 +2,78 @@
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Union, cast
 import httpx
 import xmltodict
 
 logger = logging.getLogger(__name__)
+
+# --- Payload hardening -------------------------------------------------------
+# The SFOS XML API returns credential material inside some Get payloads: the
+# <Interface> entity carries the PPPoE Username and an encrypted Password.
+SECRET_KEYS: FrozenSet[str] = frozenset(
+    {
+        "password",
+        "passwordhash",
+        "presharedkey",
+        "passphrase",
+        "secret",
+        "token",
+        "privatekey",
+        "clientsecret",
+    }
+)
+
+# Tags carrying credentials beyond the global denylist. "username" stays out of
+# SECRET_KEYS on purpose: the User entity uses it as the account identifier, and
+# sophos_list_users would otherwise lose its primary field.
+TAG_SECRET_KEYS: Dict[str, FrozenSet[str]] = {"interface": frozenset({"username"})}
+
+# Status codes the appliance uses to say "nothing wrong here".
+_EXEMPT_STATUS_CODES = ("200", "500")
+
+
+def _scrub_secrets(node: Any, keys: FrozenSet[str] = SECRET_KEYS) -> Any:
+    """Return a copy of an API payload with credential-bearing keys removed."""
+    if isinstance(node, dict):
+        return {
+            key: _scrub_secrets(value, keys)
+            for key, value in node.items()
+            if str(key).lower() not in keys
+        }
+    if isinstance(node, list):
+        return [_scrub_secrets(item, keys) for item in node]
+    return node
+
+
+def _find_error_status(node: Any) -> Optional[Tuple[str, str]]:
+    """Locate an error <Status> nested anywhere in the response tree.
+
+    SFOS nests the error inside the echoed tag, for example::
+
+        <Response><SystemInformation>
+            <Status code="529">Input request module is Invalid</Status>
+        </SystemInformation></Response>
+
+    so a top-level-only check misses it and the error is returned as data.
+
+    Only mappings carrying an "@code" attribute are considered: per-record
+    Status fields are plain strings ("Enable"/"Disable") and must survive.
+    """
+    if isinstance(node, dict):
+        code = node.get("@code")
+        if isinstance(code, str) and code not in _EXEMPT_STATUS_CODES:
+            return code, str(node.get("#text", ""))
+        for value in node.values():
+            found = _find_error_status(value)
+            if found is not None:
+                return found
+    elif isinstance(node, list):
+        for item in node:
+            found = _find_error_status(item)
+            if found is not None:
+                return found
+    return None
 
 
 class SophosAPIError(Exception):
@@ -159,6 +226,13 @@ class SophosFirewallClient:
             ):
                 raise SophosResponseError(code=code, message=msg)
 
+        # SFOS nests errors inside the echoed tag, where the top-level check
+        # above cannot see them.
+        nested = _find_error_status(resp_data)
+        if nested is not None:
+            nested_code, nested_message = nested
+            raise SophosResponseError(code=nested_code, message=nested_message)
+
         return cast(Dict[str, Any], resp_data)
 
     async def get_tag(
@@ -176,7 +250,12 @@ class SophosFirewallClient:
             Dictionary or list of objects matching the query.
         """
         res = await self.send_request("Get", tag, filter_criteria)
-        return cast(Union[Dict[str, Any], List[Dict[str, Any]]], res.get(tag, res))
+        payload = res.get(tag, res)
+        extra_keys = TAG_SECRET_KEYS.get(str(tag).lower(), frozenset())
+        return cast(
+            Union[Dict[str, Any], List[Dict[str, Any]]],
+            _scrub_secrets(payload, SECRET_KEYS | extra_keys),
+        )
 
     async def set_tag(
         self,
