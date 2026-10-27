@@ -7,15 +7,26 @@ from sophos_firewall_mcp.client import SophosFirewallClient, SophosResponseError
 async def sophos_get_system_info(
     client: Any = None,
 ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-    """Retrieve system information including appliance model, firmware version, serial number, and uptime.
+    """Report what the SFOS XML API can tell you about the appliance itself.
 
-    Use when inspecting hardware/firmware details and overall system status.
+    Queries the ``SystemInformation`` module. On firmware that does not expose it (SFOS 22 answers 529
+    "Input request module is Invalid") the tool returns a documented diagnostic instead of an error.
+
+    **What this tool cannot return**: appliance model, serial number, firmware version and uptime. No
+    read-only XML module exposes them — ``SystemInformation``, ``SystemInfo``, ``System``, ``SystemStatus``
+    and ``Up2Date`` are all rejected with 529, and ``AdminSettings`` carries hostname, admin ports and
+    login policy but none of the four either. For those values use SNMP or the appliance syslog stream.
+
+    Use ``sophos_get_service_status`` for the operational state of security services,
+    ``sophos_get_interface_list`` for interfaces and zones, and ``sophos_raw_api_request`` with
+    ``operation="Get", tag="AdminSettings"`` for hostname and admin ports.
 
     Args:
         client: Optional SophosFirewallClient instance.
 
     Returns:
-        System information parameters from Sophos Firewall.
+        The ``SystemInformation`` payload when the firmware exposes it, otherwise a diagnostic dict with
+        ``Status``, ``Message`` and ``Error`` describing the limitation and the alternatives.
     """
     close_client = False
     if client is None:
