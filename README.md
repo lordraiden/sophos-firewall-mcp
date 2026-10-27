@@ -192,6 +192,26 @@ Podman is fully supported as a rootless drop-in replacement for Docker on Fedora
 }
 ```
 
+#### The server exits immediately, or the MCP client reports an empty error
+
+The most common cause is a **`PYTHONPATH` inherited from the process that launches the server**. It wins
+over the server's own virtualenv, so `mcp` is imported from the parent's environment instead of this
+project's pinned `mcp<2`. In `mcp` 2.x, `mcp.server.fastmcp` no longer exists, the import raises, and the
+process dies before it can answer a single JSON-RPC frame — which the client shows as an empty error with no
+message at all.
+
+The server checks this at startup and, when it fails, prints the cause on `stderr` and exits non-zero,
+naming the path `mcp` was loaded from. If you see that message, or you are on an earlier version, run and install with a
+clean interpreter environment:
+
+```bash
+env -u PYTHONPATH -u PYTHONHOME ./venv/bin/pip install .        # install with it clean too
+env -u PYTHONPATH -u PYTHONHOME ./venv/bin/sophos-firewall-mcp-server
+```
+
+A `PYTHONPATH` also breaks `pip install`: pip treats the parent's packages as already satisfying the
+requirements and silently skips real dependencies such as `anyio`, leaving a half-installed environment.
+
 ---
 
 ## 🧠 Semantic Tool Routing

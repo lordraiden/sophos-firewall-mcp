@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Silent death on a shadowed interpreter environment (`_env_guard.py`, `server.py`)**: a `PYTHONPATH`
+  inherited from the launching process shadowed the virtualenv, so `mcp` was imported from the parent's
+  environment (2.x), `mcp.server.fastmcp` raised `ModuleNotFoundError`, and the process exited before
+  answering a single JSON-RPC request — which MCP clients surface as an empty error with no message.
+  The server now verifies at startup that `mcp` resolves inside its own environment and still provides
+  `mcp.server.fastmcp`, exiting with code 2 and an actionable message that names the path it loaded `mcp`
+  from. The README documents running and installing with a clean interpreter environment, because the same
+  inherited `PYTHONPATH` also makes `pip` skip real dependencies.
 - **Unbounded `mcp` dependency (`pyproject.toml`, `requirements.txt`)**: `mcp[cli]>=1.2.0,<3.0.0` resolved to `mcp` 2.x on a clean install, where `mcp.server.fastmcp` no longer exists, so the server failed to import and the test suite could not even be collected. Pinned to `<2.0.0`, which keeps the v1 import path this code targets.
 - **Service status queried the wrong module (`tools/system.py`, `resources.py`)**: `sophos_get_service_status` and the `sophos://services/status` resource read the `Services` module, which returns service *definitions* (AH, AOL, HTTP…), so the documented operational state was never returned. They now read `SystemServices` (AntiVirus, IPS, DNSServer, WebProxy, WAF…) as verified against SFOS 22.
 - **Nested API errors returned as data (`client.py`)**: SFOS nests `<Status code="529">` *inside* the echoed tag, so `send_request` only inspected the top-level status and the raw error came back as a successful payload. Errors are now detected anywhere in the response tree, which makes `sophos_get_system_info` fail with an explicit, actionable message instead of raw XML.
