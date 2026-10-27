@@ -62,8 +62,52 @@ SECRET_KEYS: FrozenSet[str] = frozenset(
 # sophos_list_users would otherwise lose its primary field.
 TAG_SECRET_KEYS: Dict[str, FrozenSet[str]] = {"interface": frozenset({"username"})}
 
-# Status codes the appliance uses to say "nothing wrong here".
-_EXEMPT_STATUS_CODES = ("200", "500")
+# --- SFOS status codes -------------------------------------------------------
+# Official table: https://docs.sophos.com/nsg/sophos-firewall/22.0/api/apicontentpage.html
+# The previous logic guessed from the message text and exempted 500 outright, so a 500 ("Operation could
+# not be performed on Entity") was reported as success and a 203 ("successful but few configurations could
+# not be applied") looked identical to a clean 200. For a server an agent uses to change firewall
+# configuration, a partial apply reported as success is the most expensive mistake available.
+_STATUS_DESCRIPTIONS: Dict[str, str] = {
+    "200": "Configuration applied successfully",
+    "201": "Operation partially successful",
+    "203": "Operation successful but few configurations could not be applied",
+    "216": "Operation successful",
+    "500": "Operation could not be performed on Entity",
+    "501": "Configuration parameters validation failed",
+    "502": "Entity having same name already exists",
+    "503": "Entity having same parameter details already exists",
+    "521": "XML request not compatible with current API version",
+    "526": "Record does not exist",
+    "528": "Trying to update default entities which are not editable",
+    "529": "Invalid XML request for entity/entities",
+    "530": "API version not supported for specific entity",
+    "599": "Not having privilege to add/modify configuration",
+}
+
+# 200/216 are the only codes that mean "fully applied".
+_STATUS_OK = frozenset({"200", "216"})
+# 201/203 say so in their own text; 211-215 are warning messages attached to an operation.
+_STATUS_WARNING = frozenset({"201", "203", "211", "212", "213", "214", "215"})
+# 204-210 "partially failed", 504-510/511-520/522-525/541-590 failed or limit reached: errors by default,
+# which is what an unlisted code falls back to as well.
+
+
+def _classify_status(code: str) -> str:
+    """Map an SFOS status code to ``ok`` / ``warning`` / ``error`` using the documented table."""
+    if code in _STATUS_OK:
+        return "ok"
+    if code in _STATUS_WARNING:
+        return "warning"
+    return "error"
+
+
+def _status_message(code: str, text: str = "") -> str:
+    """Human-readable meaning of a status code, keeping whatever the appliance itself said."""
+    described = _STATUS_DESCRIPTIONS.get(code, text or "no description provided by the appliance")
+    if text and text != described:
+        return f"{described} ({text})"
+    return described
 
 
 def _scrub_secrets(node: Any, keys: FrozenSet[str] = SECRET_KEYS) -> Any:
@@ -95,7 +139,7 @@ def _find_error_status(node: Any) -> Optional[Tuple[str, str]]:
     """
     if isinstance(node, dict):
         code = node.get("@code")
-        if isinstance(code, str) and code not in _EXEMPT_STATUS_CODES:
+        if isinstance(code, str) and _classify_status(code) != "ok":
             return code, str(node.get("#text", ""))
         for value in node.values():
             found = _find_error_status(value)
@@ -128,6 +172,16 @@ class SophosResponseError(SophosAPIError):
         self.code = code
         self.message = message
         super().__init__(f"Sophos API Error {code}: {message}")
+
+
+class SophosPartialResultError(SophosResponseError):
+    """Raised when SFOS reports a partial result: some of the requested change was not applied.
+
+    A separate class because ``except SophosResponseError`` should still catch it, while a caller that
+    wants to distinguish "nothing happened" from "half of it happened" can. Treating this as success is the
+    failure mode that matters: an agent that believes a firewall rule was applied when only part of it was
+    will not retry.
+    """
 
 
 class SophosFirewallClient:
@@ -210,6 +264,22 @@ class SophosFirewallClient:
         }
         return cast(str, xmltodict.unparse(req, pretty=True))
 
+    def _applied(self, code: str, text: str, *, operation: str) -> bool:
+        """Decide what a status code means, raising unless the operation genuinely applied.
+
+        Returns False only for the one case that is an answer rather than a failure: a Get for a record
+        that does not exist (526), where callers get an empty result instead of an exception.
+        """
+        verdict = _classify_status(code)
+        if verdict == "ok":
+            return True
+        if verdict == "warning":
+            raise SophosPartialResultError(code=code, message=_status_message(code, text))
+        if code == "526" and operation.lower() == "get":
+            logger.warning("SFOS answered 526 (record does not exist) for a Get; returning no rows")
+            return False
+        raise SophosResponseError(code=code, message=_status_message(code, text))
+
     async def send_request(
         self,
         operation: str,
@@ -265,24 +335,24 @@ class SophosFirewallClient:
             if "Authentication Failed" in status_text:
                 raise SophosAuthenticationError(f"Authentication failed: {status_text}")
 
-        # Check API status response
+        # Check API status response against the documented SFOS table.
         status_info = resp_data.get("Status", {})
+        code, text = "200", ""
         if isinstance(status_info, dict):
-            code = status_info.get("@code", "200")
-            msg = status_info.get("#text", "")
-            if (
-                code not in ("200", "500")
-                and "successfully" not in msg.lower()
-                and "no record" not in msg.lower()
-            ):
-                raise SophosResponseError(code=code, message=msg)
+            code = str(status_info.get("@code", "200"))
+            text = str(status_info.get("#text", ""))
+        elif isinstance(status_info, str):
+            text = status_info
 
-        # SFOS nests errors inside the echoed tag, where the top-level check
-        # above cannot see them.
+        if not self._applied(code, text, operation=operation):
+            return {}
+
+        # SFOS nests the status inside the echoed tag, where the top-level check
+        # above cannot see it.
         nested = _find_error_status(resp_data)
         if nested is not None:
             nested_code, nested_message = nested
-            raise SophosResponseError(code=nested_code, message=nested_message)
+            self._applied(nested_code, nested_message, operation=operation)
 
         return cast(Dict[str, Any], resp_data)
 
