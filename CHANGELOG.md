@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Documented upstream sync policy (`docs/UPSTREAM-SYNC.md`, `scripts/sync-upstream.sh`)**: this fork is the
+  maintained copy, so `main` carries the fixes and is never rewritten; upstream arrives as a merge
+  commit. The script fetches, reports what is missing, and merges — refusing to run on a dirty tree
+  and never rebasing, force-pushing or resolving conflicts on its own.
+
 ### Fixed
 - **`sophos_get_system_info` promised data the API cannot give (`tools/system.py`)**: the description read
   "appliance model, firmware version, serial number, and uptime", but SFOS answers 529 for every module
