@@ -12,6 +12,7 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 from mcp.types import Tool, ToolAnnotations  # noqa: E402
 
 from sophos_firewall_mcp import prompts, resources  # noqa: E402
+from sophos_firewall_mcp._guard import guard_module_tools, guard_tool  # noqa: E402
 from sophos_firewall_mcp.router import get_router  # noqa: E402
 from sophos_firewall_mcp.tools import (  # noqa: E402
     firewall_rules,
@@ -32,6 +33,15 @@ mcp = MCPServer(
         "manage firewall rules, host objects, service definitions, NAT rules, "
         "user accounts, and VPN policies on Sophos Firewall (SFOS) appliances."
     ),
+)
+
+# Guard every tool before anything is registered: a failure must name itself. The MCP SDK formats a
+# tool error as `Error executing tool <name>: <exc>`, so an exception with an empty str() reaches the
+# model as a colon and nothing else -- indistinguishable from a crashed server. Upstream traced the same
+# symptom through the client and concluded the empty text is born in the server
+# (NousResearch/hermes-agent#145923); this is where it stops.
+_GUARDED_TOOLS = guard_module_tools(
+    (firewall_rules, hosts_objects, nat_rules, raw_api, services_objects, system, users_auth, vpn)
 )
 
 # Register resources & diagnostic prompts
@@ -158,6 +168,7 @@ async def get_initialized_router() -> Optional[Any]:
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
+@guard_tool
 async def route_tools(
     query: str,
     top_k: int = 5,
@@ -181,6 +192,7 @@ async def route_tools(
 
 
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
+@guard_tool
 async def call_routed_tool(
     tool_name: str,
     arguments: Optional[dict] = None,

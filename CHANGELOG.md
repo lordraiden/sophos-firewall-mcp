@@ -21,6 +21,14 @@ Everything else below is additive or fixes a wrong answer.
   and never rebasing, force-pushing or resolving conflicts on its own.
 
 ### Fixed
+- **A failure with an empty message reached the model as a bare colon (`_guard.py`, `server.py`)**: the MCP
+  SDK formats tool failures as `Error executing tool <name>: <exc>`, and `str(TimeoutError())` is the empty
+  string — so an unguarded exception arrived as `Error executing tool sophos_list_firewall_rules:` with
+  nothing after it, indistinguishable from a dead process. Upstream confirmed (hermes-agent#145923) that the
+  empty text is born in the server, not the client. Every registered tool is now wrapped: unexpected
+  exceptions are logged with their traceback and re-raised as `SophosAPIError` naming the type and the
+  elapsed time, `SophosAPIError` passes through, and cancellations still propagate untouched. The next
+  occurrence names itself instead of asking the question a third time.
 - **A slow appliance produced an error with no text at all (`client.py`)**: the HTTP timeout was hardcoded
   at 30 s, while a full `Get FirewallRule` on a real configuration takes longer (~64 KB over a VPN).
   httpx then raised `ReadTimeout`, whose `str()` is the empty string, and the MCP layer formats failures
