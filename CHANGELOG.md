@@ -12,6 +12,12 @@ Breaking: requires `mcp>=2`, which renamed `FastMCP` to `MCPServer` and moved th
 raise instead of returning as success, so a caller that treated them as applied will see an exception.
 Everything else below is additive or fixes a wrong answer.
 
+## [0.3.1] - 2026-10-28
+
+Every tool failure now names itself (see #21). Patch release: no API change, only that a failure which
+used to arrive as `Error executing tool <name>: ` with an empty message now carries the exception type,
+its text and a traceback in the server log.
+
 ## [Unreleased]
 
 ### Added
