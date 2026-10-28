@@ -3,10 +3,43 @@
 import logging
 import os
 from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Union, cast
+from xml.parsers.expat import ExpatError
+
 import httpx
 import xmltodict
 
 logger = logging.getLogger(__name__)
+
+# --- Response diagnostics ----------------------------------------------------
+# An empty or non-XML body used to surface as `ExpatError: no element found: line 1, column 0`, which names
+# neither the appliance nor the cause. The body is empty for real, ordinary reasons -- API access disabled,
+# client IP missing from Allowed IP Addresses, wrong port, or a proxy eating the form body -- so the error
+# spells those out instead of looking like a parser bug.
+_EMPTY_BODY_MESSAGE = (
+    "the appliance accepted the request and returned an empty body (HTTP {status}). "
+    "This is a configuration problem, not a credentials problem: check that (1) API access is enabled "
+    "under System > Administration > API Access, (2) this client's IP is in Allowed IP Addresses, "
+    "(3) the port ({port}) is the Admin Console HTTPS port configured on the appliance, and (4) no proxy "
+    "or WAF is stripping the request body. The XML must travel in the 'reqxml' form field."
+)
+
+_NOT_XML_MESSAGE = (
+    "the appliance answered HTTP {status} with a body that is not XML. First {limit} characters "
+    "received (credentials redacted): {snippet}"
+)
+
+
+def _redacted_snippet(text: str, secret: str, limit: int = 240) -> str:
+    """First *limit* characters of a body, with the account password removed.
+
+    The snippet exists so the failure can be diagnosed, so it must not become a new way for the password
+    to reach a log line or a tool result.
+    """
+    snippet = " ".join(text.split())[:limit]
+    if secret:
+        snippet = snippet.replace(secret, "[REDACTED]")
+    return snippet or "<empty>"
+
 
 # --- Payload hardening -------------------------------------------------------
 # The SFOS XML API returns credential material inside some Get payloads: the
@@ -204,7 +237,25 @@ class SophosFirewallClient:
         response = await self._client.post(self.endpoint_url, data=data)
         response.raise_for_status()
 
-        parsed: Dict[str, Any] = xmltodict.parse(response.text)
+        body = response.text or ""
+        if not body.strip():
+            raise SophosResponseError(
+                code="EMPTY",
+                message=_EMPTY_BODY_MESSAGE.format(status=response.status_code, port=self.port),
+            )
+
+        try:
+            parsed: Dict[str, Any] = xmltodict.parse(body)
+        except ExpatError:
+            raise SophosResponseError(
+                code="NOT-XML",
+                message=_NOT_XML_MESSAGE.format(
+                    status=response.status_code,
+                    limit=240,
+                    snippet=_redacted_snippet(body, self.password),
+                ),
+            ) from None
+
         resp_data = parsed.get("Response", {})
 
         # Check login status

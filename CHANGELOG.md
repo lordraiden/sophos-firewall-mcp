@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Empty or non-XML responses were undiagnosable (`client.py`)**: `xmltodict.parse` on an empty body
+  raised `ExpatError: no element found: line 1, column 0`, which names neither the appliance nor the
+  cause — and an empty body is an ordinary configuration symptom (API access disabled, client IP missing
+  from Allowed IP Addresses, wrong admin port, or a proxy stripping the form body). Both cases now raise
+  `SophosResponseError` with the checks to perform, and the non-XML case quotes a redacted snippet of what
+  arrived so the diagnosis does not depend on guesswork.
 - **Silent death on a shadowed interpreter environment (`_env_guard.py`, `server.py`)**: a `PYTHONPATH`
   inherited from the launching process shadowed the virtualenv, so `mcp` was imported from the parent's
   environment (2.x), `mcp.server.fastmcp` raised `ModuleNotFoundError`, and the process exited before
