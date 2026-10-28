@@ -1,12 +1,19 @@
 """Main FastMCP server entrypoint for Sophos Firewall MCP."""
 
 from typing import Any, List, Optional, Union
-from mcp.server.fastmcp import FastMCP
-from mcp.types import Tool, ToolAnnotations
 
-from sophos_firewall_mcp import prompts, resources
-from sophos_firewall_mcp.router import get_router
-from sophos_firewall_mcp.tools import (
+# Must precede the mcp import: it is the check that explains a shadowed or too-new `mcp` before the
+# import below dies with a bare ModuleNotFoundError the MCP client cannot see (empty error).
+from sophos_firewall_mcp._env_guard import verify_local_mcp
+
+verify_local_mcp()
+
+from mcp.server.fastmcp import FastMCP  # noqa: E402
+from mcp.types import Tool, ToolAnnotations  # noqa: E402
+
+from sophos_firewall_mcp import prompts, resources  # noqa: E402
+from sophos_firewall_mcp.router import get_router  # noqa: E402
+from sophos_firewall_mcp.tools import (  # noqa: E402
     firewall_rules,
     hosts_objects,
     nat_rules,
