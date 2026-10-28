@@ -225,10 +225,14 @@ When enabled:
 
 > **Note on Router Dependencies**: Semantic routing requires optional dependencies (`fastembed` and `numpy`).
 > - **Container (Docker/Podman)**: Included automatically in official images (`ghcr.io/jelmervdm/sophos-firewall-mcp:latest`).
-> - **Local Python (`pip`)**: Install with extras: `pip install -e ".[router]"` or `pip install "sophos-firewall-mcp-server[router]"`.
+> - **Local Python (`pip`)**: Install with the extra from a clone or a git URL: `pip install -e ".[router]"` or `pip install "sophos-firewall-mcp-server[router] @ git+https://github.com/jelmervdm/sophos-firewall-mcp.git"`.
 > - **`uv` Workspace**: Run `uv sync --extra router`.
 > - **`uvx` directly from Git**: Pass `--with "fastembed>=0.4.0" --with "numpy>=1.26.0"`.
 > If `USE_ROUTER=true` is set without installing `fastembed`, the server will log a warning and gracefully fall back to standard tool mode instead of failing initialization.
+
+> **This package is not published on PyPI.** `pip install sophos-firewall-mcp-server` will not resolve.
+> Install it from a clone (`pip install -e .`) or from the git URL shown above; the `uvx` examples below use
+> the git URL for the same reason.
 
 
 ---

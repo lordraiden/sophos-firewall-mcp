@@ -36,3 +36,9 @@ pytest
 - Give your PR a clear title and detailed summary.
 - Add unit tests for any new tool modules or features.
 - Update `CHANGELOG.md` to document major fixes or enhancements.
+
+## Upstream sync
+
+This fork diverges cleanly: `main` is never rewritten and upstream is merged into it. See
+[`docs/UPSTREAM-SYNC.md`](docs/UPSTREAM-SYNC.md) for the policy and use
+`scripts/sync-upstream.sh` rather than inventing a rebase.

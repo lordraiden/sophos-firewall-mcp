@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Documented upstream sync policy (`docs/UPSTREAM-SYNC.md`, `scripts/sync-upstream.sh`)**: this fork is the
+  maintained copy, so `main` carries the fixes and is never rewritten; upstream arrives as a merge
+  commit. The script fetches, reports what is missing, and merges — refusing to run on a dirty tree
+  and never rebasing, force-pushing or resolving conflicts on its own.
+
 ### Fixed
 - **Migrated to `mcp` 2.x (`MCPServer`) and dropped the `mcp<2` pin (`pyproject.toml`, `server.py`,
   `resources.py`, `prompts.py`, `_env_guard.py`)**: `mcp.server.fastmcp` no longer exists in 2.0, so the
@@ -19,6 +25,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `tests/test_server.py` reads the tool list through the public `list_tools()` coroutine instead of
     FastMCP 1.x internals (`_tool_manager._tools`) and asserts the **wire** annotations, so the next SDK
     bump breaks loudly at the right place.
+- **`sophos_get_system_info` promised data the API cannot give (`tools/system.py`)**: the description read
+  "appliance model, firmware version, serial number, and uptime", but SFOS answers 529 for every module
+  that would carry them (`SystemInformation`, `SystemInfo`, `System`, `SystemStatus`, `Up2Date`) — verified
+  on SFOS 22, where even `AdminSettings` returns only hostname, admin ports and login policy. The
+  description now states what the tool cannot return, names the alternatives (SNMP, syslog,
+  `sophos_get_service_status`, `raw Get AdminSettings`) and matches the diagnostic the tool already
+  returned at runtime. Behaviour is unchanged; only what the agent reads before calling it.
+- **Install instructions named a package that does not exist on PyPI (`README.md`)**: the router note
+  suggested `pip install "sophos-firewall-mcp-server[router]"`, which cannot resolve because the project
+  is not published there (pypi.org returns 404 for the name). The instructions now use a clone or the git
+  URL, and a note states plainly that there is no PyPI release, so nobody spends time debugging a 404 that
+  is not theirs.
+- **Status codes are read from the documented table, not from the message text (`client.py`)**: the old
+  check exempted `500` and accepted anything whose text contained "successfully", so **500 ("Operation
+  could not be performed on Entity") was reported as success** and **203 ("successful but few
+  configurations could not be applied") was indistinguishable from a clean 200**. Codes are now classified
+  `ok` (200, 216) / `warning` (201, 203, 211-215) / `error` (everything else), with the official description
+  in the message. Partial results raise `SophosPartialResultError` — a subclass of `SophosResponseError`,
+  so existing handlers keep working — because an agent that believes a rule was applied when only part of
+  it was will not retry. `526` ("Record does not exist") on a `Get` now returns no rows instead of raising;
+  on a `Set` it stays an error.
+- **Empty or non-XML responses were undiagnosable (`client.py`)**: `xmltodict.parse` on an empty body
+  raised `ExpatError: no element found: line 1, column 0`, which names neither the appliance nor the
+  cause — and an empty body is an ordinary configuration symptom (API access disabled, client IP missing
+  from Allowed IP Addresses, wrong admin port, or a proxy stripping the form body). Both cases now raise
+  `SophosResponseError` with the checks to perform, and the non-XML case quotes a redacted snippet of what
+  arrived so the diagnosis does not depend on guesswork.
 - **Silent death on a shadowed interpreter environment (`_env_guard.py`, `server.py`)**: a `PYTHONPATH`
   inherited from the launching process shadowed the virtualenv, so `mcp` was imported from the parent's
   environment (2.x), `mcp.server.fastmcp` raised `ModuleNotFoundError`, and the process exited before

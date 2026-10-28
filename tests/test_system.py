@@ -48,3 +48,20 @@ async def test_sophos_get_interface_list(mock_client):
     res = await sophos_get_interface_list(client=mock_client)
     assert res["Name"] == "Port1"
     mock_client.send_request.assert_called_once_with("Get", "Interface", None)
+
+
+def test_system_info_description_does_not_promise_what_sfos_cannot_give():
+    """The docstring is the tool description an agent reads before calling (issue #2).
+
+    It used to promise "appliance model, firmware version, serial number, and uptime" -- none of which
+    the XML API exposes. A description that oversells is worse than a terse one: the model calls the
+    tool expecting a serial number and gets a message to interpret.
+    """
+    doc = (sophos_get_system_info.__doc__ or "").lower()
+
+    assert "cannot return" in doc
+    for unavailable in ("model", "serial number", "firmware version", "uptime"):
+        assert unavailable in doc
+    # The way out has to be in the description too, not only in the runtime message.
+    assert "snmp" in doc
+    assert "adminsettings" in doc
