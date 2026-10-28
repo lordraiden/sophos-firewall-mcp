@@ -1,13 +1,13 @@
-"""FastMCP resources providing static/read-only access to Sophos Firewall data."""
+"""MCP resources providing static/read-only access to Sophos Firewall data."""
 
 import json
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 from sophos_firewall_mcp.client import SophosFirewallClient
 from sophos_firewall_mcp.tools.system import sophos_get_system_info
 
 
-def register(mcp: FastMCP) -> None:
-    """Register Sophos Firewall resources on FastMCP server instance."""
+def register(mcp: MCPServer) -> None:
+    """Register Sophos Firewall resources on the MCP server instance."""
 
     @mcp.resource("sophos://system/info")
     async def get_system_info_resource() -> str:

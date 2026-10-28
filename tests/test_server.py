@@ -1,12 +1,17 @@
-"""Unit tests for FastMCP server initialization, tool count, and registration."""
+"""Unit tests for MCP server initialization, tool count and registration.
+
+Reads the tool list through the public ``list_tools()`` coroutine instead of FastMCP 1.x internals
+(``mcp._tool_manager._tools``), so an SDK bump cannot break the test instead of the server.
+"""
 
 import pytest
 from sophos_firewall_mcp.server import call_routed_tool, mcp, route_tools
 
 
-def test_server_tool_registration():
-    tm = mcp._tool_manager  # type: ignore[attr-defined]
-    tools = list(tm._tools.keys())
+@pytest.mark.asyncio
+async def test_server_tool_registration():
+    registered = await mcp.list_tools()
+    tools = [tool.name for tool in registered]
 
     # Assert key tools are registered
     assert "sophos_raw_api_request" in tools
@@ -31,8 +36,14 @@ def test_server_tool_registration():
     assert "sophos_delete_user" in tools
     assert "sophos_list_ipsec_vpns" in tools
 
-    raw_tool = tm._tools["sophos_raw_api_request"]
-    assert raw_tool.annotations.destructiveHint is True
+    raw_tool = next(tool for tool in registered if tool.name == "sophos_raw_api_request")
+    # Assert on the wire format, not on the Python attribute: mcp 2.x renamed the attribute to
+    # ``destructive_hint`` but still serialises as ``destructiveHint``, which is what an MCP client
+    # actually receives. Checking the attribute would pin an implementation detail and break on the
+    # next SDK bump while the behaviour stayed correct.
+    assert raw_tool.annotations is not None
+    wire = raw_tool.annotations.model_dump(by_alias=True, exclude_none=True)
+    assert wire["destructiveHint"] is True
 
 
 @pytest.mark.asyncio
