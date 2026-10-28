@@ -11,7 +11,6 @@ import os
 import httpx
 import pytest
 import respx
-from httpx import Response
 
 from sophos_firewall_mcp.client import DEFAULT_TIMEOUT, SophosFirewallClient, SophosResponseError
 
