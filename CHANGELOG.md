@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-28
+
+Breaking: requires `mcp>=2`, which renamed `FastMCP` to `MCPServer` and moved the import to
+`mcp.server.mcpserver`. `SophosPartialResultError` is new and partial results (201, 203, 211-215) now
+raise instead of returning as success, so a caller that treated them as applied will see an exception.
+Everything else below is additive or fixes a wrong answer.
+
 ## [Unreleased]
 
 ### Added
