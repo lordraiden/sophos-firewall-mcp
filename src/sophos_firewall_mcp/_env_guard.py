@@ -1,6 +1,6 @@
 """Refuse to start when ``mcp`` resolves outside this server's own environment.
 
-The dependency is pinned to ``mcp<2`` because ``mcp.server.fastmcp`` was removed in 2.0. That pin protects
+The dependency is pinned to ``mcp>=2`` because ``mcp.server.fastmcp`` was removed in 2.0 and replaced by ``mcp.server.mcpserver``. That pin protects
 the *install*, not the *run*: a parent process that exports ``PYTHONPATH`` pointing at another
 site-packages shadows the venv, the import raises, and the process dies before it can answer a single
 JSON-RPC frame. The MCP client on the other side sees no message at all -- just an empty error -- which is
@@ -19,7 +19,7 @@ _MESSAGE = """sophos-firewall-mcp: cannot start.
   mcp imported from : {where}
   this environment  : {prefix}
 
-  Fix: run the server with a clean interpreter environment -- this server needs `mcp<2`:
+  Fix: run the server with a clean interpreter environment -- this server needs `mcp>=2`:
 
       env -u PYTHONPATH -u PYTHONHOME ./venv/bin/sophos-firewall-mcp-server
 
@@ -40,14 +40,14 @@ def mcp_location() -> Path | None:
     return Path(location).resolve() if location else None
 
 
-def has_fastmcp() -> bool:
-    """Whether the installed ``mcp`` still provides ``mcp.server.fastmcp`` (mcp < 2).
+def has_mcpserver() -> bool:
+    """Whether the installed ``mcp`` provides ``mcp.server.mcpserver`` (mcp >= 2).
 
-    Imports the module rather than a symbol from it: that is exactly what the server does, and mcp 2.x
-    ships a shim that raises ``ModuleNotFoundError`` on import to explain the rename.
+    Imports the module rather than a symbol from it: that is exactly what the server does, and on mcp 1.x
+    the module simply does not exist.
     """
     try:
-        import mcp.server.fastmcp  # noqa: F401
+        import mcp.server.mcpserver  # noqa: F401
     except ModuleNotFoundError:
         return False
     return True
@@ -65,7 +65,7 @@ def verify_local_mcp() -> None:
     Two distinct failures, two distinct reasons, because they have different fixes:
 
     * ``mcp`` imported from outside ``sys.prefix`` -- a ``PYTHONPATH`` is shadowing the venv.
-    * ``mcp`` is local but is version 2.x -- ``mcp.server.fastmcp`` no longer exists.
+    * ``mcp`` is local but is version 1.x -- ``mcp.server.mcpserver`` does not exist yet.
     """
     prefix = str(Path(sys.prefix).resolve())
     location = mcp_location()
@@ -80,9 +80,9 @@ def verify_local_mcp() -> None:
             prefix,
         )
 
-    if not has_fastmcp():
+    if not has_mcpserver():
         _fail(
-            "this server requires mcp<2: 'mcp.server.fastmcp' was removed in mcp 2.x",
+            "this server requires mcp>=2: 'mcp.server.mcpserver' is missing (mcp 1.x installed)",
             str(location),
             prefix,
         )

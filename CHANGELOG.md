@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Migrated to `mcp` 2.x (`MCPServer`) and dropped the `mcp<2` pin (`pyproject.toml`, `server.py`,
+  `resources.py`, `prompts.py`, `_env_guard.py`)**: `mcp.server.fastmcp` no longer exists in 2.0, so the
+  server could not start under any environment that had 2.x installed — which is exactly what happened
+  inside Hermes and produced the empty "Error executing tool" report. Now:
+  - `FastMCP` -> `MCPServer` from `mcp.server.mcpserver`; the tool/resource/prompt/run API is unchanged.
+  - `ToolAnnotations` fields take snake_case kwargs (`read_only_hint`, `destructive_hint`,
+    `idempotent_hint`); the JSON sent to clients is still `readOnlyHint`/`destructiveHint`/`idempotentHint`.
+  - the guard now reports the version requirement it actually needs ("requires mcp>=2").
+  - `tests/test_server.py` reads the tool list through the public `list_tools()` coroutine instead of
+    FastMCP 1.x internals (`_tool_manager._tools`) and asserts the **wire** annotations, so the next SDK
+    bump breaks loudly at the right place.
 - **Silent death on a shadowed interpreter environment (`_env_guard.py`, `server.py`)**: a `PYTHONPATH`
   inherited from the launching process shadowed the virtualenv, so `mcp` was imported from the parent's
   environment (2.x), `mcp.server.fastmcp` raised `ModuleNotFoundError`, and the process exited before
