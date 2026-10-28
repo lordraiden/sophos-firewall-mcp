@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Status codes are read from the documented table, not from the message text (`client.py`)**: the old
+  check exempted `500` and accepted anything whose text contained "successfully", so **500 ("Operation
+  could not be performed on Entity") was reported as success** and **203 ("successful but few
+  configurations could not be applied") was indistinguishable from a clean 200**. Codes are now classified
+  `ok` (200, 216) / `warning` (201, 203, 211-215) / `error` (everything else), with the official description
+  in the message. Partial results raise `SophosPartialResultError` — a subclass of `SophosResponseError`,
+  so existing handlers keep working — because an agent that believes a rule was applied when only part of
+  it was will not retry. `526` ("Record does not exist") on a `Get` now returns no rows instead of raising;
+  on a `Set` it stays an error.
 - **Empty or non-XML responses were undiagnosable (`client.py`)**: `xmltodict.parse` on an empty body
   raised `ExpatError: no element found: line 1, column 0`, which names neither the appliance nor the
   cause — and an empty body is an ordinary configuration symptom (API access disabled, client IP missing
