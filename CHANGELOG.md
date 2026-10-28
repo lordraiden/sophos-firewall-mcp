@@ -21,6 +21,16 @@ Everything else below is additive or fixes a wrong answer.
   and never rebasing, force-pushing or resolving conflicts on its own.
 
 ### Fixed
+- **A slow appliance produced an error with no text at all (`client.py`)**: the HTTP timeout was hardcoded
+  at 30 s, while a full `Get FirewallRule` on a real configuration takes longer (~64 KB over a VPN).
+  httpx then raised `ReadTimeout`, whose `str()` is the empty string, and the MCP layer formats failures
+  as `Error executing tool <name>: <str(exc)>` — so the caller got `Error executing tool
+  sophos_list_firewall_rules: ` and nothing else. Four of 61 calls failed this way in one session, and the
+  symptom is indistinguishable from a crashed server. Now: the timeout comes from `SOPHOS_TIMEOUT`
+  (default **120 s**, above what a real listing needs), and `httpx.TimeoutException` / `TransportError`
+  are re-raised as `SophosResponseError` with codes `TIMEOUT` / `CONNECT` naming the endpoint, the
+  operation and tag, the elapsed seconds, and the knob to change. An invalid `SOPHOS_TIMEOUT` warns and
+  falls back instead of stopping the server from booting.
 - **Migrated to `mcp` 2.x (`MCPServer`) and dropped the `mcp<2` pin (`pyproject.toml`, `server.py`,
   `resources.py`, `prompts.py`, `_env_guard.py`)**: `mcp.server.fastmcp` no longer exists in 2.0, so the
   server could not start under any environment that had 2.x installed — which is exactly what happened

@@ -23,6 +23,42 @@ _EMPTY_BODY_MESSAGE = (
     "or WAF is stripping the request body. The XML must travel in the 'reqxml' form field."
 )
 
+_TIMEOUT_MESSAGE = (
+    "SFOS did not answer within {seconds:g}s (operation={operation}, tag={tag}, endpoint={endpoint}). "
+    "A full listing on a large configuration can take longer than that: raise SOPHOS_TIMEOUT "
+    "(for example SOPHOS_TIMEOUT=300) or request less data. Without a message like this the caller only "
+    "saw 'Error executing tool <name>: ' with nothing after the colon, because str(httpx.ReadTimeout()) "
+    "is empty."
+)
+_CONNECT_MESSAGE = (
+    "Could not reach SFOS at {endpoint} (operation={operation}, tag={tag}): {reason}. Check "
+    "SOPHOS_HOST/SOPHOS_PORT, that the admin console is reachable from this host, and that API access "
+    "is enabled for this client IP."
+)
+DEFAULT_TIMEOUT = 120.0
+
+
+def _env_timeout() -> float:
+    """HTTP timeout: ``SOPHOS_TIMEOUT`` in seconds, else :data:`DEFAULT_TIMEOUT`.
+
+    The old hardcoded 30s is below what a full ``Get FirewallRule`` takes on a real configuration (~64 KB
+    over a VPN), so legitimate calls failed as if the server had died. An invalid value falls back to the
+    default with a warning rather than raising: a typo in an env var must not stop the server from booting.
+    """
+    raw = os.getenv("SOPHOS_TIMEOUT", "").strip()
+    if not raw:
+        return DEFAULT_TIMEOUT
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("SOPHOS_TIMEOUT=%r is not a number; using %ss", raw, DEFAULT_TIMEOUT)
+        return DEFAULT_TIMEOUT
+    if value <= 0 or value != value:  # non-positive or NaN
+        logger.warning("SOPHOS_TIMEOUT=%r is not a usable timeout; using %ss", raw, DEFAULT_TIMEOUT)
+        return DEFAULT_TIMEOUT
+    return value
+
+
 _NOT_XML_MESSAGE = (
     "the appliance answered HTTP {status} with a body that is not XML. First {limit} characters "
     "received (credentials redacted): {snippet}"
@@ -195,7 +231,7 @@ class SophosFirewallClient:
         password: Optional[str] = None,
         api_version: Optional[str] = None,
         verify_ssl: Optional[bool] = None,
-        timeout: float = 30.0,
+        timeout: Optional[float] = None,
     ) -> None:
         """Initialize Sophos Firewall XML API client.
 
@@ -206,7 +242,7 @@ class SophosFirewallClient:
             password: Admin password. Defaults to SOPHOS_PASSWORD env var.
             api_version: Sophos API Version. Defaults to SOPHOS_API_VERSION env var or 2200.1.
             verify_ssl: Validate SSL certs. Defaults to SOPHOS_VERIFY_SSL env var or False.
-            timeout: Request timeout in seconds. Default is 30.0.
+            timeout: Request timeout in seconds. Defaults to ``SOPHOS_TIMEOUT`` or 120.
         """
         self.host = host or os.environ.get("SOPHOS_HOST", "172.16.16.16")
         self.port = port or int(os.environ.get("SOPHOS_PORT", "4444"))
@@ -226,7 +262,7 @@ class SophosFirewallClient:
                 "HTTPS requests to Sophos Firewall appliance will not validate TLS certificates."
             )
 
-        self.timeout = timeout
+        self.timeout = _env_timeout() if timeout is None else timeout
         self.endpoint_url = f"https://{self.host}:{self.port}/webconsole/APIController"
 
         self._client = httpx.AsyncClient(
@@ -299,13 +335,35 @@ class SophosFirewallClient:
         Raises:
             SophosAuthenticationError: If login credentials are invalid.
             SophosResponseError: If SFOS returns a non-200 status code.
-            httpx.HTTPError: For transport level network issues.
+            SophosResponseError: Also for timeouts (code TIMEOUT) and unreachable hosts (code CONNECT).
         """
         xml_payload = self.build_xml_request(operation, tag, params)
         data = {"reqxml": xml_payload}
 
-        response = await self._client.post(self.endpoint_url, data=data)
-        response.raise_for_status()
+        try:
+            response = await self._client.post(self.endpoint_url, data=data)
+            response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise SophosResponseError(
+                code="TIMEOUT",
+                message=_TIMEOUT_MESSAGE.format(
+                    seconds=self.timeout,
+                    operation=operation,
+                    tag=tag,
+                    endpoint=self.endpoint_url,
+                ),
+            ) from exc
+        except httpx.TransportError as exc:
+            reason = f"{type(exc).__name__}: {exc}".rstrip(": ")
+            raise SophosResponseError(
+                code="CONNECT",
+                message=_CONNECT_MESSAGE.format(
+                    endpoint=self.endpoint_url,
+                    operation=operation,
+                    tag=tag,
+                    reason=reason,
+                ),
+            ) from exc
 
         body = response.text or ""
         if not body.strip():
