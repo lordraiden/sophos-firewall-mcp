@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **`sophos_get_system_info` promised data the API cannot give (`tools/system.py`)**: the description read
+  "appliance model, firmware version, serial number, and uptime", but SFOS answers 529 for every module
+  that would carry them (`SystemInformation`, `SystemInfo`, `System`, `SystemStatus`, `Up2Date`) — verified
+  on SFOS 22, where even `AdminSettings` returns only hostname, admin ports and login policy. The
+  description now states what the tool cannot return, names the alternatives (SNMP, syslog,
+  `sophos_get_service_status`, `raw Get AdminSettings`) and matches the diagnostic the tool already
+  returned at runtime. Behaviour is unchanged; only what the agent reads before calling it.
 - **Install instructions named a package that does not exist on PyPI (`README.md`)**: the router note
   suggested `pip install "sophos-firewall-mcp-server[router]"`, which cannot resolve because the project
   is not published there (pypi.org returns 404 for the name). The instructions now use a clone or the git
