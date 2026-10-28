@@ -2,7 +2,7 @@
 
 The guard exists because an unusable interpreter environment killed the server before it could say why,
 and the MCP client only ever saw an empty error. Each branch here is one of the two failures that cost a
-real investigation: a shadowed venv, and an mcp too new to have ``mcp.server.fastmcp``.
+real investigation: a shadowed venv, and an mcp too old to have ``mcp.server.mcpserver``.
 """
 
 import sys
@@ -48,17 +48,17 @@ def test_shadowed_message_is_actionable(monkeypatch, tmp_path, capsys):
     assert "env -u PYTHONPATH" in err
 
 
-def test_exits_when_fastmcp_is_gone(monkeypatch, capsys):
-    """mcp >= 2 removed mcp.server.fastmcp: the second distinct failure, with its own reason."""
+def test_exits_when_mcpserver_is_missing(monkeypatch, capsys):
+    """mcp 1.x has no mcp.server.mcpserver: the second distinct failure, with its own reason."""
     local = Path(sys.prefix) / "lib" / "site-packages" / "mcp" / "__init__.py"
 
     monkeypatch.setattr(_env_guard, "mcp_location", lambda: local)
-    monkeypatch.setattr(_env_guard, "has_fastmcp", lambda: False)
+    monkeypatch.setattr(_env_guard, "has_mcpserver", lambda: False)
 
     with pytest.raises(SystemExit) as exc:
         _env_guard.verify_local_mcp()
     assert exc.value.code == 2
-    assert "mcp<2" in capsys.readouterr().err
+    assert "mcp>=2" in capsys.readouterr().err
 
 
 def test_tolerates_missing_mcp(monkeypatch):
@@ -67,5 +67,5 @@ def test_tolerates_missing_mcp(monkeypatch):
     _env_guard.verify_local_mcp()
 
 
-def test_has_fastmcp_true_in_this_environment():
-    assert _env_guard.has_fastmcp() is True
+def test_has_mcpserver_true_in_this_environment():
+    assert _env_guard.has_mcpserver() is True

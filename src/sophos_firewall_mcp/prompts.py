@@ -1,9 +1,9 @@
-"""FastMCP prompt templates for Sophos Firewall diagnostics and security tasks."""
+"""MCP prompt templates for Sophos Firewall diagnostics and security tasks."""
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 
-def register(mcp: FastMCP) -> None:
+def register(mcp: MCPServer) -> None:
     """Register diagnostic and security audit prompt templates."""
 
     @mcp.prompt()
