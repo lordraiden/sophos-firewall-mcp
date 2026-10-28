@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- **Install instructions named a package that does not exist on PyPI (`README.md`)**: the router note
+  suggested `pip install "sophos-firewall-mcp-server[router]"`, which cannot resolve because the project
+  is not published there (pypi.org returns 404 for the name). The instructions now use a clone or the git
+  URL, and a note states plainly that there is no PyPI release, so nobody spends time debugging a 404 that
+  is not theirs.
 - **Status codes are read from the documented table, not from the message text (`client.py`)**: the old
   check exempted `500` and accepted anything whose text contained "successfully", so **500 ("Operation
   could not be performed on Entity") was reported as success** and **203 ("successful but few
