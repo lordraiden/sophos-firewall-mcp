@@ -51,6 +51,11 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 - El listado de usuarios está paginado, mientras que live users se documenta como array plano.
 - La lista de features no soportadas en R04 no es exhaustiva; consultar cada endpoint del API Reference.
 
+| R21 | Device access profiles — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/Profiles/DeviceAccess/index.html | Los perfiles de administrador definen permisos para gestionar el firewall desde Web Admin Console o API; los permisos None/Read-only/Read-write afectan a la visibilidad y operaciones. |
+| R22 | Allow API access to administrators — SFOS 23.0 | https://docs.sophos.com/nsg/sophos-firewall/23.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIXmlAPI/HowToArticles/APIAllowAccess/index.html | Describe por separado API access/Allowed IP hosts, perfiles de administrador y Device Access/HTTPS local service ACL; usarlo para comprobar requisitos de red y permisos. |
+| R23 | Web admin console access — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/StartupHelp/ManageSophosFirewall/GettingStartedWebAdminConsole/index.html | Explica que el acceso a Web Admin Console desde otras zonas debe habilitarse en Administration > Device access y el uso del puerto HTTPS administrativo. |
+| R24 | Firewall health check — Web Admin Console | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/FirewallHealthCheck/index.html | Describe la función de health/compliance de la interfaz de administración. No demuestra que exista un endpoint equivalente en Configuration REST API; solo el OpenAPI puede justificar una herramienta MCP.
+
 ## C. MCP — SDK oficial, protocolo y prácticas
 
 | ID | Recurso | URL | Uso |
@@ -61,10 +66,10 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 | R14 | MCP Python SDK releases | https://github.com/modelcontextprotocol/python-sdk/releases | Historial de SDK; v2.3.0 es la última release observada en esta revisión (2 Oct 2026). |
 | R15 | MCP Python SDK v2 — What's new | https://py.sdk.modelcontextprotocol.io/v2/whats-new/ | Cambios principales de v2 y protocolo actual. |
 | R15a | MCP 2026-07-28 specification release overview | https://blog.modelcontextprotocol.io/posts/2026-07-28/ | Cambio a núcleo stateless, sin initialize/initialized ni sesiones de transporte, server/discover opcional, MRTR y otras modificaciones. |
-| R16 | MCP Python SDK — Lifespan | https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/handlers/lifespan.md | Un contexto tipado compartido para toda la vida del server; iniciar recursos antes de yield y cerrarlos en finally. |
+| R16 | MCP Python SDK — Lifespan | https://py.sdk.modelcontextprotocol.io/v2/handlers/lifespan/ | Un contexto tipado compartido para toda la vida del server; iniciar recursos antes de yield y cerrarlos en finally. |
 | R16a | MCP Python SDK — Tools | https://py.sdk.modelcontextprotocol.io/v2/servers/tools/ | Herramientas async, parámetros Pydantic/Annotated/Field, enums, descripciones, títulos y anotaciones. |
 | R17 | MCP Python SDK — Structured Output | https://py.sdk.modelcontextprotocol.io/v2/servers/structured-output/ | Inferencia de output schema desde return types; content y structured_content; validación del valor devuelto. |
-| R18 | MCP Tool Annotations — risk vocabulary and limits | https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/ | title/readOnly/destructive/idempotent/openWorld son hints, no enforcement ni autorización. |
+| R18 | MCP Tool Annotations — risk vocabulary and limits | https://py.sdk.modelcontextprotocol.io/v2/servers/tools/#names-titles-and-annotations | title/readOnly/destructive/idempotent/openWorld son hints, no enforcement ni autorización. |
 | R19 | MCP Python SDK — Handling errors | https://py.sdk.modelcontextprotocol.io/servers/handling-errors/ | ToolError para error de ejecución visible al modelo; MCPError para error de protocolo; excepciones inesperadas registradas por SDK. |
 | R20 | MCP Inspector — repo/documentación | https://github.com/modelcontextprotocol/inspector | Herramienta oficial de prueba para descubrir herramientas y revisar esquemas/resultados. |
 
