@@ -1,33 +1,39 @@
 # Sophos REST API redesign
 
-Documentación de diseño para reemplazar la integración XML del proyecto por una implementación basada exclusivamente en Sophos Firewall REST API.
+Documentación de diseño y ejecución para reemplazar la integración XML por Sophos Firewall Configuration REST API, directamente contra el appliance.
 
 ## Documentos
 
-- [Plan técnico](./PLAN.md): decisión arquitectónica, correspondencia funcional, diseño recomendado, fases, issues, pruebas, seguridad y riesgos.
-- [Referencias](./REFERENCES.md): URLs de la especificación del repositorio, documentación oficial de Sophos, SDK MCP, estándares y herramientas evaluadas.
+- [Plan técnico revisado](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y nueve issues.
+- [Referencias](./REFERENCES.md): URLs del YAML del repositorio, documentación oficial Sophos, operaciones endpoints, RFC y SDK MCP.
 
 ## Estado
 
-- **Diseño:** propuesto.
-- **Implementación:** no iniciada por este documento.
-- **Issues de ejecución:** nueve issues abiertas (#24–#32), agrupadas mediante prefijos [M1], [M2] y [M3] en sus títulos.
-- **Siguiente paso:** ejecutar [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) y registrar el inventario validado en `docs/API-COVERAGE.md`.
+- **Diseño:** revisado el 14 de noviembre de 2026.
+- **Implementación:** no completada.
+- **Issues:** nueve issues abiertas (#24–#32), agrupadas con [M1], [M2] y [M3].
+- **Siguiente paso:** completar [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24), empezando por validar el YAML local y su correspondencia con SFOS objetivo.
 
-La especificación OpenAPI incluida en el repositorio es el contrato que debe auditarse en la Fase 0. Las referencias web documentan el contexto y las prácticas de implementación, pero no sustituyen la inspección del YAML versionado ni las pruebas contra el firmware de destino.
+La especificación OpenAPI versionada es el contrato inicial. El portal Sophos y la documentación del firmware son referencias de contraste; no sustituyen el YAML concreto ni las pruebas de operación real.
 
 ## GitHub execution issues
 
-| Group | Issue | Scope |
+| Grupo | Issue | Alcance |
 |---|---|---|
-| M1 | [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) | Audit the checked-in specification, map every operation, and record the architecture decision. |
-| M1 | [#25 — Typed Sophos REST client](https://github.com/lordraiden/sophos-firewall-mcp/issues/25) | Replace the XML transport with a typed asynchronous REST client. |
-| M1 | [#26 — MCP server foundation](https://github.com/lordraiden/sophos-firewall-mcp/issues/26) | Rebuild lifecycle, context, registration, schemas, structured outputs, and error handling. |
-| M2 | [#27 — Firewall rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/27) | IPv4/IPv6 rule operations and ordering where supported. |
-| M2 | [#28 — NAT rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) | NAT operations for supported IP families. |
-| M2 | [#29 — Network addresses and services](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) | Address objects, groups, services, and service groups. |
-| M2 | [#30 — Network users and sessions](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) | Network users, live sessions, and supported session actions. |
-| M2 | [#31 — VPN and network interfaces](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | Supported VPN configuration/state and interfaces. |
-| M3 | [#32 — Hardening and release](https://github.com/lordraiden/sophos-firewall-mcp/issues/32) | End-to-end validation, security, packaging, documentation, and release readiness. |
+| M1 | [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) | Auditar todas las operaciones y schemas y decidir arquitectura. |
+| M1 | [#25 — Typed Sophos REST client](https://github.com/lordraiden/sophos-firewall-mcp/issues/25) | Sustituir el cliente XML por REST tipado, seguro y asíncrono. |
+| M1 | [#26 — MCP server foundation](https://github.com/lordraiden/sophos-firewall-mcp/issues/26) | SDK v2, lifespan, contexto, schemas, errores y stdio. |
+| M2 | [#27 — Firewall rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/27) | Reglas IPv4/IPv6; operaciones individuales y movimiento. |
+| M2 | [#28 — NAT rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) | Reglas NAT IPv4/IPv6. |
+| M2 | [#29 — Network addresses and services](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) | Direcciones, grupos, servicios y referencias. |
+| M2 | [#30 — Network users and live sessions](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) | Usuarios de red, paginación, sesiones y desconexión. |
+| M2 | [#31 — VPN, interfaces and health](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN, interfaces y diagnósticos read-only seleccionados. |
+| M3 | [#32 — Hardening and release](https://github.com/lordraiden/sophos-firewall-mcp/issues/32) | Seguridad, validación, despliegue y preparación de release. |
 
-The issue titles use milestone prefixes to group the work. The dependency chain is #24 → #25 → #26; issues #27–#31 depend on the foundation, and #32 depends on the complete set. Each issue links back to this plan and the reference register.
+## Dependencias
+
+- #24 → #25 → #26.
+- #27–#31 dependen de #24, #25 y #26.
+- #32 depende de la finalización/revisión de #24–#31.
+
+Las issues referencian este plan, la bibliografía y el YAML versionado. El primer trabajo debe inventariar el contrato; los agentes no deben inferir operaciones REST por semejanza con XML o la interfaz web.
