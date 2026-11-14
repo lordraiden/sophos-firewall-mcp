@@ -50,6 +50,7 @@ Las referencias se identifican como `Rxx` en [PLAN.md](./PLAN.md). Los enlaces d
 | R21 | MCP Python SDK — Lifespan | https://github.com/modelcontextprotocol/python-sdk/blob/main/docs/handlers/lifespan.md | Gestión del ciclo de vida y compartición segura de recursos entre handlers. |
 | R22 | MCP Python SDK — Structured Output | https://py.sdk.modelcontextprotocol.io/v2/servers/structured-output/ | Output schema, validación de resultados y structured content. |
 | R23 | MCP Inspector — documentación | https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/docs/docs/2026-07-28/tools/inspector.mdx | Herramienta oficial de prueba e inspección de servidores MCP: conexión, herramientas, esquemas, recursos, prompts y resultados. |
+| R24 | MCP Python SDK — Handling errors | https://py.sdk.modelcontextprotocol.io/servers/handling-errors/ | Diferencia entre ToolError (error de ejecución visible para el modelo), MCPError (error de protocolo) y excepciones inesperadas. |
 
 ## D. Herramientas de generación y contratos OpenAPI
 
