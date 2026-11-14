@@ -421,41 +421,80 @@ Trabajos:
 
 # 8. Cómo dividiría el trabajo en GitHub
 
-No crearía decenas de issues. Utilizaría dos issues principales con checklists internos.
+La ejecución está organizada en **9 issues**, agrupadas en tres bloques de trabajo. Esta separación evita una issue funcional excesivamente grande, pero mantiene juntas las operaciones que comparten modelos, dependencias y lógica de dominio.
 
-## Issue 1 — Replace XML API integration with a typed Sophos REST foundation
+## Milestone 1 — REST Foundation
 
-Contenido:
+**#24 — [M1] Audit Sophos Firewall REST OpenAPI and define API coverage**
 
-- Auditoría de OpenAPI y ADR.
-- Selección de estrategia de generación de modelos.
-- Configuración y autenticación REST.
-- Cliente HTTP compartido.
-- Gestión de errores y timeouts.
-- Integración de `lifespan`.
-- Eliminación completa de XML.
-- Pruebas del cliente.
+- Auditoría completa del YAML, sus operaciones y esquemas.
+- Matriz `docs/API-COVERAGE.md`.
+- Comparación de generación OpenAPI frente a cliente HTTPX/Pydantic.
+- ADR de arquitectura, firmware objetivo y alcance inicial.
 
-**Infraestructura.**
+**#25 — [M1] Replace XML transport with a typed Sophos REST client**
 
-## Issue 2 — Rebuild Sophos Firewall MCP tools using the REST API
+- Eliminar el transporte XML y sus dependencias.
+- Cliente HTTPX asíncrono, Bearer authentication y configuración tipada.
+- TLS, timeouts, errores, paginación y política de reintentos.
+- Pruebas de contrato del cliente.
 
-Contenido:
+**#26 — [M1] Rebuild MCP server foundation for REST-backed tools**
 
-- Reconstrucción de los dominios funcionales.
-- Modelos Pydantic y esquemas MCP.
-- Implementación de operaciones CRUD.
-- IPv4 e IPv6 donde corresponda.
-- Paginación y referencias UUID/nombre.
-- Seguridad de las herramientas.
-- Pruebas de integración MCP.
-- Docker, documentación y publicación.
+- Lifespan y contexto compartido.
+- Registro modular de herramientas.
+- Modelos/contratos MCP, resultados estructurados y anotaciones.
+- Gestión de errores MCP y eliminación del router semántico y del raw XML tool.
 
-**Funcionalidad.**
+## Milestone 2 — Sophos REST capabilities
 
-El segundo issue dependerá de las decisiones y contratos establecidos en el primero.
+**#27 — [M2] Implement Sophos Firewall Rule management tools (IPv4 and IPv6)**
 
-Los PR deberían ser revisables: primero infraestructura, después herramientas de lectura, después modificaciones y finalmente empaquetado. No agruparía todas las funcionalidades en un único PR enorme.
+- List/get/create/update/delete y ordenación donde estén soportados.
+- Modelos y referencias IPv4/IPv6.
+- Pruebas de actualizaciones parciales y orden.
+
+**#28 — [M2] Implement Sophos NAT Rule management tools (IPv4 and IPv6)**
+
+- Operaciones NAT disponibles en OpenAPI.
+- Modelos por variante/IP family y referencias a objetos.
+- CRUD y ordenación solo cuando la API lo permita.
+
+**#29 — [M2] Implement Sophos Network Address and Service object tools**
+
+- Direcciones IPv4/IPv6, FQDN y grupos compatibles.
+- Network services y service groups.
+- Validación de referencias, pertenencia y objetos de solo lectura.
+
+**#30 — [M2] Implement Sophos Network User and Live Session tools**
+
+- Usuarios de red y sesiones activas como conceptos separados.
+- Paginación y operaciones de desconexión cuando estén soportadas.
+- Administración de cuentas privilegiadas fuera del alcance inicial.
+
+**#31 — [M2] Implement Sophos VPN and Network Interface tools**
+
+- Interfaces de red.
+- Configuración y estado operativo IPsec.
+- Políticas SSL VPN de acceso remoto.
+- Exclusiones de VPN y operaciones no soportadas documentadas.
+
+## Milestone 3 — Quality and Release
+
+**#32 — [M3] Harden, validate, package, and release the REST-only MCP server**
+
+- Validación end-to-end MCP y contra un appliance de prueba.
+- Seguridad, secretos, TLS y operaciones ambiguas.
+- CI, dependencias, lockfile, pruebas y análisis de vulnerabilidades.
+- Docker, GHCR, README, CHANGELOG y preparación del release.
+
+## Dependencias y estrategia de PR
+
+- #24 precede a #25; #25 y #24 son prerequisitos de #26.
+- #27–#31 dependen de #24, #25 y #26. Pueden desarrollarse como PR separados una vez aceptada la base.
+- #32 depende de la finalización y revisión de #24–#31.
+- Las pruebas unitarias, contractuales y de seguridad específicas deben formar parte de cada issue funcional; #32 se ocupa de la validación global y de las pruebas integradas contra el firewall.
+- Los PR deberían ser revisables: infraestructura, herramientas de lectura, modificaciones y finalmente empaquetado. No agrupar todas las funcionalidades en un único PR enorme.
 
 # 9. Pruebas y criterios de aceptación
 
@@ -557,7 +596,7 @@ Tomaría estas decisiones como base del proyecto:
 | Raw API | No exponer |
 | Seguridad | API Key, TLS y mínimo privilegio |
 | Pruebas | Unitarias, contractuales e integración real |
-| Organización | Dos issues principales |
+| Organización | Nueve issues agrupadas en tres bloques de trabajo |
 
 ## Conclusión
 
@@ -565,4 +604,4 @@ Tomaría estas decisiones como base del proyecto:
 
 Esto evitará reproducir las limitaciones del código anterior y permitirá aprovechar las funcionalidades que aparecen por primera vez en la API REST.
 
-**No se han realizado cambios de implementación ni se han abierto issues como parte de este plan.** El resultado de este análisis es la guía técnica para organizar esos trabajos.
+**No se han realizado cambios de implementación. Las nueve issues de ejecución (#24–#32) están abiertas y enlazan este plan, la bibliografía y el contrato OpenAPI.** Este documento sigue siendo la guía arquitectónica de referencia para esos trabajos.
