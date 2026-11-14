@@ -11,8 +11,8 @@ Documentación de diseño para reemplazar la integración XML del proyecto por u
 
 - **Diseño:** propuesto.
 - **Implementación:** no iniciada por este documento.
-- **Issues de ejecución:** todavía no creados.
-- **Siguiente paso:** completar la Fase 0 del plan y registrar el inventario validado de endpoints y esquemas en `docs/API-COVERAGE.md`.
+- **Issues de ejecución:** nueve issues abiertas (#24–#32), agrupadas mediante prefijos [M1], [M2] y [M3] en sus títulos.
+- **Siguiente paso:** ejecutar [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) y registrar el inventario validado en `docs/API-COVERAGE.md`.
 
 La especificación OpenAPI incluida en el repositorio es el contrato que debe auditarse en la Fase 0. Las referencias web documentan el contexto y las prácticas de implementación, pero no sustituyen la inspección del YAML versionado ni las pruebas contra el firmware de destino.
 
