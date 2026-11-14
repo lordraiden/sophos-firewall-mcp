@@ -9,7 +9,7 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 
 ## Estado
 
-- **Diseño:** revisado el 14 de noviembre de 2026.
+- **Diseño:** revisado el 14 de noviembre de 2026. El YAML local está parseado: OpenAPI 3.0.0, info.version 1.0.0, 384 paths y 700 operaciones.
 - **Implementación:** no completada.
 - **Issues:** nueve issues abiertas (#24–#32), agrupadas con [M1], [M2] y [M3].
 - **Siguiente paso:** completar [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24), empezando por validar el YAML local y su correspondencia con SFOS objetivo.
