@@ -10,7 +10,7 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 | ID | Recurso | URL | Uso |
 |---|---|---|---|
 | R00 | Repositorio | https://github.com/lordraiden/sophos-firewall-mcp | Código, documentación, issues, CI y despliegue revisados. |
-| R00a | YAML OpenAPI versionado | https://github.com/lordraiden/sophos-firewall-mcp/blob/main/firewall_config_openapi.yaml | Contrato que debe auditarse. Blob SHA observado: 40fca0b25d4d85866f86b90aec77e5559ae27214; 8.934.475 bytes. |
+| R00a | YAML OpenAPI versionado | https://github.com/lordraiden/sophos-firewall-mcp/blob/main/firewall_config_openapi.yaml | Contrato inspeccionado. Blob SHA: 40fca0b25d4d85866f86b90aec77e5559ae27214; 8.934.475 bytes; OpenAPI 3.0.0; info.version 1.0.0; 384 paths/700 operaciones con operationId únicos. La validación formal y matriz operación por operación siguen en #24. |
 | R00b | Cliente XML actual | https://github.com/lordraiden/sophos-firewall-mcp/blob/main/src/sophos_firewall_mcp/client.py | Transporte que se elimina. |
 | R00c | Registro MCP actual | https://github.com/lordraiden/sophos-firewall-mcp/blob/main/src/sophos_firewall_mcp/server.py | Wiring actual que se reemplaza. |
 | R00d | Herramientas existentes | https://github.com/lordraiden/sophos-firewall-mcp/tree/main/src/sophos_firewall_mcp/tools | Comportamiento/alcance funcional de partida. |
@@ -49,13 +49,16 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 - API keys heredan permisos de administrador y expiran al año. La rotación de claves es manual según el flujo documentado.
 - Los códigos HTTP varían por operación. R06a/R06b/R07a/R09/R10 ofrecen ejemplos verificables; no construir una tabla universal.
 - A diferencia de la regla genérica de HTTP, Sophos documenta para esta Configuration REST API que PATCH usa JSON Merge Patch (RFC 7396) por defecto salvo overrides por operación. Las excepciones y el tratamiento de arrays/oneOf prevalecen; no cambiar el Content-Type sin contrato explícito.
-- El listado de usuarios está paginado, mientras que live users se documenta como array plano.
+- GET /authentication/users y /authentication/users/network-users tienen page/pageSize/pageTotal; GET /authentication/live-users responde items + pages metadata, pero el YAML no define query parameters de paginación para ese endpoint.
 - La lista de features no soportadas en R04 no es exhaustiva; consultar cada endpoint del API Reference.
 
 | R21 | Device access profiles — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/Profiles/DeviceAccess/index.html | Los perfiles de administrador definen permisos para gestionar el firewall desde Web Admin Console o API; los permisos None/Read-only/Read-write afectan a la visibilidad y operaciones. |
 | R22 | Allow API access to administrators — SFOS 23.0 | https://docs.sophos.com/nsg/sophos-firewall/23.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIXmlAPI/HowToArticles/APIAllowAccess/index.html | Describe por separado API access/Allowed IP hosts, perfiles de administrador y Device Access/HTTPS local service ACL; usarlo para comprobar requisitos de red y permisos. |
 | R23 | Web admin console access — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/StartupHelp/ManageSophosFirewall/GettingStartedWebAdminConsole/index.html | Explica que el acceso a Web Admin Console desde otras zonas debe habilitarse en Administration > Device access y el uso del puerto HTTPS administrativo. |
 | R24 | Firewall health check — Web Admin Console | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/FirewallHealthCheck/index.html | Describe la función de health/compliance de la interfaz de administración. No demuestra que exista un endpoint equivalente en Configuration REST API; solo el OpenAPI puede justificar una herramienta MCP.
+
+| R25 | DNS protection status endpoint | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/get-dns-protection-status/index.html | Operación GET /network/dns/protection/status (getDnsProtectionStatus), disponible en el YAML local. |
+| R26 | Cellular WAN modem status endpoint | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/get-cellular-wan-status/index.html | Operación GET /network/cellular-wan/modem-status (getCellularWanStatus), disponible en el YAML local. |
 
 ## C. MCP — SDK oficial, protocolo y prácticas
 
