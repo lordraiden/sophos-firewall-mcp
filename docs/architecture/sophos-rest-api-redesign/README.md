@@ -27,7 +27,7 @@ La especificación OpenAPI versionada es el contrato inicial. El portal Sophos y
 | M2 | [#28 — NAT rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) | Reglas NAT IPv4/IPv6. |
 | M2 | [#29 — Network addresses and services](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) | Direcciones, grupos, servicios y referencias. |
 | M2 | [#30 — Network users and live sessions](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) | Usuarios de red, paginación, sesiones y desconexión. |
-| M2 | [#31 — VPN, interfaces and health](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN, interfaces y diagnósticos read-only seleccionados. |
+| M2 | [#31 — VPN, interfaces and read-only status](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN, interfaces y diagnósticos read-only seleccionados. |
 | M3 | [#32 — Hardening and release](https://github.com/lordraiden/sophos-firewall-mcp/issues/32) | Seguridad, validación, despliegue y preparación de release. |
 
 ## Dependencias
