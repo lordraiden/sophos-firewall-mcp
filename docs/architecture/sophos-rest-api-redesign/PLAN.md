@@ -286,7 +286,7 @@ No duplicar dos catálogos de schemas sin una prueba de drift. El diseño final 
 
 # 7. Arquitectura MCP y prácticas recomendadas
 
-El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 14 de noviembre de 2026 la última release publicada consultada es v2.3.0. Esta release implementa la revisión de protocolo MCP 2026-07-28 y el SDK sirve también revisiones anteriores. Usar la API pública documentada del SDK y fijar una versión reproducible en el lockfile. [R14] [R15]
+El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 14 de noviembre de 2026 la última release publicada consultada es v2.3.0. Esta release implementa la revisión de protocolo MCP 2026-07-28 y el SDK sirve también revisiones anteriores. La dependencia runtime debe ser `mcp>=2.3.0,<3`; instalar el extra `[cli]` solo en un entorno de desarrollo si se utilizan sus comandos, no en la imagen de producción por defecto. Fijar la resolución exacta en el lockfile. [R14] [R15]
 
 ## Transporte inicial
 
