@@ -288,7 +288,7 @@ Para colecciones potencialmente grandes, devolver una página tipada con metadat
 
 ## Anotaciones y riesgo
 
-Definir title, readOnlyHint, destructiveHint, idempotentHint y openWorldHint según el comportamiento real de cada herramienta. No copiar un set uniforme sin pensar. Las anotaciones son pistas para el cliente, no controles de autorización ni una barrera de confirmación garantizada. La seguridad efectiva se obtiene mediante API Key de mínimo privilegio, red/allowlist, implementación y políticas de aprobación del host. [R18]
+Definir title, readOnlyHint y openWorldHint según el comportamiento real de cada herramienta. Para herramientas no read-only, definir además destructiveHint e idempotentHint; esos dos hints describen operaciones de escritura y no aportan semántica útil a herramientas de solo lectura. No copiar un set uniforme sin pensar. Las anotaciones son pistas para el cliente, no controles de autorización ni una barrera de confirmación garantizada. La seguridad efectiva se obtiene mediante API Key de mínimo privilegio, red/allowlist, implementación y políticas de aprobación del host. [R18]
 
 ## Errores MCP
 
