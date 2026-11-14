@@ -22,7 +22,7 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 | ID | Recurso | URL | Uso |
 |---|---|---|---|
 | R01 | Sophos Firewall API Reference — overview | https://docs.sophos.com/nsg/sophos-firewall/rest-api/index.html | Descripción del API del appliance, base URL, autenticación, acceso desde endpoints/zones y referencia. |
-| R02 | Sophos Firewall Configuration API — catálogo OpenAPI | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/sophos-firewall-configuration-api/index.html | Referencia generada desde OpenAPI 3.0; portal indica API version 1.0.0. No asumir que el YAML local tiene igual info.version hasta leerlo. |
+| R02 | Sophos Firewall Configuration API — catálogo OpenAPI | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/sophos-firewall-configuration-api/index.html | Referencia generada desde OpenAPI 3.0; portal indica API version 1.0.0, Bearer auth, base URL, formatos comunes de nombres/UUID y JSON Merge Patch como default de PATCH salvo excepciones documentadas. No asumir que el YAML local tiene igual info.version hasta leerlo. |
 | R03 | Get started with Sophos Firewall REST API — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIRestAPI/index.html | Requisitos previos, consideraciones y API key Bearer. |
 | R04 | REST API access and API keys — SFOS 23.0 | https://docs.sophos.com/nsg/sophos-firewall/23.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIRestAPI/APIAccessAndKeys/index.html | Habilitar API access, Allowed IP hosts, API keys, permisos heredados, duración un año y funcionalidades no soportadas. La lista no es exhaustiva. |
 | R05 | SFOS 23.0 GA Build 371 release notes | https://docs.sophos.com/releasenotes/output/en-us/nsg/sf_230_rn.html | Publicación 4 Nov 2026; la nota sobre reglas deshabilitadas al crearse se refiere al Firewall AI Assistant en Sophos Fusion, no debe extrapolarse sin probar al POST REST. |
@@ -48,6 +48,7 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 - API access allowlist y Device access/zones son controles distintos; revisar ambos.
 - API keys heredan permisos de administrador y expiran al año. La rotación de claves es manual según el flujo documentado.
 - Los códigos HTTP varían por operación. R06a/R06b/R07a/R09/R10 ofrecen ejemplos verificables; no construir una tabla universal.
+- A diferencia de la regla genérica de HTTP, Sophos documenta para esta Configuration REST API que PATCH usa JSON Merge Patch (RFC 7396) por defecto salvo overrides por operación. Las excepciones y el tratamiento de arrays/oneOf prevalecen; no cambiar el Content-Type sin contrato explícito.
 - El listado de usuarios está paginado, mientras que live users se documenta como array plano.
 - La lista de features no soportadas en R04 no es exhaustiva; consultar cada endpoint del API Reference.
 
