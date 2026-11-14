@@ -135,7 +135,7 @@ La referencia OpenAPI incluye muchos más módulos que las herramientas XML orig
 | Live sessions | Listado de sesiones activas y desconexión de una sesión | Implementar lectura y desconexión individual; la respuesta contiene `items` y `pages`, pero el GET no define parámetros page/pageSize, por lo que no se debe inventar paginación de petición |
 | VPN | IPsec profiles, failover groups, site-to-site y live state; SSL VPN remote access y otros recursos documentados | Seleccionar operaciones compatibles; documentar explícitamente exclusiones |
 | Network interfaces | `/network/interfaces/network-interfaces`: GET/POST/GET-by-ID/PATCH/DELETE | OpenAPI define CRUD, pero el primer release MCP empieza en lectura; posponer create/update/delete por riesgo de perder conectividad |
-| System/health | `GET /network/dns/protection/status` y `GET /network/cellular-wan/modem-status` | Candidatos read-only concretos; no inferir un endpoint REST para la pantalla Firewall Health Check del Web Admin UI |
+| Read-only network status | `GET /network/dns/protection/status` y `GET /network/cellular-wan/modem-status` | Candidatos read-only concretos; no inferir un endpoint REST para la pantalla Firewall Health Check del Web Admin UI |
 
 ## Firewall rules
 
@@ -190,7 +190,7 @@ No ofrecer “VPN management” genérico. El YAML incluye perfiles IPsec y fail
 
 El YAML contiene CRUD para `/network/interfaces/network-interfaces`, pero el primer release MCP empieza con list/get por el impacto que una mutación puede tener sobre la conectividad de administración. Las operaciones de escritura deben permanecer documentadas como diferidas hasta que exista una prueba segura en el firewall de laboratorio.
 
-Para diagnóstico read-only hay dos endpoints concretos en el YAML: `GET /network/dns/protection/status` (`getDnsProtectionStatus`) y `GET /network/cellular-wan/modem-status` (`getCellularWanStatus`). La función Firewall Health Check del Web Admin UI es una vista de salud/configuración, no un endpoint REST del OpenAPI actual. No crear una herramienta Firewall Health Check. Tampoco prometer modelo, número de serie, firmware o uptime si no existe una operación que devuelva esos datos. [R24]
+Para estado read-only de red hay dos endpoints concretos en el YAML: `GET /network/dns/protection/status` (`getDnsProtectionStatus`) y `GET /network/cellular-wan/modem-status` (`getCellularWanStatus`). Son estados específicos de DNS Protection y del módem WAN celular, no un health score general del firewall. La función Firewall Health Check del Web Admin UI es una vista de salud/configuración, no un endpoint REST del OpenAPI actual. No crear una herramienta Firewall Health Check. Tampoco prometer modelo, número de serie, firmware o uptime si no existe una operación que devuelva esos datos. [R24]
 
 # 5. OpenAPI como contrato de implementación
 
@@ -397,7 +397,7 @@ La ejecución se divide en 3 grupos, con un entregable verificable por issue.
 - Usuarios de red, lista paginada general, sesiones activas y desconexión individual.
 - Administración de administradores excluida inicialmente.
 
-**#31 — [M2] Implement Sophos VPN, Network Interface and Read-only Health tools**
+**#31 — [M2] Implement Sophos VPN, Network Interface and Read-only Status tools**
 
 - VPN configurada vs live state, interfaces y endpoints de salud/monitorización seleccionados.
 - Limitarse a capacidades verificadas.
