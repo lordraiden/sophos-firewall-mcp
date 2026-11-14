@@ -182,6 +182,17 @@ Las interfaces y la información de salud deben basarse en los endpoints reales.
 
 El YAML versionado en el repositorio es el contrato que hay que auditar. La página del API Reference de Sophos es una proyección oficial de OpenAPI 3.0, pero no sustituye la inspección del fichero exacto ni confirma la versión de SFOS del usuario. [R01] [R02]
 
+## Nombres e identificadores de objetos Sophos
+
+La referencia oficial describe formatos comunes que deben respetarse cuando el endpoint los use: [R02]
+
+- `sfos-object-name`: nombre UTF-8 válido, sin comas, punto y coma, caracteres no imprimibles, espacios iniciales/finales y que no sea un UUID.
+- `sfos-object-name-or-id`: nombre anterior o UUID.
+- `sfos-object-name-lenient`: variante que permite comas y punto y coma para ciertos objetos preexistentes/built-in/localizados.
+- `sfos-object-name-lenient-or-id`: variante lenient o UUID.
+
+La regla general de Sophos indica que POST suele identificar objetos mediante nombre único, mientras que GET/PATCH/DELETE pueden usar nombre único o UUID. No convertir esa regla general en una suposición para cada endpoint: el path parameter y su schema concretos siguen siendo la autoridad. Las herramientas MCP deben reflejar el formato correcto por operación y evitar tratar display name, ID y referencia de objeto como intercambiables.
+
 La Fase 0 debe registrar:
 
 - Blob SHA, tamaño, openapi, info.title, info.version, servers/base URL, tags y security schemes.
@@ -192,9 +203,20 @@ La Fase 0 debe registrar:
 - Operaciones presentes en OpenAPI pero no disponibles por permisos o firmware.
 - Correspondencia de cada operación REST con una herramienta MCP, o razón explícita para excluirla.
 
-## PATCH: no inferir semántica por el verbo
+## PATCH: default oficial de Sophos y excepciones por operación
 
-HTTP PATCH no implica JSON Merge Patch. RFC 7396 solo aplica cuando la operación declara ese media type/semántica. Para cada PATCH hay que leer requestBody.content, schema y descripciones del OpenAPI y verificar el comportamiento real. No asumir que propiedades omitidas, null o arrays se comportan igual entre endpoints. [R12]
+HTTP PATCH no implica JSON Merge Patch por definición general de HTTP. Sin embargo, la referencia oficial Sophos para su **Firewall Configuration REST API** establece una regla propia: las peticiones PATCH siguen por defecto la semántica JSON Merge Patch de RFC 7396, salvo que la documentación de una operación indique expresamente otro comportamiento. [R02] [R12]
+
+Por tanto:
+
+- Implementar JSON Merge Patch como default para PATCH de esta API, siempre que no exista una excepción documentada.
+- Inspeccionar el OpenAPI local y la página de cada operación para localizar overrides y el request schema/media type. No cambiar el Content-Type a `application/merge-patch+json` salvo que el contrato de esa operación lo indique; la semántica de merge y el media type HTTP no deben confundirse.
+- Las propiedades omitidas conservan el valor persistido y `null` elimina una propiedad según la regla general.
+- No asumir que todos los arrays se tratan igual: la referencia advierte que algunas operaciones los sustituyen como conjunto o usan listas explícitas de `add`/`remove`.
+- Si un campo pertenece a una rama `oneOf`/mutuamente excluyente, Sophos indica que enviar la nueva rama puede ser suficiente para cambiarla; no enviar `null` para la anterior salvo que la operación lo requiera.
+- Registrar cada excepción en `docs/API-COVERAGE.md` y probar el comportamiento correspondiente.
+
+Nunca inferir Merge Patch desde el verbo en otra API ni sustituir la regla específica de Sophos por una interpretación HTTP genérica. [R02] [R12]
 
 ## Respuestas y errores por operación
 
