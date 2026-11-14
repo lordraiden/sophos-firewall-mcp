@@ -287,11 +287,11 @@ El SDK diferencia entre:
 - `MCPError`: errores que deben rechazarse a nivel de protocolo.
 - Excepciones inesperadas: errores internos que deben registrarse con sus trazas.
 
-No reproduciría el envoltorio genérico actual que captura prácticamente todas las excepciones con `BaseException`. Usaría el mecanismo de errores del SDK y excepciones propias para los errores conocidos de Sophos. [R20]
+No reproduciría el envoltorio genérico actual que captura prácticamente todas las excepciones con `BaseException`. Usaría el mecanismo de errores del SDK y excepciones propias para los errores conocidos de Sophos. [R20] [R24]
 
 Hay un caso que merece especial tratamiento: los timeouts durante una modificación.
 
-Sophos advierte que la ausencia de respuesta no significa que la modificación haya fallado. Por tanto:
+Un timeout durante una escritura deja el resultado en estado ambiguo: la petición puede haberse aplicado aunque el cliente no haya recibido la respuesta. Por tanto:
 
 - GET puede reintentarse de forma segura.
 - POST, PATCH y DELETE no deben repetirse automáticamente ante un resultado ambiguo.
