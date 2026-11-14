@@ -4,9 +4,11 @@
 **Estado:** diseño revisado; la implementación todavía no está realizada.  
 **Repositorio:** [lordraiden/sophos-firewall-mcp](https://github.com/lordraiden/sophos-firewall-mcp)  
 **Especificación versionada:** [firewall_config_openapi.yaml](https://github.com/lordraiden/sophos-firewall-mcp/blob/main/firewall_config_openapi.yaml)  
-**Blob SHA observado:** 40fca0b25d4d85866f86b90aec77e5559ae27214  
+**Blob SHA observado:** `40fca0b25d4d85866f86b90aec77e5559ae27214`  
 **Tamaño registrado por GitHub:** 8.934.475 bytes.  
-**Documentación oficial de referencia:** Sophos Firewall Configuration API, OpenAPI 3.0, versión publicada del portal 1.0.0. La versión del portal no debe confundirse con info.version del fichero local: hay que verificar ambas en la Fase 0.
+**Baseline parseado del fichero local:** `openapi: 3.0.0`; `info.title: Sophos Firewall Configuration API`; `info.version: 1.0.0`; 384 paths; 700 operaciones HTTP; 700 `operationId` presentes y sin duplicados; 76 ocurrencias de `$ref`, 32 referencias únicas, todas locales bajo `#/components/schemas` (la resolución formal de todas las referencias sigue siendo criterio de aceptación de #24).  
+**Servidor declarado en el YAML:** `https://{firewallHost}/api/firewall-config/v1`, con variable `firewallHost` y default `172.16.16.16:4444`.  
+**Seguridad global del OpenAPI:** HTTP Bearer (`scheme: bearer`, `bearerFormat: API key`). La documentación oficial online también muestra OpenAPI 3.0 y versión 1.0.0; hay que volver a contrastar posibles cambios en #24.
 
 > Este documento sustituye las decisiones anteriores que dependían de supuestos no verificados. La fuente contractual para implementar es el YAML versionado y la versión de SFOS objetivo; la documentación online oficial sirve para contrastar alcance y comportamiento. Consultar [REFERENCES.md](./REFERENCES.md) para las fuentes, versiones y advertencias.
 
@@ -52,7 +54,7 @@ El objetivo es la **Sophos Firewall Configuration REST API del propio appliance*
 
 La API de configuración del appliance utiliza:
 
-- Base URL: `https://<firewall-hostname>:<admin-https-port>/api/firewall-config/v1`.
+- Base URL: `https://<firewall-hostname>:<admin-https-port>/api/firewall-config/v1`. El YAML versionado declara como valor de ejemplo/default de la variable de servidor `172.16.16.16:4444`; 4444 coincide con el puerto HTTPS predeterminado del Web Admin Console en SFOS 23, pero el puerto real se debe poder configurar.
 - Autenticación por API Key en Authorization: Bearer <api-key>.
 - JSON y operaciones HTTP descritas por OpenAPI 3.0.
 - Acceso desde dispositivos/IP hosts permitidos por el propio firewall.
@@ -128,11 +130,12 @@ La referencia OpenAPI incluye muchos más módulos que las herramientas XML orig
 | Address groups | Grupos por familia/tipo, incluyendo FQDN, IPv4, IPv6 y country según endpoints | No asumir grupos mixtos; seguir cada esquema |
 | Network services | Servicios y grupos | Implementar esquemas/endpoints reales, no reutilizar modelos XML |
 | Authentication users | Lista general paginada y recursos de usuarios de red | Separar listado general de CRUD de usuarios de red |
-| Administrators | Operaciones de lectura y CRUD presentes en el catálogo | Documentar, pero excluir modificación de administradores/permisos de la primera versión por su impacto |
-| Live sessions | Lista de sesiones activas y desconexión de una sesión | Implementar; el endpoint de listado documenta un array plano, no asumir paginación |
+| Administrators | GET/POST/PATCH/DELETE y bulk delete presentes en el catálogo | Documentar; excluir CRUD y cambios de privilegios en la primera versión por su impacto |
+| Authentication user groups | GET/POST/PATCH/DELETE, bulk delete y set-fallback-group | Clasificar y documentar; no incluir gestión de grupos ni fallback en la primera versión salvo requisito explícito |
+| Live sessions | Listado de sesiones activas y desconexión de una sesión | Implementar lectura y desconexión individual; la respuesta contiene `items` y `pages`, pero el GET no define parámetros page/pageSize, por lo que no se debe inventar paginación de petición |
 | VPN | IPsec profiles, failover groups, site-to-site y live state; SSL VPN remote access y otros recursos documentados | Seleccionar operaciones compatibles; documentar explícitamente exclusiones |
-| Network interfaces | Operaciones documentadas para interfaces | Empezar por lectura; no inferir operaciones de escritura por analogía con UI/XML |
-| System/health | Endpoints de estado/configuración que aparezcan en el OpenAPI local | Incluir únicamente datos realmente expuestos por REST; la pantalla Firewall Health Check del Web Admin UI no prueba por sí misma que exista un endpoint REST equivalente |
+| Network interfaces | `/network/interfaces/network-interfaces`: GET/POST/GET-by-ID/PATCH/DELETE | OpenAPI define CRUD, pero el primer release MCP empieza en lectura; posponer create/update/delete por riesgo de perder conectividad |
+| System/health | `GET /network/dns/protection/status` y `GET /network/cellular-wan/modem-status` | Candidatos read-only concretos; no inferir un endpoint REST para la pantalla Firewall Health Check del Web Admin UI |
 
 ## Firewall rules
 
@@ -162,7 +165,16 @@ La API separa recursos de direcciones y grupos por familias/tipos. No mantener u
 
 ## Users y Live Sessions
 
-La referencia oficial distingue el listado paginado de usuarios (/authentication/users), operaciones de usuarios de red y operaciones de administradores. El endpoint de live users devuelve un array plano de sesiones activas; existe una operación POST independiente para desconectar una sesión con liveUserId y message. No asumir que el endpoint de sesiones tiene la misma paginación que el listado de usuarios. [R08] [R09] [R10]
+El YAML distingue:
+
+- `GET /authentication/users` (`getUsers`): listado resumido paginado, con `page` (default 1), `pageSize` (default 50, máximo 100) y `pageTotal` (default false).
+- `GET /authentication/users/network-users` (`getNetworkUsers`): listado de usuarios de red paginado con los mismos parámetros y límites.
+- CRUD individual de network users; login/logout son operaciones independientes y con efectos operativos.
+- CRUD de administradores y de user groups también aparecen en OpenAPI, pero quedan excluidos del primer release por privilegio/alcance.
+- `GET /authentication/live-users` (`getLiveUsers`): no declara query parameters de página. Su respuesta es un objeto con `items` (array de sesiones) y `pages` (`current`, `size`, `maxSize`); no contiene `total` ni permite solicitar otro page mediante query params en el YAML actual. No describirlo como una lista desnuda ni como paginación controlable por el cliente.
+- `POST /authentication/live-users/disconnect` desconecta una sesión mediante `liveUserId` y `message`.
+
+El MCP debe preservar exactamente la metadata `pages` del live-users endpoint. Como no se define una petición de continuación, no debe inventar un cursor/page loop. La Fase 0 debe comprobar en firmware cómo se comporta cerca de `maxSize` y documentar cualquier límite de completitud. [R08] [R09] [R10]
 
 La primera versión debe:
 
@@ -174,9 +186,11 @@ La primera versión debe:
 
 ## VPN, interfaces y salud
 
-No ofrecer “VPN management” genérico. Separar configuración y estado operativo. La cobertura de OpenAPI enumera recursos de perfiles/failover/IPsec y SSL VPN, pero las limitaciones publicadas excluyen modalidades concretas. Cada una se debe clasificar por operación y firmware. [R04] [R11]
+No ofrecer “VPN management” genérico. El YAML incluye perfiles IPsec y failover groups; conexiones IPsec site-to-site policy-based y route-based para IPv4; estado live de conexiones IPv4; ajustes de remote-access IPsec; políticas SSL VPN de acceso remoto; políticas clientless, bookmark groups/bookmarks y SSL VPN global settings. No asumir que todas las modalidades tienen CRUD completo ni que IPsec site-to-site IPv6 está disponible: el inventario actual contiene operaciones de conexión IPv4. La lista oficial de funciones no soportadas (por ejemplo IPsec routes, GRE, L2TP, PPTP y SSL VPN site-to-site client/server) se debe interpretar según la feature exacta, sin confundir el término 'IPsec routes' con los endpoints 'route-based connection'. [R04] [R11]
 
-Las interfaces y la información de salud deben basarse en los endpoints reales. La función Firewall Health Check del Web Admin UI está documentada como una comprobación de configuración/CIS, pero no debe convertirse en una herramienta MCP salvo que el YAML local contenga un endpoint REST específico que devuelva esos datos. El objetivo es recuperar funciones útiles de system/status sin volver a prometer modelo, número de serie, firmware, uptime o health score si no existe una operación que los entregue. [R24]
+El YAML contiene CRUD para `/network/interfaces/network-interfaces`, pero el primer release MCP empieza con list/get por el impacto que una mutación puede tener sobre la conectividad de administración. Las operaciones de escritura deben permanecer documentadas como diferidas hasta que exista una prueba segura en el firewall de laboratorio.
+
+Para diagnóstico read-only hay dos endpoints concretos en el YAML: `GET /network/dns/protection/status` (`getDnsProtectionStatus`) y `GET /network/cellular-wan/modem-status` (`getCellularWanStatus`). La función Firewall Health Check del Web Admin UI es una vista de salud/configuración, no un endpoint REST del OpenAPI actual. No crear una herramienta Firewall Health Check. Tampoco prometer modelo, número de serie, firmware o uptime si no existe una operación que devuelva esos datos. [R24]
 
 # 5. OpenAPI como contrato de implementación
 
@@ -231,7 +245,7 @@ Los ejemplos no son una lista global: el cliente y las pruebas deben seguir las 
 
 ## Paginación: tampoco inferir por el nombre
 
-La matriz debe documentar página/tamaño/offset/cursor y respuesta para cada endpoint. Por ejemplo, /authentication/users se documenta paginado; /authentication/live-users se documenta como array plano. El MCP debe devolver página y continuation metadata o hacer una agregación acotada con indicador explícito de truncamiento. Nunca devolver silenciosamente una primera página como si fuese el conjunto completo. [R08] [R09]
+La matriz debe documentar parámetros de petición y metadata de respuesta por operación. En el YAML local, `/authentication/users` y `/authentication/users/network-users` aceptan `page` (1-indexed, default 1), `pageSize` (default 50, máximo 100) y `pageTotal` (default false). `/authentication/live-users` no define query params de página: responde con `items` más `pages.current`, `pages.size` y `pages.maxSize`, sin `total` ni mecanismo de continuación en la petición. No aplicar un helper de paginación genérico a este endpoint; preservar la metadata y validar en el appliance si el límite máximo puede truncar la lista. [R08] [R09]
 
 # 6. Cliente REST y configuración
 
@@ -248,7 +262,7 @@ Configuración recomendada:
 | SOPHOS_CA_BUNDLE | CA privada opcional |
 | SOPHOS_TIMEOUT | Timeout configurable |
 
-No definir SOPHOS_USERNAME, SOPHOS_PASSWORD ni SOPHOS_API_VERSION. No fijar un puerto como default salvo que el proyecto decida y documente uno como valor de conveniencia; el puerto efectivo es el admin HTTPS port del appliance.
+No definir SOPHOS_USERNAME, SOPHOS_PASSWORD ni SOPHOS_API_VERSION. Usar 4444 como default inicial porque aparece en la variable `servers.firewallHost` del YAML (172.16.16.16:4444) y coincide con el puerto admin HTTPS predeterminado de SFOS 23; permitir override obligatorio para instalaciones que hayan cambiado el puerto. No sustituir el puerto por un default codificado cuando el usuario ya lo configura.
 
 Requisitos:
 
