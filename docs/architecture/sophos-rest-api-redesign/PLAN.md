@@ -52,7 +52,7 @@ El objetivo es la **Sophos Firewall Configuration REST API del propio appliance*
 
 La API de configuración del appliance utiliza:
 
-- Base URL: https://<firewall-hostname>:<admin-https-port>/api/firewall-config/v1.
+- Base URL: `https://<firewall-hostname>:<admin-https-port>/api/firewall-config/v1`.
 - Autenticación por API Key en Authorization: Bearer <api-key>.
 - JSON y operaciones HTTP descritas por OpenAPI 3.0.
 - Acceso desde dispositivos/IP hosts permitidos por el propio firewall.
@@ -65,11 +65,11 @@ Para habilitar la API no basta con disponer de una API Key:
 
 1. Activar REST API access en Administration → API access.
 2. Añadir la IP, rango o red de origen a Allowed IP hosts.
-3. Comprobar Device access: la zona desde la que se conecta el administrador debe tener acceso al Web Admin Console.
+3. Comprobar Administration → Device access: la zona desde la que se conecta el administrador debe tener habilitado HTTPS (Web Admin Console) en Local service ACL o una excepción específica y restringida para esa IP/red. Esta condición es independiente de Allowed IP hosts.
 4. Crear un administrador dedicado con los permisos mínimos necesarios.
 5. Generar la API Key con ese administrador.
 
-Las API Keys heredan los permisos del administrador que las genera, tienen una validez de un año y dejan de mostrarse después de cerrar el diálogo de generación. La documentación también señala límites de claves por appliance y administrador. La rotación debe documentarse como una operación administrativa manual; no asumir que existe un endpoint de renovación automática. [R03] [R04]
+Las API Keys heredan los permisos del administrador que las genera, tienen una validez de un año y dejan de mostrarse después de cerrar el diálogo de generación. La documentación también señala límites de claves por appliance y administrador. El valor de la clave solo se muestra durante su generación; después de cerrar la ventana no puede recuperarse. La rotación debe documentarse como una operación administrativa manual; no asumir que existe un endpoint de renovación automática. [R03] [R04]
 
 ## Firmware y limitaciones
 
@@ -132,7 +132,7 @@ La referencia OpenAPI incluye muchos más módulos que las herramientas XML orig
 | Live sessions | Lista de sesiones activas y desconexión de una sesión | Implementar; el endpoint de listado documenta un array plano, no asumir paginación |
 | VPN | IPsec profiles, failover groups, site-to-site y live state; SSL VPN remote access y otros recursos documentados | Seleccionar operaciones compatibles; documentar explícitamente exclusiones |
 | Network interfaces | Operaciones documentadas para interfaces | Empezar por lectura; no inferir operaciones de escritura por analogía con UI/XML |
-| System/health | Firewall health check y otros endpoints de estado/configuración documentados | Recuperar solo información que REST realmente proporcione; no prometer modelo/serial/uptime sin endpoint |
+| System/health | Endpoints de estado/configuración que aparezcan en el OpenAPI local | Incluir únicamente datos realmente expuestos por REST; la pantalla Firewall Health Check del Web Admin UI no prueba por sí misma que exista un endpoint REST equivalente |
 
 ## Firewall rules
 
@@ -176,7 +176,7 @@ La primera versión debe:
 
 No ofrecer “VPN management” genérico. Separar configuración y estado operativo. La cobertura de OpenAPI enumera recursos de perfiles/failover/IPsec y SSL VPN, pero las limitaciones publicadas excluyen modalidades concretas. Cada una se debe clasificar por operación y firmware. [R04] [R11]
 
-Las interfaces y la información de salud deben basarse en los endpoints reales. El objetivo es recuperar las funciones útiles de system/status sin volver a prometer modelo, número de serie, firmware o uptime si no existe una operación que los entregue.
+Las interfaces y la información de salud deben basarse en los endpoints reales. La función Firewall Health Check del Web Admin UI está documentada como una comprobación de configuración/CIS, pero no debe convertirse en una herramienta MCP salvo que el YAML local contenga un endpoint REST específico que devuelva esos datos. El objetivo es recuperar funciones útiles de system/status sin volver a prometer modelo, número de serie, firmware, uptime o health score si no existe una operación que los entregue. [R24]
 
 # 5. OpenAPI como contrato de implementación
 
@@ -221,7 +221,7 @@ Configuración recomendada:
 |---|---|
 | SOPHOS_HOST | IP/DNS del appliance |
 | SOPHOS_PORT | Puerto HTTPS actual del Web Admin Console |
-| SOPHOS_API_KEY | API Key del administrador dedicado |
+| SOPHOS_API_KEY / SOPHOS_API_KEY_FILE | API Key del administrador dedicado; usar una única fuente, variable o fichero secreto montado |
 | SOPHOS_VERIFY_SSL | Verificación TLS; segura por defecto |
 | SOPHOS_CA_BUNDLE | CA privada opcional |
 | SOPHOS_TIMEOUT | Timeout configurable |
