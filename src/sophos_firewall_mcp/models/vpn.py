@@ -226,7 +226,11 @@ class VpnPageInput(_Input):
     context, and the caller raises it explicitly when it wants a bigger page.
     """
 
-    page: int = Field(default=1, ge=1, description="1-based page number.")
+    page: int = Field(
+        default=1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         default=10,
         ge=1,
@@ -242,7 +246,10 @@ class VpnPageInput(_Input):
         default=False,
         validation_alias=AliasChoices("page_total", "pageTotal"),
         serialization_alias="pageTotal",
-        description="Ask the appliance for pages.total and pages.items.",
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
     )
 
 

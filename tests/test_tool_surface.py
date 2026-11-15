@@ -398,7 +398,8 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
             for match in pattern.finditer(text):
                 offenders.append(f"{where} [{label}]: ...{_marker_snippet(text, match)}...")
 
-    assert offenders == [], (
-        f"{len(offenders)} internal marker(s) reached the published surface:\n"
-        + "\n".join(offenders)
-    )
+    if offenders:
+        report = "\n".join(offenders)
+        raise AssertionError(
+            f"{len(offenders)} internal marker(s) reached the published surface:\n{report}"
+        )

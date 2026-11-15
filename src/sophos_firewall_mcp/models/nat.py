@@ -505,7 +505,11 @@ class NatRuleListInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    page: int = Field(default=1, ge=1, description="1-based page number.")
+    page: int = Field(
+        default=1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         default=10,
         ge=1,
@@ -518,7 +522,10 @@ class NatRuleListInput(BaseModel):
     page_total: bool = Field(
         default=False,
         serialization_alias="pageTotal",
-        description="Ask the appliance for pages.total and pages.items metadata.",
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
     )
     name_contains: str | None = Field(
         default=None,

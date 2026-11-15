@@ -238,7 +238,11 @@ class ListQuery(_InputModel):
     context, and the caller raises it explicitly when it wants a bigger page.
     """
 
-    page: int = Field(1, ge=1)
+    page: int = Field(
+        1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         10,
         ge=1,
@@ -248,7 +252,13 @@ class ListQuery(_InputModel):
             "explicitly for a bigger page."
         ),
     )
-    page_total: bool = False
+    page_total: bool = Field(
+        False,
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
+    )
     name_contains: str | None = Field(None, min_length=1, max_length=255)
     name_not_equals: str | None = Field(None, min_length=1, max_length=255)
 
