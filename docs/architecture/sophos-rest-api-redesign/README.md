@@ -4,7 +4,7 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 
 ## Documentos
 
-- [Plan técnico revisado (MCP output schemas, permisos Sophos y límites de resultados)](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y nueve issues.
+- [Plan técnico revisado (MCP output schemas, permisos Sophos y límites de resultados)](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y diez issues.
 - [Referencias](./REFERENCES.md): URLs del YAML del repositorio, documentación oficial Sophos, operaciones endpoints, RFC y SDK MCP.
 - [Acceso al laboratorio](./LAB-ACCESS.md): endpoint del appliance, API key de solo lectura, variables de entorno y advertencias. Credencial en claro por decisión del propietario; solo laboratorio.
 - [Informe de auditoría independiente](./INDEPENDENT_REVIEW_REPORT.md): revisión de 15 de noviembre de 2026 con baseline verificado, tabla de conformidad MCP/Sophos, hallazgos, cambios realizados en el plan y las issues, y evidencia pendiente del appliance.
@@ -33,7 +33,8 @@ La especificación OpenAPI versionada es el contrato inicial. La documentación 
 | M2 | [#28 — NAT rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) | Reglas NAT IPv4/IPv6. |
 | M2 | [#29 — Network addresses and services](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) | Direcciones, grupos, servicios y referencias. |
 | M2 | [#30 — Network users and live sessions](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) | Usuarios de red, paginación, sesiones y desconexión. |
-| M2 | [#31 — VPN, interfaces and read-only status](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN, interfaces y diagnósticos read-only seleccionados. |
+| M2 | [#31 — VPN, network architecture and read-only status](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN en solo lectura, arquitectura de red (interfaces, zonas, rutas, DHCP, DNS, vecinos; escrituras solo VLAN) y diagnósticos read-only. |
+| M2 | [#35 — Rule audit, connectivity explanation and object usage](https://github.com/lordraiden/sophos-firewall-mcp/issues/35) | Auditoría de reglas, explicación de conectividad y uso de objetos: herramientas composite, read-only, sin operaciones nuevas. |
 | M3 | [#32 — Hardening and release](https://github.com/lordraiden/sophos-firewall-mcp/issues/32) | Seguridad, validación, despliegue y preparación de release. |
 
 ## Dependencias

@@ -191,6 +191,8 @@ MCPServer (SDK v2.3.0, subscriptions=False)
 
 ## 7. Alcance de herramientas del primer release
 
+> **Nota (15 de noviembre de 2026):** la tabla siguiente es la foto **previa** a la revisión de alcance del propietario y ya no es el alcance vigente. El alcance actual es **145 operaciones / 152 herramientas MCP / 11 dominios** ([ADR-001 §10](../ADR-001-rest-client-strategy.md), [API-COVERAGE.md §4](../../API-COVERAGE.md)): MAC con CRUD completo, country groups en lectura, escrituras de interfaz solo para `type: vlan`, dominio de arquitectura de red, herramientas de auditoría [#35](https://github.com/lordraiden/sophos-firewall-mcp/issues/35) y `enable/disable` + `clone` en reglas de firewall. VPN sigue en solo lectura (20 operationIds) y bulk delete sigue excluido. Se conserva como registro histórico de la auditoría.
+
 Derivado del contrato y de las decisiones del plan (no del XML):
 
 | Dominio | operationIds en alcance | Superficie MCP propuesta | Excluido / diferido |

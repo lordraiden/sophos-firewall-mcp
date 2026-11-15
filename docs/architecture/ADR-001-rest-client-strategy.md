@@ -62,7 +62,7 @@ transport). The plan explicitly left this open and required evidence from a boun
 | Component schemas | **32**, all referenced, **0** unreferenced, **0** cycles |
 | `schema` keyword sites | **4,981** — 339 request bodies + 3,926 response media types + 706 parameters + 10 response headers (`Location` on the 201 responses) |
 | Media-type schema sites | **4,265** (339 request-body + 3,926 response media-type); **162,760** JSON nodes under them (objects, arrays and scalars) — reproduces the independent audit's figures |
-| Reachable schema objects | **38,541** = 32 component schemas + **38,509 inline** schema objects (unique schema objects reached through `properties`/`items`/`allOf`/`oneOf`/`anyOf`); 52,852 dict nodes |
+| Reachable schema objects | **38,539** = 32 component schemas + **38,507 inline** schema objects (unique schema objects reached through `properties`/`items`/`allOf`/`oneOf`/`anyOf`); 52,850 dict nodes |
 | Largest inline schema | **1,148 JSON nodes** (373 dict nodes) — `PATCH /firewall/rules/ipv4/{idOrName}` request body |
 | Constructs | `allOf` 2,046 · `oneOf` 1,130 · `anyOf` 0 · `discriminator` 26 · `not` 6 · `nullable` 294 |
 
@@ -71,7 +71,7 @@ transport). The plan explicitly left this open and required evidence from a boun
 > §2.2): 339 request-body + 3,926 response media-type schema sites = **4,265**, and every JSON node under
 > them (objects, arrays and scalars) = **162,760**. (2) *Reachable schema objects* — every `schema` site plus
 > the component schemas, counting each distinct schema object reached through
-> `properties`/`items`/`allOf`/`oneOf`/`anyOf` = **38,541** (38,509 inline + 32 component), with 52,852 dict
+> `properties`/`items`/`allOf`/`oneOf`/`anyOf` = **38,539** (38,507 inline + 32 component), with 52,850 dict
 > nodes. The 10 `Location` response-header schemas and the 706 parameter schemas are excluded from
 > definition (1) and included in the 4,981 total. `docs/API-COVERAGE.md` (#24/T4) must state which
 > definition it uses.

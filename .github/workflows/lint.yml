@@ -22,10 +22,13 @@ jobs:
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install flake8 mypy
+          pip install -r requirements-dev.txt
 
       - name: flake8
         run: flake8 src/sophos_firewall_mcp tests scripts
 
       - name: mypy
         run: mypy src/sophos_firewall_mcp
+
+      - name: black
+        run: black --check src tests scripts

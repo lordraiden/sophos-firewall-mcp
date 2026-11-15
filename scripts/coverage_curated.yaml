@@ -167,7 +167,7 @@ domains:
       - "Zone, gateway, static-route, SD-WAN, DHCP, DNS, neighbor and router-advertisement mutations are excluded from v1."
       - "Global DHCP server settings and neighbor settings are classified but not exposed."
     caveats:
-      - "Physical, bridge, LAG and XFRM interfaces stay read-only because a wrong mutation can interrupt management connectivity and the contract does not let the tool validate the interface type before the write; the VLAN tools reject any type other than `vlan`."
+      - "Physical, bridge, LAG and XFRM interfaces stay read-only because a wrong mutation can interrupt management connectivity. The VLAN tools must read the interface first with `getNetworkInterface` (in scope; the response carries `type`) and refuse any type other than `vlan` before create, update or delete; `deleteNetworkInterface` has no request body, so that pre-read is the only way to enforce the rule."
       - "The network domain is the read-only architecture view; it is not a configuration editor for routing or DHCP."
       - "Distinguish configured routes and gateways from live state; the contract exposes no live routing table."
     default_exclusion: "Not in the v1 network scope: global settings reads and operations outside the read-only architecture view are classified here (PLAN §4; #31)."
@@ -392,9 +392,9 @@ tool_notes:
   getIpsecSiteToSiteLiveConnectionsIpv4: "live state, not configuration"
   listNetworkInterfaces: "read-only in v1"
   getNetworkInterface: "read-only in v1"
-  createNetworkInterface: "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
-  updateNetworkInterface: "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
-  deleteNetworkInterface: "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
+  createNetworkInterface: "VLAN only: pre-reads the interface with getNetworkInterface and rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
+  updateNetworkInterface: "VLAN only: pre-reads the interface with getNetworkInterface and rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
+  deleteNetworkInterface: "VLAN only: pre-reads the interface with getNetworkInterface and rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
   getDnsProtectionStatus: "read-only status; not a general firewall health check"
   getCellularWanStatus: "read-only status; not a general firewall health check"
 
