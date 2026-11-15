@@ -1202,7 +1202,7 @@ class ListFirewallRulesIpv4Output(ListPage[FirewallRuleIpv4Output]):
 
 
 class ListFirewallRulesIpv6Output(ListPage[FirewallRuleIpv6Output]):
-    """One page of IPv6 firewall rules (the IPv6 contract has no WAF variant)."""
+    """One page of IPv6 firewall rules (the IPv6 API has no WAF variant)."""
 
 
 class DeleteFirewallRuleOutput(_WireModel):

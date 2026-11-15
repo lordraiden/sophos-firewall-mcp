@@ -493,7 +493,7 @@ class NatRuleIpv6SnatOverrideInput(BaseModel):
 
 
 class NatRuleListInput(BaseModel):
-    """Query contract of ``getAllNatRulesIpv4``/``getAllNatRulesIpv6``.
+    """Query parameters of ``getAllNatRulesIpv4``/``getAllNatRulesIpv6``.
 
     One page per call. ``nameContains`` and ``nameNotEquals`` are documented as mutually
     exclusive, so at most one may be set.
@@ -597,7 +597,7 @@ class _NatRuleCreateBase(BaseModel):
         default=None, max_length=255, description="Free-text description."
     )
     enabled: bool = Field(
-        default=True, description="Turn the NAT rule on or off (contract default: true)."
+        default=True, description="Turn the NAT rule on or off (API default: true)."
     )
     position: NatRulePosition | None = Field(
         default=None, description="Where to insert the rule in the rule base."

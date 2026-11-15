@@ -2939,7 +2939,7 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "decisive rule, matching NAT rules with their linkedFirewallRule, the routing "
             "decision (local, static route, default route or no route) and a verdict of allowed, "
             "denied, no-matching-rule or not-verifiable. method is always config-analysis: this "
-            "is NOT a packet test, and the REST contract exposes no ping, traceroute, packet "
+            "is NOT a packet test, and the REST API exposes no ping, traceroute, packet "
             "capture or live flow simulation. An IP is resolved to the local interface and zone "
             "that contain it; a non-local destination is routed over the configured static "
             "unicast routes and gateways (no live routing table exists). Rules whose network or "
@@ -2961,7 +2961,7 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         title="Find object usage",
         description=(
             "Find every reference to an address, address group, service or service group, "
-            "read-only. The REST contract has no usage endpoint, so the tool scans the audited "
+            "read-only. The REST API has no usage endpoint, so the tool scans the audited "
             "list operations and reports every firewall rule (with evaluation position, IP "
             "family and enabled state), NAT rule and group that references the object. Inputs: "
             "object_type (address, address-group, service, service-group), identifier (name or "

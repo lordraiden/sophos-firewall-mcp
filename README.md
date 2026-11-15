@@ -215,10 +215,11 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **152 tools in a single response**: **950,591 bytes**, roughly **238k tokens**
-at ~4 bytes per token. There is no pagination cursor, so a client that injects the whole catalog into
-the prompt either truncates it — and then cannot call the tools that were cut — or exhausts the
-context window before the first call.
+`tools/list` returns all **152 tools in a single response**: **894,142 bytes**, roughly **223k tokens**
+at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO on
+a 2026-07-28 connection, including the trailing newline. There is no pagination cursor, so a client
+that injects the whole catalog into the prompt either truncates it — and then cannot call the tools
+that were cut — or exhausts the context window before the first call.
 
 The catalog is static for the process lifetime, so:
 

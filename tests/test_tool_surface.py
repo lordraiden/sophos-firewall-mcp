@@ -14,9 +14,9 @@ the invariants that only the whole surface can prove:
   (M1, the 0.5.0 breaking change);
 * every published output property name, at every depth of the response body, is camelCase
   (the 0.6.0 output contract);
-* no internal planning marker (a decision ID, "the contract", "the lab appliance", an issue
-  number, a dated live observation) reaches any published description, schema or the server
-  instructions (M4).
+* no internal planning marker (a decision ID, any reference to "the contract", "the lab
+  appliance", an issue number, a dated live observation) reaches any published description,
+  title, annotations, schema or the server instructions (M4).
 
 The curated file is read directly: it is the human decision record the server is built from,
 and ``tests/test_coverage.py`` already validates its structure against the contract.
@@ -70,17 +70,23 @@ CAMEL_CASE_PATTERN = re.compile(r"^[a-z][a-zA-Z0-9]*$")
 
 #: Internal planning markers that must never reach the published surface (M4).
 #:
-#: Tool descriptions, input schemas, output schemas and the server instructions are all
-#: model-facing: the MCP specification tells clients to treat tool definitions as untrusted
-#: input, and a model reads them as instructions. A decision ID (``M11``), a reference to
-#: the checked-in OpenAPI file ("the contract"), a note about the owner's lab ("the lab
-#: appliance"), a GitHub issue number or a dated live observation is meaningless to a
-#: model, dilutes the sentence that matters, and discloses internal process to anyone who
-#: runs ``tools/list``. The rationale for those decisions belongs in the Python docstrings
-#: and the planning documents, not in the published schema.
+#: Tool descriptions, titles, annotations, input schemas, output schemas and the server
+#: instructions are all model-facing: the MCP specification tells clients to treat tool
+#: definitions as untrusted input, and a model reads them as instructions. A decision ID
+#: (``M11``), a reference to the checked-in OpenAPI file ("the contract", "whose contract",
+#: "Query contract", "REST contract"), a note about the owner's lab ("the lab appliance"),
+#: a GitHub issue number or a dated live observation is meaningless to a model, dilutes the
+#: sentence that matters, and discloses internal process to anyone who runs ``tools/list``.
+#: The rationale for those decisions belongs in the Python docstrings and the planning
+#: documents, not in the published schema.
+#:
+#: The contract pattern is the bare word, not one phrase: the earlier exact-phrase pattern
+#: let ten published strings through in variant forms ("whose contract declares", "Query
+#: contract of", "contract default", "the REST contract", "the IPv6 contract"), so the
+#: guard now fails on any occurrence and the published text says "the API" instead.
 INTERNAL_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("decision id (M<n>)", re.compile(r"\bM\d+\b")),
-    ("'the contract'", re.compile(r"\bthe contract\b", re.IGNORECASE)),
+    ("'contract'", re.compile(r"\bcontract", re.IGNORECASE)),
     ("'lab appliance'", re.compile(r"\blab appliance\b", re.IGNORECASE)),
     ("'issue #'", re.compile(r"\bissue #", re.IGNORECASE)),
     ("'live observation'", re.compile(r"\blive observation\b", re.IGNORECASE)),
@@ -358,19 +364,22 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
     Every string a tool publishes is read by the model, and the MCP specification tells
     clients to treat tool definitions as untrusted input. Internal process text therefore
     does not belong there: a decision ID (``M11``), a reference to the checked-in OpenAPI
-    file ("the contract"), a note about the owner's lab ("the lab appliance"), a GitHub
-    issue number or a dated live observation is meaningless to a model, dilutes the
-    sentence that matters, and discloses internal process to anyone who runs
-    ``tools/list``.
+    file ("the contract" and its variants), a note about the owner's lab ("the lab
+    appliance"), a GitHub issue number or a dated live observation is meaningless to a
+    model, dilutes the sentence that matters, and discloses internal process to anyone who
+    runs ``tools/list``.
 
-    The sweep is deliberately global and strict: it walks the description, the input
-    schema and the output schema of all 152 tools plus the server instructions, with no
-    allowlist, so a single reintroduced marker fails here instead of reaching a caller.
-    The counts are pinned so the scan cannot silently shrink to a subset of the surface.
+    The sweep is deliberately global and strict: it walks the description, the title, the
+    annotations, the input schema and the output schema of all 152 tools plus the server
+    instructions, with no allowlist, so a single reintroduced marker fails here instead of
+    reaching a caller. The counts are pinned so the scan cannot silently shrink to a subset
+    of the surface.
 
     The schemas are scanned as serialized JSON, which is what the client receives: a
     marker in a ``$defs`` model docstring, a field description or an enum description is
-    published text even though it never appears in the tool's own ``description``.
+    published text even though it never appears in the tool's own ``description``. The
+    title and annotations are scanned too: they are published on every tool object and the
+    earlier sweep skipped them.
     """
     server = make_server()
     tools = list(await server.list_tools())
@@ -383,14 +392,20 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
     blobs: dict[str, str] = {"<server instructions>": instructions}
     for tool in tools:
         assert tool.description, tool.name
+        assert tool.title, tool.name
+        assert tool.annotations is not None, tool.name
         assert tool.input_schema, tool.name
         assert tool.output_schema is not None, tool.name
         blobs[f"{tool.name} description"] = tool.description
+        blobs[f"{tool.name} title"] = tool.title
+        blobs[f"{tool.name} annotations"] = json.dumps(
+            tool.annotations.model_dump(), sort_keys=True, default=str
+        )
         blobs[f"{tool.name} inputSchema"] = json.dumps(tool.input_schema, sort_keys=True)
         blobs[f"{tool.name} outputSchema"] = json.dumps(tool.output_schema, sort_keys=True)
 
-    # 152 tools x 3 published strings, plus the server instructions.
-    assert len(blobs) == EXPECTED_TOOL_COUNT * 3 + 1
+    # 152 tools x 5 published strings, plus the server instructions.
+    assert len(blobs) == EXPECTED_TOOL_COUNT * 5 + 1
 
     offenders: list[str] = []
     for where, text in blobs.items():

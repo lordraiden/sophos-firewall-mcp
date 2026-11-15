@@ -23,7 +23,7 @@ to stderr. ``MCPServer(..., subscriptions=False)`` is used because the tool cata
 static for the process lifetime (the read-only mode is applied at startup), so the SDK
 must not advertise ``subscriptions/listen`` or ``listChanged``. The same static catalog
 is why ``cache_hints`` gives ``tools/list`` and ``server/discover`` a long TTL: the SDK
-default of ``0`` means "immediately stale" and makes a client re-fetch a ~950 KB payload
+default of ``0`` means "immediately stale" and makes a client re-fetch a ~894 KB payload
 on every turn.
 
 Identity
@@ -97,7 +97,7 @@ _UNKNOWN_VERSION = "0.0.0+unknown"
 #: The tool catalog cannot change while the process runs -- the read-only mode is applied
 #: at startup and ``subscriptions=False`` is passed, so no ``listChanged`` notification is
 #: ever sent. The SDK default is ``0``, which the MCP caching specification defines as
-#: "immediately stale" and which makes a client re-fetch a ~950 KB ``tools/list`` payload
+#: "immediately stale" and which makes a client re-fetch a ~894 KB ``tools/list`` payload
 #: on every turn. One hour matches the ``server/discover`` example in the specification
 #: and is short enough that a client notices a restarted server (a different read-only
 #: mode) within a session.
@@ -156,8 +156,10 @@ def _package_identity() -> _PackageIdentity:
 
     ``pyproject.toml`` is the single source of truth: the build backend copies its
     ``version``, ``description`` and ``Homepage`` URL into the distribution metadata, and
-    :mod:`importlib.metadata` reads them back at runtime. Nothing is duplicated in code,
-    so a release bump cannot leave ``serverInfo`` reporting a stale version.
+    :mod:`importlib.metadata` reads them back at runtime. The version is not duplicated in
+    code, but the *installed* metadata can lag behind ``pyproject.toml`` in a checkout that
+    was never reinstalled, so ``serverInfo`` reports what is installed and the test suite
+    compares it against ``pyproject.toml`` to catch that drift.
 
     A source checkout that was never installed has no metadata. That is not a reason to
     refuse to start: the version falls back to :data:`_UNKNOWN_VERSION` and the optional

@@ -607,7 +607,7 @@ class ExplainConnectivityOutput(_Output):
 class FindObjectUsageInput(_Input):
     """Input of ``find_object_usage``: one object type and a name or UUID.
 
-    The REST contract has no usage endpoint, so the tool derives references by scanning the
+    The REST API has no usage endpoint, so the tool derives references by scanning the
     relevant list operations. ``ip_family`` narrows address and address-group lookups;
     ``max_references`` bounds the returned references.
     """

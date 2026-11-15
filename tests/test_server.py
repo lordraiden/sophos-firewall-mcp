@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from contextlib import AbstractAsyncContextManager
 from email.message import EmailMessage
 from pathlib import Path
@@ -61,6 +62,10 @@ from sophos_firewall_mcp.tools import (
 )
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+
+#: The project metadata the installed distribution is built from. The version test reads
+#: it directly so a stale install cannot pass by comparing the metadata to itself.
+PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 #: Set by the slow synthetic handler so the cancellation test knows the handler is running.
 _SLOW_STARTED: asyncio.Event | None = None
@@ -330,13 +335,33 @@ def test_package_identity_falls_back_when_the_distribution_is_not_installed(monk
     assert identity.website_url is None
 
 
+def declared_project_version() -> str:
+    """The ``project.version`` declared in ``pyproject.toml``.
+
+    Parsed with :mod:`tomllib` (standard library, Python 3.11+) rather than read from the
+    installed metadata: the installed metadata is exactly what the server reports, so
+    comparing it to itself cannot detect a stale install.
+    """
+    document = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    version = document["project"]["version"]
+    assert isinstance(version, str) and version.strip()
+    return version
+
+
 async def test_server_info_carries_the_package_identity():
-    """M2: ``serverInfo`` identifies the build instead of reporting an empty version."""
+    """M2: ``serverInfo`` identifies the build instead of reporting an empty version.
+
+    The version is compared against ``pyproject.toml``, not against
+    :func:`importlib.metadata.version`: the server reads the installed metadata, so a test
+    that reads the same source is tautological and cannot catch the drift this test exists
+    to catch (a checkout whose editable install was never refreshed after a version bump).
+    """
     try:
-        installed_version = importlib.metadata.version("sophos-firewall-mcp-server")
+        importlib.metadata.version("sophos-firewall-mcp-server")
     except importlib.metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
         pytest.skip("the distribution is not installed; the fallback is covered separately")
 
+    declared_version = declared_project_version()
     server = create_server(make_settings())
 
     async with Client(server) as client:
@@ -345,7 +370,7 @@ async def test_server_info_carries_the_package_identity():
     assert info.name == SERVER_NAME
     assert info.title == SERVER_TITLE
     assert info.version
-    assert info.version == installed_version
+    assert info.version == declared_version
     assert info.description
     assert info.website_url == "https://github.com/lordraiden/sophos-firewall-mcp"
 
@@ -363,13 +388,36 @@ async def test_tools_list_advertises_a_cache_hint():
     assert result.cache_scope == "private"
 
 
-def test_both_static_catalog_methods_carry_the_hint():
-    """H1/L7: ``server/discover`` is as static as ``tools/list``, so it gets the same TTL."""
-    hints = server_module._CATALOG_CACHE_HINTS
+async def test_server_discover_advertises_the_cache_hint_on_the_wire():
+    """H1/L7: ``server/discover`` carries ``ttlMs`` on the wire, not only in the config.
 
-    assert set(hints) == {"tools/list", "server/discover"}
-    assert all(hint.ttl_ms == server_module._CATALOG_TTL_MS for hint in hints.values())
-    assert server_module._CATALOG_TTL_MS > 0
+    The SDK's ``Client`` has no ``discover()`` helper in 2.3.0, but its public ``session``
+    does, and in ``auto`` mode the client probes ``server/discover`` during connect: the
+    result asserted here is the parsed response of that wire exchange. A regression in the
+    SDK's application of the hint to this method, or a dropped ``cache_hints`` entry, fails
+    here instead of only in the module-level dict.
+    """
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "sophos_firewall_mcp.server"],
+        env={
+            "PYTHONPATH": str(SRC_DIR),
+            "SOPHOS_HOST": "192.0.2.10",
+            "SOPHOS_API_KEY": "test-api-key-not-real",
+            "SOPHOS_VERIFY_SSL": "false",
+        },
+    )
+
+    async with asyncio.timeout(60):
+        async with Client(params) as client:
+            # The modern handshake proves the probe ran and was adopted.
+            assert client.protocol_version == "2026-07-28"
+            discovered = await client.session.discover()
+
+    assert discovered.ttl_ms == server_module._CATALOG_TTL_MS
+    assert discovered.ttl_ms > 0
+    # The catalog is per-connection state, not a public document.
+    assert discovered.cache_scope == "private"
 
 
 def test_create_server_from_env_validates_the_environment():

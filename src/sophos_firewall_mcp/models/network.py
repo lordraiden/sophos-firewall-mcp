@@ -241,7 +241,7 @@ class _Input(BaseModel):
 class PageInput(_Input):
     """One page of a paginated collection.
 
-    Only for the operations whose contract declares ``page``/``pageSize``/``pageTotal``.
+    Only for the operations whose API declares ``page``/``pageSize``/``pageTotal``.
     The bounds are validated here and again by the client before any I/O: the appliance
     accepts ``page=0`` and rejects ``pageSize`` above 100 with ``400 invalidPageSizeParam``.
 
