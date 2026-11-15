@@ -8,9 +8,11 @@ from pydantic import BaseModel, ValidationError
 from sophos_firewall_mcp.models.common import (
     ListPage,
     ObjectName,
+    ObjectNameOrId,
     ObjectRef,
     Pages,
     validate_object_name,
+    validate_object_name_or_id,
 )
 
 UUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
@@ -89,3 +91,24 @@ def test_object_name_annotation_is_enforced_by_pydantic():
     assert Model(name="LAN").name == "LAN"
     with pytest.raises(ValidationError):
         Model(name="bad,name")
+
+
+@pytest.mark.parametrize("value", ["LAN", "allow.lan.to.wan", UUID, UUID.upper()])
+def test_object_name_or_id_accepts_names_and_uuids(value: str):
+    assert validate_object_name_or_id(value) == value
+
+
+@pytest.mark.parametrize("value", ["", " leading", "a,b", "a;b", "a\x00b"])
+def test_object_name_or_id_rejects_invalid_names(value: str):
+    with pytest.raises(ValueError):
+        validate_object_name_or_id(value)
+
+
+def test_object_name_or_id_annotation_is_enforced_by_pydantic():
+    class Model(BaseModel):
+        identifier: ObjectNameOrId
+
+    assert Model(identifier=UUID).identifier == UUID
+    assert Model(identifier="LAN").identifier == "LAN"
+    with pytest.raises(ValidationError):
+        Model(identifier="bad,name")

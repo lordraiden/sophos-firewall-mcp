@@ -17,9 +17,11 @@ from pydantic import AfterValidator, BaseModel, ConfigDict
 __all__ = [
     "ListPage",
     "ObjectName",
+    "ObjectNameOrId",
     "ObjectRef",
     "Pages",
     "validate_object_name",
+    "validate_object_name_or_id",
 ]
 
 #: Characters the documented ``sfos-object-name`` format forbids: comma, semicolon and
@@ -106,3 +108,23 @@ def validate_object_name(value: str) -> str:
 
 #: ``str`` annotated with the documented Sophos object-name validation.
 ObjectName = Annotated[str, AfterValidator(validate_object_name)]
+
+
+def validate_object_name_or_id(value: str) -> str:
+    """Validate the documented ``sfos-object-name-or-id`` format.
+
+    A UUID is accepted as an identifier; anything else must be a valid object name. GET,
+    PATCH and DELETE paths use this form, so the same value may be a name or an id.
+
+    Raises:
+        ValueError: The value is neither a UUID nor a valid Sophos object name.
+    """
+    if not isinstance(value, str):
+        raise ValueError("object identifier must be a string")
+    if _UUID_PATTERN.match(value):
+        return value
+    return validate_object_name(value)
+
+
+#: ``str`` annotated with the documented name-or-id validation.
+ObjectNameOrId = Annotated[str, AfterValidator(validate_object_name_or_id)]
