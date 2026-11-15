@@ -22,7 +22,9 @@ Se corrigieron **21 defectos de planificación y de issues** (tabla completa en 
 4. **Contradicción #25 ↔ #26.** #25 pedía "coordinar" la interfaz del cliente con #26, que estaba bloqueada por #25. Corregido: #25 posee el contrato público (métodos, excepciones, `aclose`) y #26 lo consume.
 5. **Criterios de aceptación no verificables** (evidencia de firmware sin protocolo, "un agente puede implementar sin inventar", "justificado"). Corregido con un protocolo de verificación en vivo (#24), un criterio medible y decisiones registradas.
 
-**Lo que no se pudo probar:** compatibilidad con un SFOS concreto, comportamiento real de PATCH sobre arrays, truncamiento de `live-users` en `maxSize`, permisos efectivos de un perfil y respuesta de la API ante escrituras ambiguas. Todo ello queda marcado como pendiente de appliance.
+**Validación en vivo (15 nov 2026):** se probó el appliance real `10.10.10.1:443` solo con lecturas. La API responde, la clave Bearer autentica y se leyeron correctamente 20+ endpoints (firewall, NAT, usuarios, sesiones, interfaces, VPN, objetos, perfiles). La evidencia está en [`docs/live-evidence/api-smoke-2026-11-15.md`](../live-evidence/api-smoke-2026-11-15.md) y resolvió varias incógnitas del informe (ver §2.3).
+
+**Lo que sigue sin probarse:** build exacto de SFOS, comportamiento real de PATCH sobre arrays, conflictos 409, permisos efectivos ante escrituras y respuesta ante escrituras ambiguas. Todo ello queda marcado como pendiente.
 
 ---
 
@@ -58,6 +60,24 @@ Se corrigieron **21 defectos de planificación y de issues** (tabla completa en 
 | Media types | 338 operaciones con body `application/json`; 1 `multipart/form-data` (`importTrustedMacs`, fuera de alcance) |
 
 **Firmware objetivo:** no identificado. La ayuda y las release notes sitúan la REST API en SFOS 23.0 GA Build 371 (4 de noviembre de 2026), pero el portal de API Reference **no declara versión de SFOS** (solo la versión del contrato) y nada demuestra que el appliance del propietario ejecute ese build. Estado: **pendiente de verificación en vivo**.
+
+### 2.3 Validación en vivo (15 de noviembre de 2026)
+
+Smoke test de solo lectura contra el appliance real (`https://10.10.10.1:443/api/firewall-config/v1`), documentado en [`docs/live-evidence/api-smoke-2026-11-15.md`](../live-evidence/api-smoke-2026-11-15.md).
+
+| Comprobación | Resultado |
+|---|---|
+| Conectividad y TLS | TCP/443 y HTTP/2 OK; certificado autofirmado del appliance |
+| Autenticación Bearer | 200 en `system-settings`; 401 JSON con token inválido o ausente |
+| Endpoints leídos | firewall rules, NAT, users, network-users, live-users, interfaces, services, service-groups, addresses, address-groups, IPsec profiles/failover/connections/live, SSL VPN policies, administrators, access profiles |
+| `live-users` | `pages {current:1, maxSize:100, size:50}`; acepta `page`, `pageSize` y `pageTotal` aunque el contrato no los declare |
+| `pageTotal=true` | añade `pages.total` y `pages.items` (verificado en users, firewall rules y live-users) |
+| `pageSize > 100` | 400 `invalidPageSizeParam` en todos los listados, incluso donde el contrato no declara máximo |
+| `page=0` | 200 con `current:0` (el contrato exige `minimum: 1`); el cliente debe validar |
+| Envelopes de error | JSON para 401/400 y 404 de recurso; HTML para path inexistente; texto plano para 405; HTML para PUT |
+| Perfil de la clave | Inferencia: administrador dedicado `admin_mcp` con perfil "Read only Admin" (47 permisos, todos `readOnly`); no se probaron escrituras |
+
+**Consecuencia:** se resuelven las incógnitas sobre `pageTotal`, `maxSize` y paginación de `live-users`; el build de SFOS sigue sin determinarse y las escrituras siguen sin probarse.
 
 ---
 
@@ -258,9 +278,9 @@ Aciclo confirmado. El único ciclo blando detectado (#25 pedía coordinar con #2
 1. **Build de SFOS del appliance destino:** desconocido. Sin él no se puede afirmar compatibilidad; el plan lo marca como pendiente y la evidencia en vivo lo exige.
 2. **Topología/HA y modelo de hardware:** desconocidos; afectan a interfaces y a la lista de no soportadas (HA no está en la API).
 3. **Semántica real de PATCH en arrays:** el contrato documenta merge por `name` en 4 operaciones; el resto se asume RFC 7396. Verificar en firmware.
-4. **Truncamiento de `live-users` en `maxSize`:** el contrato no define continuación; hay que observar el comportamiento real.
-5. **Permisos efectivos del perfil `Read-only`:** la documentación dice que `None` también oculta objetos; verificar qué devuelve la API con un perfil mínimo.
-6. **`pageTotal`:** el contrato no documenta qué cambia exactamente; verificar en firmware.
+4. **`live-users` y `maxSize`:** verificado en vivo que `maxSize` real es 100 (no 1000) y que el appliance acepta `page`/`pageSize`/`pageTotal` aunque el contrato no los declare. Queda decidir si el MCP los expone; la recomendación es no exponerlos en v1 y documentar la observación.
+5. **Permisos efectivos ante escrituras:** el perfil observado es de solo lectura, pero no se intentó mutar nada; falta verificar el 403 de permiso (no el 403 del front-end) y el comportamiento con `None`.
+6. **`pageTotal`:** resuelto en vivo: añade `pages.total` y `pages.items`. Falta decidir si el MCP lo expone (sí, es contrato declarado).
 7. **Comportamiento ante escrituras ambiguas:** Sophos dice "re-query"; no documenta idempotencia ni ETags. No inventar mecanismos.
 8. **`OpenAPI.yaml` descargable del appliance:** no hay declaración oficial de que pueda diferir del portal; la cautela es razonable pero no está documentada.
 
@@ -274,6 +294,7 @@ Aciclo confirmado. El único ciclo blando detectado (#25 pedía coordinar con #2
 - `docs/architecture/sophos-rest-api-redesign/REFERENCES.md` — reescrito: tablas reparadas, IDs R33–R39 añadidos, R13c (GHSA nuevo), R32 marcado como no normativo.
 - `docs/architecture/sophos-rest-api-redesign/README.md` — estado y enlace al informe.
 - `docs/architecture/sophos-rest-api-redesign/INDEPENDENT_REVIEW_REPORT.md` — este informe.
+- `docs/live-evidence/api-smoke-2026-11-15.md` — evidencia del smoke test real (sin credenciales).
 
 **Issues (editadas directamente en GitHub, sin PR):** #24, #25, #26, #27, #28, #29, #30, #31, #32.
 
