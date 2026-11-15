@@ -306,7 +306,7 @@ Utilizar el lifespan oficial del SDK:
 3. Exponer un objeto AppContext tipado a los handlers.
 4. Cerrar el cliente HTTP en el bloque de salida/finally.
 
-Los handlers reciben `Context[AppContext]` y acceden al objeto de lifespan mediante `ctx.request_context.lifespan_context`, tal como documenta la versión fijada. Ese parámetro es inyectado por el SDK y no forma parte del input schema. Para tools es válido `Context[AppContext]`; recursos/prompts usan la forma de Context documentada para esos handlers. No usar `client: Any = None` como parámetro visible ni crear un pool HTTP por llamada. [R16]
+Los handlers reciben `Context[AppContext]` y acceden al objeto de lifespan mediante `ctx.request_context.lifespan_context`, tal como documenta el SDK. `Context` lo inyecta el runtime y no forma parte del input schema. Con la versión v2.3.0 revisada, el Context tipado también funciona en prompts y resource templates si se conservan; no rebajar el tipo a `Any` ni asumir que una función auxiliar recibe Context ambientalmente. No usar `client: Any = None` como parámetro visible ni crear un pool HTTP por llamada. [R16] [R14]
 
 ## Herramientas e input schemas
 
