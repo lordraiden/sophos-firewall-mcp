@@ -16,6 +16,7 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md) y en las issues #2
 | R00d | Herramientas existentes | https://github.com/lordraiden/sophos-firewall-mcp/tree/main/src/sophos_firewall_mcp/tools | Comportamiento/alcance funcional de partida. |
 | R00e | Dependencias | https://github.com/lordraiden/sophos-firewall-mcp/blob/main/pyproject.toml | Dependencias y restricciones actuales. |
 | R00f | Changelog | https://github.com/lordraiden/sophos-firewall-mcp/blob/main/CHANGELOG.md | Historial de incidentes y decisiones técnicas. |
+| R40 | Acceso al laboratorio (appliance + API key) | [LAB-ACCESS.md](./LAB-ACCESS.md) | Endpoint `10.10.10.1:443`, API key de solo lectura, variables de entorno, endpoints verificados y advertencias. **Credencial en claro por decisión del propietario**; solo laboratorio. |
 
 ## B. Documentación oficial Sophos — API del appliance
 

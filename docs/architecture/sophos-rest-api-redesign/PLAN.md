@@ -14,6 +14,7 @@
 **Paginación en el contrato:** 83 operaciones GET aceptan `page`/`pageSize`/`pageTotal` (defaults 1/50/false; `pageSize` máximo 100 solo en `getUsers`, `getAdministrators` y `getNetworkUsers`); no existe `limit`, `offset` ni cursor en el documento.  
 **Auditoría independiente:** ver [INDEPENDENT_REVIEW_REPORT.md](./INDEPENDENT_REVIEW_REPORT.md) (15 de noviembre de 2026). Este plan incorpora las correcciones respaldadas por evidencia de esa revisión; las afirmaciones que dependen del firmware o del appliance siguen marcadas como pendientes de verificación.
 **Validación en vivo:** smoke test de solo lectura contra el appliance real el 15 de noviembre de 2026; evidencia en [docs/live-evidence/api-smoke-2026-11-15.md](../live-evidence/api-smoke-2026-11-15.md).
+**Acceso al laboratorio:** endpoint, API key de solo lectura y variables de entorno en [LAB-ACCESS.md](./LAB-ACCESS.md).
 
 > La documentación oficial online también muestra OpenAPI 3.0 y versión 1.0.0, y reproduce literalmente en su Introduction el texto de `info.description` de este YAML (base URL, Bearer, formatos de nombre y semántica PATCH). Aun así, el contrato que se implementa es el fichero versionado y la versión de SFOS objetivo; la página online puede actualizarse por separado.
 

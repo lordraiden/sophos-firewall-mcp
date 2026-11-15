@@ -294,7 +294,8 @@ Aciclo confirmado. El único ciclo blando detectado (#25 pedía coordinar con #2
 - `docs/architecture/sophos-rest-api-redesign/REFERENCES.md` — reescrito: tablas reparadas, IDs R33–R39 añadidos, R13c (GHSA nuevo), R32 marcado como no normativo.
 - `docs/architecture/sophos-rest-api-redesign/README.md` — estado y enlace al informe.
 - `docs/architecture/sophos-rest-api-redesign/INDEPENDENT_REVIEW_REPORT.md` — este informe.
-- `docs/live-evidence/api-smoke-2026-11-15.md` — evidencia del smoke test real (sin credenciales).
+- `docs/live-evidence/api-smoke-2026-11-15.md` — evidencia del smoke test real.
+- `docs/architecture/sophos-rest-api-redesign/LAB-ACCESS.md` — endpoint del laboratorio y API key de solo lectura (en claro por decisión del propietario), referenciada desde PLAN.md, REFERENCES.md (R40), el README y las nueve issues.
 
 **Issues (editadas directamente en GitHub, sin PR):** #24, #25, #26, #27, #28, #29, #30, #31, #32.
 
