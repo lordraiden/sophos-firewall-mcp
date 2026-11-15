@@ -6,6 +6,7 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 
 - [Plan técnico revisado (MCP output schemas, permisos Sophos y límites de resultados)](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y nueve issues.
 - [Referencias](./REFERENCES.md): URLs del YAML del repositorio, documentación oficial Sophos, operaciones endpoints, RFC y SDK MCP.
+- [Prompt de revisión independiente](./INDEPENDENT_REVIEW_PROMPT.md): auditoría exhaustiva de la planificación y las issues frente al contrato Sophos, la especificación MCP y el SDK Python oficial.
 
 ## Estado
 
