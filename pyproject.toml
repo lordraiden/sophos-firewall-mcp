@@ -1,7 +1,7 @@
 [project]
 name = "sophos-firewall-mcp-server"
 version = "0.5.0"
-description = "MCP server for the Sophos Firewall Configuration REST API (SFOS): typed, bounded administration tools over STDIO"
+description = "MCP server for the Sophos Firewall 23 (SFOS 23.0) Configuration REST API: 152 typed tools for firewall, NAT, objects, users, network and audit over STDIO"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
