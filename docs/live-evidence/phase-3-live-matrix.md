@@ -219,9 +219,16 @@ appliance.
 The generated [`docs/API-COVERAGE.md`](../API-COVERAGE.md) is the authoritative coverage
 matrix; this table is the phase-3 summary the Lead folds into it.
 
+**Counting method.** The **Operations in v1** column counts audited OpenAPI operations; the
+**Live-tested** and **Contract-tested only** columns count MCP tools. The 152 tools are the
+145 operation-backed tools plus the 3 read-only audit composites and the 4 firewall
+composites (the composites add no operation; the firewall ones are mutations). The 54
+mutation tools are therefore 50 operation-backed mutations plus the 4 firewall composites,
+and the read-only column sums to 98.
+
 | Domain | Operations in v1 | Live-tested (this run) | Contract-tested only | Unsupported / excluded | Deferred |
 |---|---|---|---|---|---|
-| Firewall rules | 12 | 4 read tools (list/get IPv4; list IPv6) | 8 mutations (create/update/delete/move, set-enabled, clone) | bulk delete, WAF `ruleType` | IPv6 get-by-id (no IPv6 rule on the appliance); all writes |
+| Firewall rules | 12 | 4 read tools (list/get IPv4; list IPv6) | 12 mutations (8 operations: create/update/delete/move × IPv4/IPv6; 4 composites: set-enabled ×2, clone ×2) | bulk delete, WAF `ruleType` | IPv6 get-by-id (no IPv6 rule on the appliance); all writes |
 | NAT rules | 12 | 4 read tools (list/get IPv4; list IPv6) | 8 mutations | bulk delete | IPv6 get-by-id; all writes |
 | Addresses and groups | 37 | 16 read tools (IPv4/IPv6/FQDN addresses, MAC, country, address groups) | 21 mutations (address/group/MAC CRUD) | country-group mutations, MAC bulk delete | IPv6 address-group get-by-id; MAC get-by-id; all writes |
 | Services | 10 | 4 read tools | 6 mutations | — | all writes |

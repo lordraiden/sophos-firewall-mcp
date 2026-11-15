@@ -7,11 +7,13 @@ client an MCP host uses. They are the executable form of issue #32 section 1:
 * discovery: the full surface, titles, descriptions, input/output schemas, annotations;
 * interoperability: every input schema is a closed object rooted at ``request`` and every
   output schema is object-rooted (never a bare array/scalar/null);
-* structured output: ``structured_content`` validates against the published schema and the
+* structured output: ``structured_content`` is a dict whose top-level shape matches the
+  published output schema (every required member present, no undeclared member) and the
   text channel carries the same projection;
 * ``isError``: an anticipated failure is a sanitized ``ToolError``; a protocol rejection is
   an ``MCPError``; an unexpected exception never leaks details;
-* cancellation: a cancelled call propagates ``CancelledError`` instead of becoming an error;
+* cancellation: a cancelled call cancels the server-side handler (observed through a
+  synthetic tool) instead of becoming an error;
 * STDIO: the subprocess transport speaks the 2026-07-28 protocol by default, stdout carries
   only the protocol (no logs, no TTY), and shutdown is orderly;
 * ``mode="legacy"``: the SDK's initialize handshake still works, so the server is usable by
@@ -229,10 +231,28 @@ async def test_a_read_tool_returns_structured_content_matching_its_schema():
             )
         )
         async with Client(make_server()) as client:
+            tools = (await client.list_tools()).tools
             result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
 
+    tool = next(candidate for candidate in tools if candidate.name == "firewall_rule_list_ipv4")
+    schema = tool.output_schema
+    assert schema is not None
     assert result.is_error is False
     assert isinstance(result.structured_content, dict)
+
+    # The projection must carry every member the published schema marks required and no
+    # member the schema does not declare. This is the dependency-free subset of a JSON
+    # Schema validation: the project does not declare a validator, and a projection that
+    # drifts from the published contract (a dropped required field or an extra one) fails
+    # here instead of passing silently.
+    assert set(schema.get("required", [])) <= set(result.structured_content)
+    assert set(result.structured_content) <= set(schema["properties"])
+    item_schema = schema["properties"]["items"]["items"]
+    item_definition = schema["$defs"][item_schema["$ref"].rsplit("/", 1)[-1]]
+    for item in result.structured_content["items"]:
+        assert set(item_definition.get("required", [])) <= set(item)
+        assert set(item) <= set(item_definition["properties"])
+
     assert result.structured_content["items"][0]["name"] == "LAN to WAN"
     # The text channel carries the same projection, so a host that ignores structured
     # content still sees the result.
@@ -356,23 +376,44 @@ def test_a_protocol_level_rejection_is_a_jsonrpc_error():
 # -- Cancellation ----------------------------------------------------------------------
 
 
-async def test_cancellation_propagates_instead_of_becoming_an_error():
-    """A cancelled call must not be reported to the model as a tool failure."""
+async def test_cancellation_reaches_the_server_handler_instead_of_becoming_an_error():
+    """A cancelled call must cancel the server-side handler, not surface as a tool error.
+
+    Cancelling the client task and awaiting it proves only that asyncio honours
+    ``task.cancel()``; it never observes the server. The property that matters is that the
+    SDK propagates the cancellation to the *server* handler. A synthetic tool records
+    ``CancelledError`` and this test waits for that signal, so a server that swallowed the
+    cancellation (or turned it into an ``isError`` result) fails the test instead of
+    passing it.
+    """
     started = asyncio.Event()
+    cancelled = asyncio.Event()
 
-    async def slow_response(request: httpx.Request) -> httpx.Response:
+    server = make_server()
+
+    @server.tool(
+        name="synthetic_wait",
+        description="Synthetic tool that waits until the caller cancels it.",
+    )
+    async def synthetic_wait() -> dict[str, bool]:
         started.set()
-        await asyncio.sleep(30)
-        return httpx.Response(200, json={"items": [], "pages": {}})
+        try:
+            await asyncio.sleep(30)
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+        return {"finished": True}
 
-    with respx.mock(assert_all_called=False) as router:
-        router.get(f"{BASE}/firewall/rules/ipv4").mock(side_effect=slow_response)
-        async with Client(make_server()) as client:
-            task = asyncio.create_task(client.call_tool("firewall_rule_list_ipv4", {"request": {}}))
-            await asyncio.wait_for(started.wait(), timeout=10)
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await task
+    async with Client(server) as client:
+        task = asyncio.create_task(client.call_tool("synthetic_wait", {}))
+        await asyncio.wait_for(started.wait(), timeout=10)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        # The server handler must observe the cancellation. If it does not, this wait times
+        # out and the test fails: the assertion is on the server side, not on the client
+        # task that asyncio already guarantees to cancel.
+        await asyncio.wait_for(cancelled.wait(), timeout=10)
 
 
 # -- STDIO transport -------------------------------------------------------------------

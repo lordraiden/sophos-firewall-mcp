@@ -38,3 +38,9 @@ jobs:
 
       - name: black
         run: uv run --no-sync black --check src tests scripts
+
+      # Issue #32 section 5: the spec SHA and the generated coverage matrix must be
+      # compared in CI, so replacing the OpenAPI contract cannot silently invalidate the
+      # curated coverage decisions. `--check` writes nothing and fails on any drift.
+      - name: Coverage drift
+        run: uv run --no-sync python scripts/generate_coverage.py --check
