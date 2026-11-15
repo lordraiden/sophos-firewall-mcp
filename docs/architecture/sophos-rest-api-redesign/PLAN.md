@@ -1,14 +1,22 @@
 # Plan de rediseño: Sophos Firewall MCP — REST API
 
 **Revisión técnica:** 15 de noviembre de 2026  
-**Estado:** diseño revisado; la implementación todavía no está realizada.  
+**Estado:** diseño revisado y auditado de forma independiente; la implementación todavía no está realizada.  
 **Repositorio:** [lordraiden/sophos-firewall-mcp](https://github.com/lordraiden/sophos-firewall-mcp)  
 **Especificación versionada:** [firewall_config_openapi.yaml](https://github.com/lordraiden/sophos-firewall-mcp/blob/main/firewall_config_openapi.yaml)  
 **Blob SHA observado:** `40fca0b25d4d85866f86b90aec77e5559ae27214`  
+**SHA-256 del fichero:** `58c4bc79ac930ce030202e09835865dcb12fcd44e9132e1f4234a1ed1743b1d5`  
 **Tamaño registrado por GitHub:** 8.934.475 bytes.  
-**Baseline parseado del fichero local:** `openapi: 3.0.0`; `info.title: Sophos Firewall Configuration API`; `info.version: 1.0.0`; 384 paths; 700 operaciones HTTP; 700 `operationId` presentes y sin duplicados; 76 ocurrencias de `$ref`, 32 referencias únicas, todas locales bajo `#/components/schemas` (la resolución formal de todas las referencias sigue siendo criterio de aceptación de #24).  
+**Baseline re-parseado y verificado el 15 de noviembre de 2026:** `openapi: 3.0.0`; `info.title: Sophos Firewall Configuration API`; `info.version: 1.0.0`; 384 paths; 700 operaciones HTTP (GET 263, POST 210, PATCH 134, DELETE 93; sin PUT/HEAD/OPTIONS); 700 `operationId` presentes y sin duplicados; 76 ocurrencias de `$ref`, 32 referencias únicas, todas locales bajo `#/components/schemas`, sin referencias externas ni sin resolver; 32 esquemas de componente y 0 sin usar; 0 ciclos de esquemas. El documento es mayoritariamente de esquemas inline (4.265 esquemas inline, 162.760 nodos; el mayor, el body de `updateFirewallRuleIpv4`, con 1.148 nodos).  
 **Servidor declarado en el YAML:** `https://{firewallHost}/api/firewall-config/v1`, con variable `firewallHost` y default `172.16.16.16:4444`.  
-**Seguridad global del OpenAPI:** HTTP Bearer (`scheme: bearer`, `bearerFormat: API key`). La documentación oficial online también muestra OpenAPI 3.0 y versión 1.0.0; hay que volver a contrastar posibles cambios en #24.
+**Seguridad global del OpenAPI:** HTTP Bearer (`scheme: bearer`, `bearerFormat: API key`); las 700 operaciones heredan la seguridad global y ninguna la sobrescribe.  
+**PATCH en el contrato:** 134 operaciones PATCH; las 134 declaran `application/json` y **ninguna** declara `application/merge-patch+json` (0 ocurrencias en todo el fichero). `info.description` documenta el default JSON Merge Patch (RFC 7396) y cuatro operaciones documentan desviaciones (ver §5).  
+**Paginación en el contrato:** 83 operaciones GET aceptan `page`/`pageSize`/`pageTotal` (defaults 1/50/false; `pageSize` máximo 100 solo en `getUsers`, `getAdministrators` y `getNetworkUsers`); no existe `limit`, `offset` ni cursor en el documento.  
+**Auditoría independiente:** ver [INDEPENDENT_REVIEW_REPORT.md](./INDEPENDENT_REVIEW_REPORT.md) (15 de noviembre de 2026). Este plan incorpora las correcciones respaldadas por evidencia de esa revisión; las afirmaciones que dependen del firmware o del appliance siguen marcadas como pendientes de verificación.
+**Validación en vivo:** smoke test de solo lectura contra el appliance real el 15 de noviembre de 2026; evidencia en [docs/live-evidence/api-smoke-2026-11-15.md](../live-evidence/api-smoke-2026-11-15.md).
+**Acceso al laboratorio:** endpoint, API key de solo lectura y variables de entorno en [LAB-ACCESS.md](./LAB-ACCESS.md).
+
+> La documentación oficial online también muestra OpenAPI 3.0 y versión 1.0.0, y reproduce literalmente en su Introduction el texto de `info.description` de este YAML (base URL, Bearer, formatos de nombre y semántica PATCH). Aun así, el contrato que se implementa es el fichero versionado y la versión de SFOS objetivo; la página online puede actualizarse por separado.
 
 > Este documento sustituye las decisiones anteriores que dependían de supuestos no verificados. La fuente contractual para implementar es el YAML versionado y la versión de SFOS objetivo; la documentación online oficial sirve para contrastar alcance y comportamiento. Consultar [REFERENCES.md](./REFERENCES.md) para las fuentes, versiones y advertencias.
 
@@ -81,7 +89,7 @@ Para habilitar la API no basta con disponer de una API Key:
 
 1. Activar REST API access en Administration → API access.
 2. Añadir la IP, rango o red de origen a Allowed IP hosts.
-3. Comprobar Administration → Device access: habilitar el servicio HTTPS (Web Admin Console) para la zona de origen del administrador. Sophos recomienda no habilitar la consola administrativa en interfaces WAN. Este control de acceso por zona es independiente de Allowed IP hosts. No tratar una regla/exception de Local service ACL como sustituto de Device access; investigar esas ACL por separado solo si el firewall local tiene una política de tráfico adicional que lo requiera.
+3. Comprobar Administration → Device access: habilitar el servicio HTTPS (Web Admin Console) para la zona de origen del administrador. Sophos no recomienda habilitar la consola administrativa en interfaces WAN. Si un administrador debe acceder desde WAN, el único mecanismo documentado es una **regla de excepción de Local service ACL** que autorice IPs de origen concretas; no se admite `Any` ni `0.0.0.0` como origen. Esa regla forma parte de la propia página Administration → Device access y actúa como excepción por host sobre el ACL por zona: no es un control independiente ni un sustituto de Device access, sino el mecanismo previsto para restringir el acceso desde zonas donde el servicio no se habilita para todos. Allowed IP hosts (API access) sigue siendo un control separado y ambos son necesarios. [R04] [R22] [R33]
 4. Crear un administrador dedicado con un perfil de permisos mínimos por funcionalidad.
 5. Generar una API Key exclusiva para esa automatización/servidor.
 
@@ -89,9 +97,9 @@ Las API Keys heredan los permisos del perfil de administrador que las genera. Lo
 
 ## Firmware y limitaciones
 
-La documentación de API consultada acompaña SFOS 23.0; sus release notes identifican SFOS 23.0 GA Build 371, publicado el 4 de noviembre de 2026. Esto **no demuestra** que el firewall destino del proyecto esté ejecutando esa versión ni que todas las operaciones se comporten igual en cualquier build. [R05]
+La referencia de API online no declara una versión de SFOS: muestra "Version: 1.0.0" (versión del contrato OpenAPI) y se describe como "every endpoint on the current firmware". La vinculación con SFOS 23.0 proviene de la ayuda 23.0 y de las release notes, que sitúan la REST API en SFOS 23.0 GA Build 371 (4 de noviembre de 2026). Esto **no demuestra** que el firewall destino del proyecto esté ejecutando esa versión ni que todas las operaciones se comporten igual en cualquier build. Sophos tampoco afirma que el `OpenAPI.yaml` descargable del appliance sea idéntico al portal online; la cautela de contrastarlo es una inferencia razonable, no una advertencia documentada. [R05]
 
-Sophos publica una lista de funcionalidades no soportadas (entre ellas firewall rule groups, varias modalidades VPN, RED, wireless y determinadas funciones de estado), pero advierte que la lista no es exhaustiva. Para cada capacidad hay que consultar el endpoint en el API Reference y verificarlo en el firmware objetivo. [R04]
+Sophos publica una lista de funcionalidades no soportadas (entre ellas firewall rule groups, varias modalidades VPN, RED, wireless y determinadas funciones de estado), pero advierte que la lista no es exhaustiva. Además es internamente inconsistente con el catálogo: declara "Wireless: All wireless features" pese a que existen endpoints de hotspot, y "Status information: DHCP lease information" pese a que existen endpoints de leases DHCP. Sophos tampoco define el alcance exacto de "IPsec routes" en esa tabla; el término parece referirse a rutas/VPN routes y al comando `ipsec_route`, no a las conexiones route-based (XFRM/VTI), que sí tienen CRUD IPv4. Para cada capacidad hay que consultar el endpoint en el API Reference y verificarlo en el firmware objetivo; la lista sirve como señal de riesgo, no como sustituto del contrato. [R04]
 
 # 3. Arquitectura recomendada
 
@@ -146,7 +154,7 @@ La referencia OpenAPI incluye muchos más módulos que las herramientas XML orig
 | Authentication users | Lista general paginada y recursos de usuarios de red | Separar listado general de CRUD de usuarios de red |
 | Administrators | GET/POST/PATCH/DELETE y bulk delete presentes en el catálogo | Documentar; excluir CRUD y cambios de privilegios en la primera versión por su impacto |
 | Authentication user groups | GET/POST/PATCH/DELETE, bulk delete y set-fallback-group | Clasificar y documentar; no incluir gestión de grupos ni fallback en la primera versión salvo requisito explícito |
-| Live sessions | Listado de sesiones activas y desconexión de una sesión | Implementar lectura y desconexión individual; la respuesta contiene `items` y `pages`, pero el GET no define parámetros page/pageSize, por lo que no se debe inventar paginación de petición |
+| Live sessions | Listado de sesiones activas y desconexión de una sesión | Implementar lectura y desconexión individual; la respuesta contiene `items` y `pages` (`current`, `size`, `maxSize`), pero el GET no define parámetros page/pageSize, por lo que no se debe inventar paginación de petición |
 | VPN | IPsec profiles, failover groups, site-to-site y live state; SSL VPN remote access y otros recursos documentados | Seleccionar operaciones compatibles; documentar explícitamente exclusiones |
 | Network interfaces | `/network/interfaces/network-interfaces`: GET/POST/GET-by-ID/PATCH/DELETE | OpenAPI define CRUD, pero el primer release MCP empieza en lectura; posponer create/update/delete por riesgo de perder conectividad |
 | Read-only network status | `GET /network/dns/protection/status` y `GET /network/cellular-wan/modem-status` | Candidatos read-only concretos; no inferir un endpoint REST para la pantalla Firewall Health Check del Web Admin UI |
@@ -181,12 +189,12 @@ La API separa recursos de direcciones y grupos por familias/tipos. No mantener u
 
 El YAML distingue:
 
-- `GET /authentication/users` (`getUsers`): listado resumido paginado, con `page` (default 1), `pageSize` (default 50, máximo 100) y `pageTotal` (default false).
-- `GET /authentication/users/network-users` (`getNetworkUsers`): listado de usuarios de red paginado con los mismos parámetros y límites.
+- `GET /authentication/users` (`getUsers`): listado resumido paginado, con `page` (default 1), `pageSize` (default 50, máximo 100), `pageTotal` (default false) y los filtros mutuamente excluyentes `nameContains` / `nameNotEquals` (1–255 caracteres).
+- `GET /authentication/users/network-users` (`getNetworkUsers`): listado de usuarios de red paginado con los mismos parámetros, límites y filtros.
 - CRUD individual de network users; login/logout son operaciones independientes y con efectos operativos.
 - CRUD de administradores y de user groups también aparecen en OpenAPI, pero quedan excluidos del primer release por privilegio/alcance.
-- `GET /authentication/live-users` (`getLiveUsers`): no declara query parameters de página. Su respuesta es un objeto con `items` (array de sesiones) y `pages` (`current`, `size`, `maxSize`); no contiene `total` ni permite solicitar otro page mediante query params en el YAML actual. No describirlo como una lista desnuda ni como paginación controlable por el cliente.
-- `POST /authentication/live-users/disconnect` desconecta una sesión mediante `liveUserId` y `message`.
+- `GET /authentication/live-users` (`getLiveUsers`): el YAML no declara query parameters de página. Su respuesta es un objeto con `items` (array de sesiones) y `pages` (`current`, `size`, `maxSize`); no contiene `total` ni `items` dentro de `pages` en el contrato. **Evidencia en vivo (15 nov 2026):** el appliance sí acepta `page`, `pageSize` y `pageTotal` en este endpoint (`page=2` → `current:2`; `pageSize=10` → `size:10`; `pageTotal=true` añade `items`/`total`; `pageSize=101` → 400), y `maxSize` real es **100** (no 1000). Decisión: el MCP no expone esos parámetros en v1 porque no están en el contrato; se documenta la observación y #24/#30 deciden con ella. No describirlo como una lista desnuda.
+- `POST /authentication/live-users/disconnect` desconecta una sesión mediante `liveUserId` y `message`; ambos campos son obligatorios en el contrato (`liveUserId` entero ≥ 1; `message` 1–600 caracteres). Respuestas documentadas: 200, 400, 401, 403 y 500.
 
 El MCP debe preservar exactamente la metadata `pages` del live-users endpoint. Como no se define una petición de continuación, no debe inventar un cursor/page loop. La Fase 0 debe comprobar en firmware cómo se comporta cerca de `maxSize` y documentar cualquier límite de completitud. [R08] [R09] [R10]
 
@@ -202,9 +210,9 @@ La primera versión debe:
 
 No ofrecer “VPN management” genérico. El YAML incluye perfiles IPsec y failover groups; conexiones IPsec site-to-site policy-based y route-based para IPv4; estado live de conexiones IPv4; ajustes de remote-access IPsec; políticas SSL VPN de acceso remoto; políticas clientless, bookmark groups/bookmarks y SSL VPN global settings. No asumir que todas las modalidades tienen CRUD completo ni que IPsec site-to-site IPv6 está disponible: el inventario actual contiene operaciones de conexión IPv4. La lista oficial de funciones no soportadas (por ejemplo IPsec routes, GRE, L2TP, PPTP y SSL VPN site-to-site client/server) se debe interpretar según la feature exacta, sin confundir el término 'IPsec routes' con los endpoints 'route-based connection'. [R04] [R11]
 
-El YAML contiene CRUD para `/network/interfaces/network-interfaces`, pero el primer release MCP empieza con list/get por el impacto que una mutación puede tener sobre la conectividad de administración. Las operaciones de escritura deben permanecer documentadas como diferidas hasta que exista una prueba segura en el firewall de laboratorio.
+El YAML contiene CRUD para `/network/interfaces/network-interfaces` (list, create, get, patch, delete), pero el primer release MCP empieza con list/get por el impacto que una mutación puede tener sobre la conectividad de administración. La advertencia de conectividad no está en el API Reference: procede de la ayuda de administración, que indica que, tras actualizar o eliminar interfaces, las conexiones de red pueden quedar temporalmente inaccesibles. Las operaciones de escritura deben permanecer documentadas como diferidas hasta que exista una prueba segura en el firewall de laboratorio. [R34]
 
-Para estado read-only de red hay dos endpoints concretos en el YAML: `GET /network/dns/protection/status` (`getDnsProtectionStatus`) y `GET /network/cellular-wan/modem-status` (`getCellularWanStatus`). Son estados específicos de DNS Protection y del módem WAN celular, no un health score general del firewall. La función Firewall Health Check del Web Admin UI es una vista de salud/configuración, no un endpoint REST del OpenAPI actual. No crear una herramienta Firewall Health Check. Tampoco prometer modelo, número de serie, firmware o uptime si no existe una operación que devuelva esos datos. [R24]
+Para estado read-only de red hay dos endpoints concretos en el YAML: `GET /network/dns/protection/status` (`getDnsProtectionStatus`) y `GET /network/cellular-wan/modem-status` (`getCellularWanStatus`). Son estados específicos de DNS Protection y del módem WAN celular, no un health score general del firewall. La función Firewall Health Check del Web Admin UI es una comprobación de cumplimiento de políticas (CIS y configuraciones recomendadas, con estados compliant/noncompliant y override manual), no un estado de salud general ni un endpoint REST del OpenAPI actual. No crear una herramienta Firewall Health Check. Tampoco prometer modelo, número de serie, firmware o uptime si no existe una operación que devuelva esos datos: `GET /administration/system-settings` solo devuelve `hostname`, `loginDisclaimer` y `updatedAt`. [R24]
 
 # 5. OpenAPI como contrato de implementación
 
@@ -221,6 +229,10 @@ La referencia oficial describe formatos comunes que deben respetarse cuando el e
 
 La regla general de Sophos indica que POST suele identificar objetos mediante nombre único, mientras que GET/PATCH/DELETE pueden usar nombre único o UUID. No convertir esa regla general en una suposición para cada endpoint: el path parameter y su schema concretos siguen siendo la autoridad. Las herramientas MCP deben reflejar el formato correcto por operación y evitar tratar display name, ID y referencia de objeto como intercambiables.
 
+En el contrato versionado, ningún path parameter es solo-nombre: 260 operaciones usan `sfos-object-name-or-id` (248) o `sfos-object-name-lenient-or-id` (12), 6 usan UUID exclusivamente (los DHCP relays) y 17 tienen el parámetro sin tipar (`{name}`/`{idOrName}`/`{floodAttackType}`). El nombre único aparece en los cuerpos (806 esquemas `sfos-object-name`), no en las rutas.
+
+Los formatos `sfos-object-name*` son anotaciones `format` no asertivas y con patrones desiguales: de los 806 esquemas `sfos-object-name`, 718 no llevan `pattern`, 22 usan `^[^,]*$` (solo excluyen comas) y solo 5 llevan la regex completa; en total, 994 de 1.085 esquemas con formato `sfos-object-name*` no llevan `pattern`. La validación documentada (UTF-8, sin comas/punto y coma, sin caracteres no imprimibles, sin espacios extremos, nunca UUID) debe implementarla el cliente MCP; no se puede delegar en el `pattern` del YAML.
+
 La Fase 0 debe registrar:
 
 - Blob SHA, tamaño, openapi, info.title, info.version, servers/base URL, tags y security schemes.
@@ -234,6 +246,10 @@ La Fase 0 debe registrar:
 ## PATCH: default oficial de Sophos y excepciones por operación
 
 HTTP PATCH no implica JSON Merge Patch por definición general de HTTP. Sin embargo, la referencia oficial Sophos para su **Firewall Configuration REST API** establece una regla propia: las peticiones PATCH siguen por defecto la semántica JSON Merge Patch de RFC 7396, salvo que la documentación de una operación indique expresamente otro comportamiento. [R02] [R12]
+
+Esa regla no depende del portal online: el propio `info.description` del YAML versionado la reproduce literalmente, junto con la base URL, el esquema Bearer y los formatos de nombre. #24 debe citar el SHA del fichero como evidencia, no solo la página web.
+
+En el contrato versionado, las 134 operaciones PATCH declaran `application/json` y ninguna declara `application/merge-patch+json`; no existe ningún PUT. Cuatro operaciones documentan desviaciones de la semántica de arrays: `patchMessages` (`/administration/messages`, actualización por catálogo claveada por `name`, no reemplazo completo del array), `updateCentralFirewallReportingLogComponents` y `updateSyslogServerLogs` (merge por `name`) y `updateAlertNotificationSettings` (`/notification/notifications`: los booleanos raíz siguen RFC 7396, pero `notifications[]` se actualiza por `name`). Son ejemplos concretos que la matriz de #24 debe registrar; ninguna está en el primer release MCP, pero demuestran que la excepción existe y que el contrato la documenta.
 
 Por tanto:
 
@@ -259,7 +275,11 @@ Los ejemplos no son una lista global: el cliente y las pruebas deben seguir las 
 
 ## Paginación: tampoco inferir por el nombre
 
-La matriz debe documentar parámetros de petición y metadata de respuesta por operación. En el YAML local, `/authentication/users` y `/authentication/users/network-users` aceptan `page` (1-indexed, default 1), `pageSize` (default 50, máximo 100) y `pageTotal` (default false). `/authentication/live-users` no define query params de página: responde con `items` más `pages.current`, `pages.size` y `pages.maxSize`, sin `total` ni mecanismo de continuación en la petición. No aplicar un helper de paginación genérico a este endpoint; preservar la metadata y validar en el appliance si el límite máximo puede truncar la lista. [R08] [R09]
+La matriz debe documentar parámetros de petición y metadata de respuesta por operación. En el YAML local, 83 operaciones GET (todas las colecciones del primer release) aceptan `page` (1-indexed, default 1), `pageSize` (default 50; máximo 100 solo en `getUsers`, `getAdministrators` y `getNetworkUsers`, sin máximo declarado en el resto) y `pageTotal` (default false); no existe `limit`, `offset` ni cursor en el documento. `/authentication/users` y `/authentication/users/network-users` añaden los filtros mutuamente excluyentes `nameContains` / `nameNotEquals`. `/authentication/live-users` no define query params de página: responde con `items` más `pages.current`, `pages.size` y `pages.maxSize`, sin `total` ni `items` dentro de `pages`, ni mecanismo de continuación en la petición. No aplicar un helper de paginación genérico a este endpoint; preservar la metadata y validar en el appliance si el límite máximo puede truncar la lista. [R08] [R09]
+
+Las páginas de operación del portal no renderizan estáticamente los parámetros de petición; los defaults y límites anteriores se verificaron en el contrato OpenAPI del vendor, que es la fuente de verdad para el cliente. [R02]
+
+**Evidencia en vivo (15 nov 2026):** `pageTotal=true` añade `pages.total` y `pages.items`; `pageSize > 100` devuelve 400 `invalidPageSizeParam` en todos los listados probados, incluso donde el contrato no declara máximo; `page=0` se acepta con 200 y `current:0` aunque el contrato exige `minimum: 1`, así que el cliente debe validar `page >= 1` antes de enviar.
 
 # 6. Cliente REST y configuración
 
@@ -295,13 +315,13 @@ Requisitos:
 
 Issue #24 compara cliente generado y cliente HTTPX manual con modelos tipados. Mantener una decisión ADR explícita.
 
-Si se usa openapi-python-client, usar al menos 0.29.1: versiones anteriores están afectadas por una vulnerabilidad de generación arbitraria de código al procesar OpenAPI malicioso. Ejecutar generación en entorno aislado, tratar el YAML como entrada de confianza limitada y revisar el código generado. No introducir un SDK generado enorme en producción sin justificarlo. [R13]
+Si se usa openapi-python-client, usar al menos 0.30.0. La 0.29.1 corrigió GHSA-5293-mq8x-g3xj (generación arbitraria de código al procesar OpenAPI malicioso), pero la 0.29.0–0.29.x está afectada por GHSA-jg6c-wvfg-fx69 (inyección de campos multipart en clientes generados que aceptan entrada no confiable, publicado el 7 de noviembre de 2026 y corregido en 0.30.0). Ejecutar generación en entorno aislado, tratar el YAML como entrada de confianza limitada y revisar el código generado. No introducir un SDK generado enorme en producción sin justificarlo. [R13] [R13a] [R13b] [R13c]
 
 No duplicar dos catálogos de schemas sin una prueba de drift. El diseño final puede ser cliente generado detrás de un adapter fino, modelos generados/derivados con transporte propio o HTTPX+Pydantic; debe decidirse por evidencia del POC, no por preferencia previa.
 
 # 7. Arquitectura MCP y prácticas recomendadas
 
-El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 14 de noviembre de 2026 la última release publicada consultada es v2.3.0. Esta release implementa la revisión de protocolo MCP 2026-07-28 y el SDK sirve también revisiones anteriores. La dependencia runtime debe ser `mcp>=2.3.0,<3`; instalar el extra `[cli]` solo en un entorno de desarrollo si se utilizan sus comandos, no en la imagen de producción por defecto. Fijar la resolución exacta en el lockfile. [R14] [R15]
+El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 15 de noviembre de 2026 la última release estable publicada es v2.3.0 (2 de octubre de 2026; PyPI y GitHub coinciden, sin parche posterior). Esta release implementa la revisión de protocolo MCP 2026-07-28 y el SDK sirve también las revisiones anteriores mediante handshake (2024-11-05, 2025-03-26, 2025-06-18 y 2025-11-25). La dependencia runtime debe ser `mcp>=2.3.0,<3`; instalar el extra `[cli]` solo en un entorno de desarrollo si se utilizan sus comandos, no en la imagen de producción por defecto. Fijar la resolución exacta en el lockfile. El SDK 2.3.0 declara `Requires-Python >=3.10` en PyPI y en su `pyproject.toml` (classifiers 3.10–3.14), aunque su página de instalación aún dice "Python 3.11+"; la matriz de CI del proyecto debe fijarse a 3.11–3.14 y dejar constancia de la discrepancia. [R14] [R15]
 
 ## Transporte inicial
 
@@ -309,8 +329,8 @@ El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 14 de n
 - En stdio local, la frontera de confianza es el proceso/usuario del sistema operativo que lanza el servidor. No añadir OAuth ni un sistema de identidad MCP que no resuelve un requisito de este despliegue; la API Key de Sophos autentica al servidor frente al appliance, no al host MCP.
 - No añadir Streamable HTTP ni un listener de red sin un requisito real de despliegue remoto. Si se aprueba posteriormente, esa será una superficie de seguridad distinta: exigir autenticación/autorización del transporte MCP y revisar el modelo OAuth vigente; no reutilizar la API Key de Sophos como credencial de cliente MCP.
 - En Docker, mantener el canal stdio limpio; no activar TTY.
-- No implementar manualmente un handshake MCP. En la revisión 2026-07-28 se retiraron initialize/initialized y las sesiones de transporte; el SDK gestiona la revisión de protocolo y compatibilidad. Las pruebas deben usar el cliente SDK y cubrir la revisión actual, no codificar un handshake antiguo. [R15]
-- Crear el servidor con `subscriptions=False` mientras la lista de herramientas y recursos sea estática durante la vida del proceso (incluido `SOPHOS_READ_ONLY_MODE`, aplicado al inicio). Esto evita anunciar `subscriptions/listen` y cambios de catálogo que no se producen. Habilitarlo únicamente si se implementan notificaciones/catálogos dinámicos reales y se añaden pruebas de ese comportamiento. [R14]
+- No implementar manualmente un handshake MCP. En la revisión 2026-07-28 se retiraron el handshake `initialize`/`notifications/initialized` y las sesiones de protocolo (incluida la cabecera `Mcp-Session-Id` en Streamable HTTP); cada petición lleva versión, capacidades e identidad en `_meta`, y los servidores **MUST** implementar `server/discover`. Los clientes anteriores a 2026-07-28 siguen usando `initialize` y sesiones: el SDK v2 atiende ambas eras con el mismo servidor y su `Client` negocia automáticamente (`mode="auto"` por defecto). Las pruebas deben usar el `Client` del SDK y verificar por defecto 2026-07-28; una prueba con `mode="legacy"` es válida si el proyecto declara soporte para clientes heredados. [R15] [R15a]
+- Crear el servidor con `subscriptions=False` mientras la lista de herramientas y recursos sea estática durante la vida del proceso (incluido `SOPHOS_READ_ONLY_MODE`, aplicado al inicio). El valor por defecto del SDK 2.3.0 es una `InMemorySubscriptionBus` que anuncia `subscriptions/listen`; `False` no registra el handler y deja de anunciar `listChanged`/`subscribe`. El efecto es visible para clientes 2026-07-28; los clientes anteriores no ven diferencia. Habilitarlo únicamente si se implementan notificaciones/catálogos dinámicos reales y se añaden pruebas de ese comportamiento. [R14] [R35]
 
 ## Lifespan y Context
 
@@ -331,19 +351,19 @@ Los handlers reciben `Context[AppContext]` y acceden al objeto de lifespan media
 - Nombres/títulos/descripciones claros. Cada descripción debe explicar cuándo usar la herramienta, efecto/side effect, identificadores requeridos y limitaciones relevantes.
 - No publicar como parámetros argumentos internos como client, headers, contexto, host, URL, path o API Key.
 - No crear una herramienta separada solo por una diferencia invisible de implementación; separar IPv4/IPv6 cuando los contratos o el significado lo justifiquen.
-- No añadir opciones MCP, prompts, recursos o completions por inercia. Mantener únicamente recursos/prompts que aporten valor claro y estén actualizados. No introducir Roots, Sampling ni MCP protocol Logging en el nuevo diseño: están deprecados en la revisión actual; usar configuración explícita, tools/resources y logging estándar de Python hacia stderr/observabilidad del proceso.
+- No añadir opciones MCP, prompts, recursos o completions por inercia. Mantener únicamente recursos/prompts que aporten valor claro y estén actualizados. No introducir Roots, Sampling ni MCP protocol Logging en el nuevo diseño: están **deprecados** (no eliminados) en 2026-07-28 por SEP-2577, con retirada elegible a partir de la primera revisión publicada el 2027-07-28 o después, y las implementaciones nuevas **SHOULD NOT** adoptarlos. El SDK v2 los sigue soportando para clientes heredados con `MCPDeprecationWarning`. Además, `ping`, `logging/setLevel` y `notifications/roots/list_changed` sí se **eliminaron** en esta revisión. Usar configuración explícita, herramientas/recursos y logging estándar de Python hacia stderr/observabilidad del proceso. [R15] [R36]
 
 ## Output schemas y resultados
 
 El SDK v2 infiere `outputSchema` del tipo de retorno y valida el resultado. El cliente recibe `content` orientado al modelo y `structuredContent` orientado a la aplicación. Usar DTOs Pydantic tipados para objetos de salida estables y comprobar el esquema publicado a través de un cliente MCP real. No devolver JSON Sophos crudo ni campos sensibles. [R17]
 
-**Forma de salida:** usar siempre un objeto raíz tipado (`items`, `item`, `page`, `pages`, `total`, `truncated` solo cuando el contrato permita afirmarlo, etc.). No diseñar herramientas cuya salida principal sea una lista, escalar o `null` desnudo. Esto mantiene compatibilidad con clientes de revisiones MCP anteriores a `2026-07-28`, que imponían restricciones más estrechas a `structuredContent`; la versión moderna permite cualquier valor JSON, pero un objeto sigue siendo la forma interoperable más sólida. No duplicar manualmente datos en `content` y `structuredContent`: seguir el comportamiento del SDK fijado y probar ambos canales. [R15] [R17]
+**Forma de salida:** preferir un objeto raíz tipado (`items`, `item`, `page`, `pages`, `total`, `truncated` solo cuando el contrato permita afirmarlo, etc.). En 2026-07-28 el protocolo ya **no** impone objeto raíz: `outputSchema` admite cualquier JSON Schema 2020-12 y `structuredContent` cualquier valor JSON (SEP-2106). La restricción a objeto raíz existía hasta 2025-11-25 (`outputSchema` con `type: "object"` obligatorio y `structuredContent` objeto). El SDK v2 ya envuelve automáticamente escalares, listas, tuplas, uniones y `None` en `{"result": ...}` y publica ese `outputSchema` con raíz de objeto, así que la regla se cumple por construcción; mantenerla es una decisión de interoperabilidad con clientes anteriores, no un requisito de la revisión actual. No duplicar manualmente datos en `content` y `structuredContent`: seguir el comportamiento del SDK fijado y probar ambos canales. [R15] [R17]
 
 **Tamaño y paginación:** no hacer auto-pagination ilimitada ni recuperar todas las páginas en una sola llamada MCP. Exponer `page`/`pageSize` solo cuando el endpoint Sophos los defina, aplicar límites de tamaño razonables y devolver una página por llamada. Para endpoints que no admiten paginación de petición, devolver exactamente la metadata que Sophos proporciona y documentar límites conocidos; no inventar `cursor`, `total` o `truncated`. Proyectar solo los campos de dominio útiles, manteniendo IDs y referencias necesarias para posteriores operaciones. Esto evita resultados MCP enormes y duplicación innecesaria entre canales. [R17]
 
 ## Anotaciones y riesgo
 
-`openWorldHint` debe evaluarse desde el límite de confianza real, no solo por el número de appliances. Estas herramientas llaman a un firewall externo al proceso MCP y devuelven datos de configuración/estado que pueden contener nombres, descripciones u otros valores introducidos por administradores o sistemas externos. Por tanto, usar `openWorldHint=true` como postura conservadora para las herramientas Sophos que consultan o modifican el appliance. Solo justificar `false` para una herramienta cuyo origen y dominio de datos sean realmente cerrados y controlados por el propio servidor. Definir `title` y `readOnlyHint` según el comportamiento; para herramientas de escritura, definir además `destructiveHint` e `idempotentHint` según los efectos reales, sin inferir idempotencia del verbo HTTP. No incluir hints de escritura en herramientas read-only. Las anotaciones son metadatos consultivos: no autentican, no autorizan y no fuerzan confirmaciones. La seguridad efectiva reside en permisos del perfil Sophos, allowlist/red, herramientas limitadas y políticas de aprobación del host. No añadir un parámetro `confirm=true` como falsa barrera de seguridad. [R18] [R32]
+`openWorldHint` describe si el **dominio de interacción** de la herramienta es abierto o cerrado; su valor por defecto ya es `true`. No es un hint sobre datos no confiables ni sobre "llamar a un sistema externo": la confianza en la salida se trata aparte (§8). Decidirlo **por herramienta**: `true` para herramientas cuyo dominio se extiende a entidades fuera del control del servidor, y documentar la justificación; no aplicar `true` en bloque como sustituto del análisis por herramienta. Definir `title` y `readOnlyHint` según el comportamiento; para herramientas de escritura, definir además `destructiveHint` e `idempotentHint` según los efectos reales, sin inferir idempotencia del verbo HTTP. No incluir hints de escritura en herramientas read-only. Las anotaciones son metadatos consultivos: no autentican, no autorizan y no fuerzan confirmaciones. La seguridad efectiva reside en permisos del perfil Sophos, allowlist/red, herramientas limitadas y políticas de aprobación del host. No añadir un parámetro `confirm=true` como falsa barrera de seguridad. [R18] [R37]
 
 ## Errores MCP
 
@@ -482,7 +502,7 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 - Docker Compose debe pasar únicamente configuración REST y secreto, mantener stdio y no asignar TTY.
 - Revisar ejecución no-root, paquetes mínimos, señales y cierre ordenado.
 - Pipelines deben instalar desde el mismo lockfile que construye la imagen y escanear ese conjunto real de dependencias. En particular, sustituir el `pip-audit -r requirements.txt` actual, que analiza MCP 1.x mientras `pyproject.toml` instala MCP 2.x, por un export auditado de la resolución bloqueada real.
-- Matrix de Python según versiones que se declaren oficialmente soportadas.
+- Matrix de Python según versiones que se declaren oficialmente soportadas: 3.11–3.14. El SDK 2.3.0 declara `>=3.10` en metadatos y "3.11+" en su documentación de instalación; el proyecto ya exige `>=3.11`, así que 3.11–3.14 es la matriz coherente y añade 3.14, hoy ausente del CI.
 - Añadir validación OpenAPI/drift reproducible.
 - Actualizar README, .env.example, CHANGELOG, API-COVERAGE y release metadata.
 - Cambiar `docker-publish.yml`: no promover `latest` en cada push a `main`; los commits de main pueden publicar solo tags de desarrollo (main/SHA). Reservar `latest` y tags semver estables a una promoción de release explícita, revisada y protegida por el mecanismo de aprobación del repositorio.
@@ -491,17 +511,20 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 
 # 12. Riesgos y decisiones que no deben darse por resueltas
 
-1. **Versión del spec local:** el SHA y tamaño están registrados, pero info.version y todos sus esquemas deben leerse del propio fichero en #24. No asumir que es idéntico al portal online.
+1. **Versión del spec local:** el SHA-256, blob SHA y tamaño están registrados, pero info.version y todos sus esquemas deben leerse del propio fichero en #24. No asumir que es idéntico al portal online.
 2. **Firmware destino:** el target de prueba no está confirmado en este documento. Registrar build exacto; no declarar compatibilidad general a partir de SFOS 23 docs.
-3. **Code generation:** no se decidió todavía. La ADR de #24 debe elegir con pruebas.
-4. **PATCH semantics:** el verbo no define RFC 7396; verificar request content type por operación.
-5. **Pagination:** endpoint-specific. No implementar cursor genérico si el API no lo usa.
-6. **Status codes/errors:** endpoint-specific. No codificar 429 u otros status como contrato sin documentación o evidencia.
+3. **Code generation:** no se decidió todavía. La ADR de #24 debe elegir con pruebas. El documento es mayoritariamente inline (32 esquemas de componente para 700 operaciones; 4.265 esquemas inline), lo que penaliza un cliente generado completo.
+4. **PATCH semantics:** el verbo no define RFC 7396; verificar request content type por operación. En este contrato las 134 PATCH son `application/json` y cuatro documentan merge por `name` en arrays. El comportamiento real de PATCH sobre arrays sigue sin probarse en el appliance.
+5. **Pagination:** endpoint-specific. No implementar cursor genérico si el API no lo usa; 83 GET comparten `page`/`pageSize`/`pageTotal`. `live-users` no los declara, pero el appliance los acepta (verificado el 15 nov 2026); el MCP no los expone en v1.
+6. **Status codes/errors:** endpoint-specific. No codificar 429 u otros status como contrato sin documentación o evidencia. Verificado en vivo: 401/400 y 404 de recurso son JSON (`{"error":…,"message":…}`), pero un path inexistente devuelve 404 HTML, 405 devuelve texto plano y PUT devuelve 403 HTML; el cliente debe mapear y sanitizar por operación.
 7. **Rule defaults:** comportamiento del Firewall AI Assistant no se debe extrapolar al REST POST.
 8. **Administrators:** la API puede exponer operaciones de administradores; el primer release las excluye por seguridad, no porque el API carezca de ellas.
-9. **System information:** no reconstruir información no expuesta; seleccionar health/status endpoints realmente documentados.
+9. **System information:** no reconstruir información no expuesta; seleccionar health/status endpoints realmente documentados. `getSystemSettings` solo devuelve `hostname`, `loginDisclaimer` y `updatedAt`.
 10. **Tamaño de resultados MCP:** no exponer dumps completos ni auto-pagination ilimitada; los outputs estructurados y las listas deben tener límites y ser útiles para el siguiente paso del agente.
-11. **Compatibilidad MCP:** la revisión `2026-07-28` es la versión moderna, pero el SDK v2 puede atender clientes anteriores. No codificar un servidor que funcione solo con un handshake heredado ni un payload que dependa de listas JSON raíz.
+11. **Compatibilidad MCP:** la revisión `2026-07-28` es la versión moderna, pero el SDK v2 atiende también 2024-11-05, 2025-03-26, 2025-06-18 y 2025-11-25 mediante handshake. No codificar un servidor que funcione solo con un handshake heredado ni un payload que dependa de listas JSON raíz.
+12. **Validación de nombres:** los `format` `sfos-object-name*` no son asertivos (994 de 1.085 sin `pattern`); el cliente MCP debe implementar la validación documentada.
+13. **Lista de no soportadas:** no es exhaustiva y es internamente inconsistente con el catálogo (wireless/hotspot, DHCP leases); no usarla como sustituto del contrato ni del firmware.
+14. **Device Access y WAN:** el acceso desde WAN solo se documenta mediante una regla de excepción de Local service ACL por IP de origen; no existe una forma de habilitar "todo WAN", y Sophos lo desaconseja.
 
 # 13. Decisión definitiva
 
@@ -513,13 +536,13 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 | Transporte | Cliente REST asíncrono compartido |
 | Autenticación | API Key Bearer, admin dedicado y mínimo privilegio |
 | TLS | Verificación por defecto |
-| MCP SDK | Python SDK v2; fijar versión estable reproducible (v2.3.0 en esta revisión) |
-| MCP protocol | SDK gestiona revisión 2026-07-28 y compatibilidad; no implementar handshake manual |
+| MCP SDK | Python SDK v2; fijar versión estable reproducible (v2.3.0 en esta revisión); `mcp>=2.3.0,<3` |
+| MCP protocol | SDK gestiona revisión 2026-07-28 y compatibilidad con 2024-11-05…2025-11-25; no implementar handshake manual |
 | Transporte MCP | stdio inicial; sin listener HTTP no solicitado |
 | Herramientas | Operaciones de negocio tipadas y limitadas |
 | Inputs | Pydantic/Annotated y schemas del SDK |
-| Outputs | Modelos estructurados validados |
-| Annotations | Title + readOnly/destructive/idempotent/openWorld como hints, no ACL |
+| Outputs | Modelos estructurados validados; raíz de objeto como convención de interoperabilidad, no como requisito de 2026-07-28 |
+| Annotations | Title + readOnly/destructive/idempotent/openWorld como hints por herramienta, no ACL |
 | Errors | ToolError para fallos de ejecución; MCPError para errores de protocolo |
 | Router | Eliminado inicialmente |
 | Raw REST | No exponer |
@@ -531,3 +554,11 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 La seguridad se debe diseñar en capas: permisos mínimos en el perfil Sophos (control efectivo en el firewall), restricción de IP de origen y HTTPS, secreto Bearer protegido en el proceso, schemas/tool surface mínimos y aprobación de mutaciones en el host cuando este la soporte. Las anotaciones MCP nunca deben tratarse como una ACL.
 
 La auditoría completa del YAML y la verificación del firmware deben preceder a cualquier implementación de dominio. No se debe ocultar una función no soportada ni declarar una operación válida por semejanza con XML, la Web Admin Console u otro API de Sophos.
+
+# 14. Auditoría independiente (15 de noviembre de 2026)
+
+La revisión independiente se documenta en [INDEPENDENT_REVIEW_REPORT.md](./INDEPENDENT_REVIEW_REPORT.md). Resumen de lo que cambió en este plan:
+
+- **Corregido:** la descripción de Device access vs Local service ACL (el acceso desde WAN solo se documenta mediante la regla de excepción, que forma parte de Device access); la atadura de versión del portal de API (no declara versión SFOS); la naturaleza del Firewall Health Check (cumplimiento de políticas, no salud general); `message` obligatorio (1–600) en la desconexión de live sessions; la lista de no soportadas (no exhaustiva e internamente inconsistente); la versión mínima de openapi-python-client (0.30.0, no 0.29.1); la matriz de Python (3.11–3.14); el alcance de `subscriptions=False` (solo clientes 2026-07-28); la semántica de `openWorldHint` (dominio de interacción, decidir por herramienta); la regla de raíz de objeto (convención de interoperabilidad, no requisito de 2026-07-28); el estado de Roots/Sampling/Logging (deprecados, no eliminados, con `ping`/`logging/setLevel`/`roots/list_changed` sí eliminados).
+- **Añadido:** evidencia del propio `info.description` del YAML para PATCH, base URL, Bearer y formatos de nombre; las cuatro excepciones PATCH documentadas; los recuentos verificados (32 esquemas, 76 refs, 83 GET paginados, 260 operaciones name-or-id, 6 UUID-only, 17 sin tipar); la advertencia de que los `format` de nombre no son asertivos; el detalle de que `getSystemSettings` solo devuelve `hostname`, `loginDisclaimer` y `updatedAt`; la nota de que la advertencia de conectividad de interfaces está en la ayuda de administración, no en el API Reference.
+- **Sin cambios:** REST-only, sin XML, sin raw REST, stdio inicial, mínimo privilegio Sophos, PATCH JSON Merge Patch por defecto, no reintentar escrituras ambiguas, TLS verificado por defecto, y el reparto de nueve issues.
