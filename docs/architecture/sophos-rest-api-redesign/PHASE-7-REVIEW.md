@@ -98,3 +98,53 @@ three long-running composites, and the test gap above.
 - **Two of the three long-running composites still report no progress** (finding 9), so the M6 "opaque hang" concern is only half closed.
 - **Model-level `$defs` titles remain published** (703 class names such as `FirewallRuleIpv4Output`). This is deliberate and documented, but it is still an internal Python identifier in the public schema.
 - **`explain_connectivity` requires a `service` object whose members are all optional.** The prompt defect in finding 1 is a symptom of that asymmetry; making `service` optional (or always emitting `{}`) would remove the class of error rather than one instance of it.
+
+---
+
+## Re-check after fixes
+
+| Field | Value |
+|---|---|
+| **Re-checked HEAD** | `0d22c45` — *fix(mcp): close the phase-7 review findings* |
+| **Delta since review** | 1 commit, 7 files, +278 / −44 (`README.md`, `_env_guard.py`, `prompts.py`, `resources.py`, `tools/audit.py`, `tests/test_server.py`, `tests/test_audit.py`) |
+| **Scope** | focused re-check of the ten findings, not a second full review; the verdict above is unchanged and superseded only by the status below |
+
+### Status of the ten findings
+
+| # | Severity | Status | Evidence on `0d22c45` |
+|---|---|---|---|
+| 1 | High | **Closed** | `explain_flow.service` is now a required `str` with `min_length=1` (`prompts.py:274-282`), and `_explain_message` always emits `"service": {"name": …}` (`prompts.py:126-134`). Every rendered `explain_connectivity` call validates against the tool's `inputSchema` for `ip`, `zone` and `fqdn` endpoints, with and without `protocol`/`port`. `port` without `protocol` `tcp`/`udp` raises (`prompts.py:124-125`); a missing or empty `service` raises. The two new tests (`tests/test_server.py:1602,1623`) fail on `e65fffe`. |
+| 2 | Medium | **Closed** | `_unused_message` forwards `ip_family` to `audit_firewall_rules` only when it is in `AUDIT_IP_FAMILIES = ("ipv4","ipv6")` (`prompts.py:49,168`); `fqdn` still reaches `find_object_usage` (`prompts.py:174-175`) and the prompt text explains why (`prompts.py:183-188,197`). Rendered `fqdn` → audit call without `ip_family` (valid) and usage call with `ip_family: "fqdn"` (valid). The matrix test covers `fqdn` (`tests/test_server.py:1276,1315-1316`). |
+| 3 | Low | **Closed, with a 157-byte drift** | `README.md:218` now says 807,743 B / ~202k tokens and states the measurement method. Measured on `0d22c45`: **807,900 B including the newline** (807,899 without). The 157-byte delta (156 in the compact form) is the two 78-character progress sentences added to `explain_connectivity`/`find_object_usage` in the same commit. See new finding 11. |
+| 4 | Low | **Closed** | `README.md:244` "nine environment variables"; the table at `:248-256` has 9 rows. |
+| 5 | Low | **Closed** | `README.md:238` "after the catalog trim" (no unreleased version); `README.md:240` "243 KB"; measured paired output schemas on `0d22c45`: **243,179 B**. |
+| 6 | Low | **Closed** | `_env_guard.py:1-2` now reads "Warn when `mcp` resolves outside this server's environment, and refuse to start when `mcp.server.mcpserver` is missing." |
+| 7 | Low | **Closed** | `resources.py:196` now reads "Every tool wraps one or more audited operations of that API". |
+| 8 | Low | **Closed** | `resources.py:391-399` now says "and the HTTP status when there is one", keeps the transport example and adds an appliance-answered example. The 400 example matches `tools/__init__.py:366` plus `(HTTP 400) [POST /firewall/rules/ipv4]`. |
+| 9 | Low | **Closed** | `explain_connectivity` and `find_object_usage` now take `progress` and pass `ctx.report_progress` (`tools/audit.py:1369-1378,1627-1636,3005-3009,3033-3037`); all three composite descriptions carry the progress sentence. The two new progress tests (`tests/test_audit.py:1166,1199`) fail on `e65fffe`. |
+| 10 | Low | **Closed** | `tests/test_server.py:1276` adds `PROMPT_ARGUMENT_MATRIX` (every documented argument value, including `fqdn`), `:1585` adds `rendered_tool_calls`, and `:1602` validates each rendered `{"request": …}` against the named tool's published `input_schema` with `jsonschema`. It fails on `e65fffe`. |
+
+### Gates re-run on `0d22c45`
+
+| Gate | Result |
+|---|---|
+| `pytest -q` | **1196 passed, 100 skipped** (188.91 s) — +4 tests vs the reviewed HEAD |
+| `mypy src` | *Success: no issues found in 28 source files* |
+| `flake8 src tests` | clean |
+| `black --check src tests` | 51 files unchanged |
+| `python scripts/generate_coverage.py --check` | *docs/API-COVERAGE.md is up to date* |
+| `uv lock --check` | 55 packages |
+
+The catalog trim is unchanged by the fix commit: 0 of 152 input schemas differ, 0 of 152 output schemas differ, output schemas still 471,093 B, and the only description changes are the two progress sentences.
+
+### New findings
+
+| # | Severity | File:line | Finding | Evidence | Fix |
+|---|---|---|---|---|---|
+| 11 | Low | `README.md:218` | **The headline `tools/list` size is 157 bytes low.** The README states 807,743 B "including the trailing newline"; the measured response on this HEAD is 807,900 B including the newline (807,899 without). The number was taken before the same commit added the progress sentence to two tool descriptions. | Raw JSON-RPC `tools/list` over STDIO on `0d22c45`: 807,900 B incl. newline. Compact `json.dumps` of the tool list: 807,752 B (807,596 B on `1b00f42`). The two added sentences are 78 characters each (156 bytes of description text). | Update to 807,900 (or "~808 KB") and keep the ~202k token estimate, which is still correct. |
+| 12 | Low | `tests/test_server.py:28` | **`jsonschema` is imported directly by a test but is not declared in the `dev` dependency group.** It is a transitive dependency of `mcp` (`jsonschema>=4.20.0`), so it is always installed today, but the test's direct dependency is undeclared and would break if `mcp` ever dropped it. | `pyproject.toml` `[dependency-groups] dev` lists pytest, pytest-asyncio, respx, mypy, flake8, black, pyyaml — no `jsonschema`. `importlib.metadata.requires("mcp")` → `jsonschema>=4.20.0`. `grep -rn "import jsonschema" tests/` → only `tests/test_server.py:28`. | Add `jsonschema>=4.20.0` to the `dev` group (and regenerate the lock), or use the project's own dependency-free validator helper. |
+| 13 | Low | `src/sophos_firewall_mcp/prompts.py:144-145` | **The new prompt sentence says `protocol`/`port` "refine" the service, but they do not affect the analysis.** `_service_match` uses only `service.name` (`tools/audit.py:615-628`); `protocol`/`port` are echoed into `ServiceSummary` (`tools/audit.py:1395-1397`, `models/audit.py:419-424`) and never used to decide a match. | `grep -n "service.name\|service.protocol\|service.port" tools/audit.py` → the only matching use is `service.name`; `ServiceSummary` is documented as "echoed from the request". | Say "`protocol`/`port` are recorded with the service" instead of "refine it", or make the matcher use them. |
+
+### Re-check verdict
+
+All ten findings are **closed**. The High and Medium are genuinely fixed, and each is covered by a test that fails on the pre-fix code (`e65fffe`): the four new tests fail there and pass on `0d22c45`. The three new findings are Low and non-blocking. From this reviewer's perspective the two blocking findings are resolved and the PR is ready to merge; the original **CHANGES REQUIRED** verdict is superseded by this re-check.
