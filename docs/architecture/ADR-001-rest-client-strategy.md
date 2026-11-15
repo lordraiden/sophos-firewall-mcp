@@ -2,7 +2,7 @@
 
 | Field | Value |
 |---|---|
-| **Status** | Accepted (pending owner ratification of the first-release scope, see §10) |
+| **Status** | Accepted — the repository owner ratified the client decision and the first-release scope on 15 November 2026 (§10) |
 | **Date** | 2026-11-15 |
 | **Issue** | [#24](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) — audit OpenAPI and define API coverage |
 | **Phase** | 1 — REST foundation (`01-PHASE-1-FOUNDATION.md`, step 1 / T1) |

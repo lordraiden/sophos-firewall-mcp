@@ -16,9 +16,9 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 ## Estado
 
 - **Diseño:** auditado el 15 de noviembre de 2026. El YAML local está parseado y verificado: OpenAPI 3.0.0, info.version 1.0.0, 384 paths, 700 operaciones con operationId único, 32 esquemas de componente, 76 `$ref` locales (0 externos), 134 PATCH con `application/json` y ninguna con `application/merge-patch+json`. Ver [INDEPENDENT_REVIEW_REPORT.md](./INDEPENDENT_REVIEW_REPORT.md) para el baseline completo y las correcciones aplicadas.
-- **Implementación:** fase 1 (fundación REST) implementada en la rama `migration/phase-1-foundation`: cliente REST tipado, fundación MCP (lifespan, `AppContext`, registro modular, modo read-only), [ADR-001](../ADR-001-rest-client-strategy.md) y [matriz de cobertura](../../API-COVERAGE.md). Pendiente de revisión independiente y de aprobación del propietario; no fusionada.
+- **Implementación:** fase 1 (fundación REST) completada en la rama `migration/phase-1-foundation`: cliente REST tipado, fundación MCP (lifespan, `AppContext`, registro modular, modo read-only), [ADR-001](../ADR-001-rest-client-strategy.md) y [matriz de cobertura](../../API-COVERAGE.md). Revisión independiente **APPROVE** ([informe](./PHASE-1-REVIEW.md)) y aprobada por el propietario; se integra mediante el PR [#36](https://github.com/lordraiden/sophos-firewall-mcp/pull/36).
 - **Issues:** diez issues abiertas (#24–#32 y #35), agrupadas con [M1], [M2] y [M3]. Las nueve originales fueron corregidas el 15 de noviembre de 2026 a partir de la auditoría, y el alcance v1 se amplió por decisión del propietario (ver ADR-001 §10).
-- **Siguiente paso:** revisión independiente de la fase 1 y aprobación; después, fase 2 (#27–#31 y #35) sobre la fundación publicada.
+- **Siguiente paso:** fase 2 (#27–#31 y #35) sobre la fundación publicada; no iniciada.
 
 La especificación OpenAPI versionada es el contrato inicial. La documentación oficial Sophos añade requisitos de permisos de perfil, allowlist y Device Access; el portal y la documentación del firmware son referencias de contraste, no sustituyen el YAML concreto ni las pruebas de operación real. En MCP, las anotaciones son hints, no controles de acceso, y los resultados deben ser DTOs tipados, acotados y compatibles.
 
