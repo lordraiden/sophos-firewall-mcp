@@ -1,121 +1,121 @@
-# 03 — Fase 3: Hardening y release (#32)
+# 03 — Phase 3: Hardening and release (#32)
 
-> **Antes de empezar:** lee y aplica [`00-MASTER-PROMPT.md`](./00-MASTER-PROMPT.md). **Precondición:** fases 1 y 2 fusionadas y verificadas.
+> **Before starting:** read and apply [`00-MASTER-PROMPT.md`](./00-MASTER-PROMPT.md). **Precondition:** phases 1 and 2 are merged and verified.
 
-## Objetivo de la fase
+## Phase objective
 
-Cerrar la migración: verificación end-to-end, seguridad, CI, contenedor, documentación y preparación de release. **La publicación real requiere aprobación explícita del propietario.**
+Close the migration: end-to-end verification, security, CI, container, documentation, and release preparation. **Actual publication requires explicit owner approval.**
 
 **Issue:** [#32](https://github.com/lordraiden/sophos-firewall-mcp/issues/32).
 
-## Estructura en dos puertas
+## Two-gate structure
 
-| Puerta | Contenido | ¿Requiere aprobación? |
+| Gate | Content | Approval required? |
 |---|---|---|
-| **A — Hardening** | e2e MCP, integración live (solo lectura), seguridad, CI, Docker, docs | No; se ejecuta y se revisa |
-| **B — Release** | versión, tags, GHCR, `latest`, notas de release | **Sí, explícita del propietario** |
+| **A — Hardening** | MCP e2e, live integration (read-only), security, CI, Docker, docs | No; execute and review |
+| **B — Release** | version, tags, GHCR, `latest`, release notes | **Yes, explicit owner approval** |
 
-No empieces la puerta B hasta que A esté verde y revisada.
+Do not start gate B until A is green and reviewed.
 
 ## Preflight (Lead)
 
-1. Confirma que `main` contiene fases 1 y 2, suite en verde y `API-COVERAGE.md` actualizado.
-2. Crea la rama `migration/phase-3-hardening-release`.
-3. Crea tareas T33–T38 + T39 (revisión) con `write_scopes` disjuntos.
-4. Crea a `hardening`, `release` y `reviewer`.
-5. Verifica que la clave del laboratorio sigue siendo de **solo lectura**; no hay escrituras en esta fase.
+1. Confirm `main` contains phases 1 and 2, the suite is green, and `API-COVERAGE.md` is up to date.
+2. Create branch `migration/phase-3-hardening-release`.
+3. Create tasks T33–T38 + T39 (review) with disjoint `write_scopes`.
+4. Create `hardening`, `release`, and `reviewer`.
+5. Verify the lab key is still **read-only**; there are no writes in this phase.
 
-## Propiedad de escritura
+## Write ownership
 
-| Miembro | Escribe (exclusivo) | No toca |
+| Member | Writes (exclusive) | Does not touch |
 |---|---|---|
-| `hardening` | `.github/workflows/`, `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`, `tests/` (integración), `docs/live-evidence/` | `src/` salvo correcciones aprobadas por el Lead |
-| `release` | `pyproject.toml`, `uv.lock`, `README.md`, `.env.example`, `CHANGELOG.md`, metadatos de release | workflows, Docker, `src/` |
-| `reviewer` | nada (informe) | todo |
-| Lead | integración, PR, decisión de publicar | — |
+| `hardening` | `.github/workflows/`, `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`, `tests/` (integration), `docs/live-evidence/` | `src/` except fixes approved by the Lead |
+| `release` | `pyproject.toml`, `uv.lock`, `README.md`, `.env.example`, `CHANGELOG.md`, release metadata | workflows, Docker, `src/` |
+| `reviewer` | nothing (report) | everything |
+| Lead | integration, PR, publish decision | — |
 
-`pyproject.toml`/`uv.lock` son de `release`; si `hardening` necesita un cambio, lo pide.
+`pyproject.toml`/`uv.lock` belong to `release`; if `hardening` needs a change, it asks.
 
-## Tareas
+## Tasks
 
-### T33 — Verificación end-to-end MCP (`hardening`)
+### T33 — MCP end-to-end verification (`hardening`)
 
-- Tests con el `Client` oficial del SDK: descubrimiento, esquemas de entrada/salida, anotaciones, `isError`, cancelación.
-- Prueba de STDIO en subproceso: stdout solo protocolo, sin TTY, cierre ordenado.
-- Compatibilidad: 2026-07-28 por defecto y `mode="legacy"` si se declara soporte heredado.
-- MCP Inspector: smoke test de descubrimiento y llamadas representativas.
-- Registra evidencia en el PR.
+- Tests with the official SDK `Client`: discovery, input/output schemas, annotations, `isError`, cancellation.
+- STDIO subprocess test: stdout is protocol only, no TTY, orderly shutdown.
+- Compatibility: 2026-07-28 by default and `mode="legacy"` if legacy support is declared.
+- MCP Inspector: discovery smoke test and representative calls.
+- Record evidence in the PR.
 
-### T34 — Integración con el appliance (`hardening` + `reviewer`)
+### T34 — Appliance integration (`hardening` + `reviewer`)
 
-- Matriz en `API-COVERAGE.md`: live-tested / contract-tested / unsupported / deferred / not implemented.
-- Ejecuta `pytest -m live` **solo lectura** con la clave del laboratorio; registra build, perfil, fecha y operaciones en `docs/live-evidence/`.
-- No escribas reglas, NAT, interfaces, VPN ni sesiones. Si hace falta una prueba de escritura, **para y pide** clave de escritura + plan de objetos desechables.
-- Documenta lo que no se pudo probar y por qué.
+- Matrix in `API-COVERAGE.md`: live-tested / contract-tested / unsupported / deferred / not implemented.
+- Run `pytest -m live` **read-only** with the lab key; record build, profile, date, and operations in `docs/live-evidence/`.
+- Do not write rules, NAT, interfaces, VPN, or sessions. If a write test is needed, **stop and ask** for a write key + disposable-object plan.
+- Document what could not be tested and why.
 
-### T35 — Revisión de seguridad (`hardening` + `reviewer`)
+### T35 — Security review (`hardening` + `reviewer`)
 
-- Flujo de la API key: origen, `SecretStr`, fichero vs env, permisos, montaje, redacción en logs/errores/tools.
-- TLS por defecto, CA bundle, sin `verify=false` en ejemplos.
-- Redirects cross-origin, proxy explícito, timeouts, cierre del pool.
-- Sin secretos en imágenes, CI, artefactos ni capturas.
-- Errores sanitizados; cuerpos remotos no se devuelven crudos.
-- Revisa `pip-audit` sobre el lock real y `semgrep`.
+- API key flow: origin, `SecretStr`, file vs env, permissions, mount, redaction in logs/errors/tools.
+- TLS by default, CA bundle, no `verify=false` in examples.
+- Cross-origin redirects, explicit proxy, timeouts, pool close.
+- No secrets in images, CI, artifacts, or screenshots.
+- Sanitized errors; remote bodies are not returned raw.
+- Review `pip-audit` against the real lock and `semgrep`.
 
-### T36 — CI y pipeline (`hardening`)
+### T36 — CI and pipeline (`hardening`)
 
-- `uv sync --locked` en CI/build; `pyproject.toml` + `uv.lock` como fuente única.
-- Matriz Python 3.11–3.14.
-- `pip-audit` sobre la resolución bloqueada real, no sobre `requirements.txt` obsoleto.
-- Tests, lint, mypy, semgrep y build de imagen en PR.
-- Workflow de integración opt-in (`pytest -m live`) con secretos, sin imprimirlos.
-- Sin `latest` en pushes a `main`: solo tags de desarrollo (`main`, SHA).
+- `uv sync --locked` in CI/build; `pyproject.toml` + `uv.lock` as the single source.
+- Python matrix 3.11–3.14.
+- `pip-audit` against the real locked resolution, not the obsolete `requirements.txt`.
+- Tests, lint, mypy, semgrep, and image build on PR.
+- Opt-in integration workflow (`pytest -m live`) with secrets, without printing them.
+- No `latest` on pushes to `main`: development tags only (`main`, SHA).
 
-### T37 — Contenedor y documentación (`hardening` + `release`)
+### T37 — Container and documentation (`hardening` + `release`)
 
-- `Dockerfile`: sin FastEmbed ni descarga de modelos, sin `.[router]`, usuario no-root si es viable, sin TTY, `ENTRYPOINT` STDIO, señales y cierre ordenado.
-- `docker-compose.yml`: solo configuración REST y secreto; `tty: false`; sin credenciales XML.
-- `README.md`: REST-only, requisitos Sophos, variables, ejemplos de cliente MCP, nombres de imagen correctos.
-- `.env.example`: REST-only, sin usuario/contraseña XML, TLS seguro por defecto.
-- `CHANGELOG.md`: cambios de la migración.
-- Verifica el namespace canónico de GHCR (`ghcr.io/lordraiden/...`) y corrige enlaces.
+- `Dockerfile`: no FastEmbed or model downloads, no `.[router]`, non-root if viable, no TTY, STDIO `ENTRYPOINT`, signals and orderly shutdown.
+- `docker-compose.yml`: REST configuration and secret only; `tty: false`; no XML credentials.
+- `README.md`: REST-only, Sophos prerequisites, variables, MCP client examples, correct image names.
+- `.env.example`: REST-only, no XML username/password, secure TLS by default.
+- `CHANGELOG.md`: migration changes.
+- Verify the canonical GHCR namespace (`ghcr.io/lordraiden/...`) and fix links.
 
-### T38 — Preparación de release (`release`, solo con aprobación)
+### T38 — Release preparation (`release`, only with approval)
 
-- Versión semántica y notas de release.
-- Workflow de publicación: `main` → tags de desarrollo; `v*` → tags estables; `latest` solo en promoción aprobada.
-- GitHub Environment con revisores si el propietario lo aprueba.
-- **No** publiques tag, imagen estable ni `latest` sin aprobación explícita.
-- Adjunta el plan de rollback.
+- Semantic version and release notes.
+- Publish workflow: `main` → development tags; `v*` → stable tags; `latest` only in an approved promotion.
+- GitHub Environment with reviewers if the owner approves.
+- **Do not** publish a tag, stable image, or `latest` without explicit approval.
+- Attach the rollback plan.
 
-## Revisión (T39)
+## Review (T39)
 
-- `reviewer` independiente revisa el PR completo: seguridad, CI, Docker, docs, evidencia live.
-- Veredicto: aprobar / cambios requeridos.
-- El Lead corrige o reasigna; los críticos bloquean.
+- An independent `reviewer` reviews the full PR: security, CI, Docker, docs, live evidence.
+- Verdict: approve / changes required.
+- The Lead fixes or reassigns; criticals block.
 
-## Cierre
+## Close
 
-1. Suite completa, linters, build de imagen y smoke test STDIO en verde.
-2. `git diff main...HEAD` limitado al alcance.
-3. PR de fase con evidencia, riesgos y pendientes.
-4. **Puerta B:** pide aprobación explícita al propietario antes de cualquier publicación.
-5. Reporta según el maestro §9.
+1. Full suite, linters, image build, and STDIO smoke test green.
+2. `git diff main...HEAD` limited to scope.
+3. Phase PR with evidence, risks, and pending items.
+4. **Gate B:** request explicit owner approval before any publication.
+5. Report per master §9.
 
-## Criterios de salida
+## Exit criteria
 
-- [ ] e2e MCP y STDIO verificados con el SDK oficial.
-- [ ] Matriz live/contract/unsupported/deferred completa.
-- [ ] Seguridad revisada sin críticos.
-- [ ] CI con lock, matriz 3.11–3.14, `pip-audit` real, semgrep.
-- [ ] Docker REST-only, sin TTY, sin FastEmbed, no-root si es viable.
-- [ ] README/`.env.example`/CHANGELOG coherentes.
-- [ ] GHCR y política de tags corregidas; `latest` solo con aprobación.
-- [ ] PR abierto, sin fusionar; release **no** publicada.
-- [ ] Evidencia live registrada o diferida con motivo.
+- [ ] MCP e2e and STDIO verified with the official SDK.
+- [ ] Live/contract/unsupported/deferred matrix complete.
+- [ ] Security reviewed with no criticals.
+- [ ] CI with lock, 3.11–3.14 matrix, real `pip-audit`, semgrep.
+- [ ] Docker REST-only, no TTY, no FastEmbed, non-root if viable.
+- [ ] README/`.env.example`/CHANGELOG consistent.
+- [ ] GHCR and tag policy fixed; `latest` only with approval.
+- [ ] PR open, not merged; release **not** published.
+- [ ] Live evidence recorded or deferred with a reason.
 
-## Escalación específica
+## Phase-specific escalation
 
-- Si falta el build de SFOS o una clave de escritura, **no inventes** evidencia: registra el bloqueo.
-- Si el propietario no aprueba el release, deja la puerta B preparada y documentada, sin publicar.
-- Si un cambio de CI/Docker rompe la suite, revierte y reporta; no lo ocultes.
+- If the SFOS build or a write key is missing, **do not invent** evidence: record the blocker.
+- If the owner does not approve the release, leave gate B prepared and documented, without publishing.
+- If a CI/Docker change breaks the suite, revert and report; do not hide it.

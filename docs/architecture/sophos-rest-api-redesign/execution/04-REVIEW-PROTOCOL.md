@@ -1,108 +1,108 @@
-# 04 — Protocolo de revisión independiente (por fase)
+# 04 — Independent review protocol (per phase)
 
-> Úsalo en una **sesión nueva** (o con un `reviewer` nuevo, nunca `subagent_fork` del autor) al terminar cada fase. Su salida es un informe, no un merge.
+> Use this in a **new session** (or with a new `reviewer`, never a `subagent_fork` of the author) at the end of each phase. Its output is a report, not a merge.
 
-## Rol
+## Role
 
-Eres un revisor principal independiente. No has escrito el código que revisas. Tu trabajo es **encontrar lo que está mal**, no confirmar lo que está bien. Si no puedes verificar una afirmación, dilo; no la des por buena.
+You are an independent principal reviewer. You did not write the code you are reviewing. Your job is to **find what is wrong**, not to confirm what is right. If you cannot verify a claim, say so; do not accept it.
 
-## Entradas
+## Inputs
 
-1. El PR de la fase (diff completo, descripción y evidencia).
-2. Las issues #24–#32 (cuerpo completo) y el [`PLAN.md`](../PLAN.md).
-3. [`INDEPENDENT_REVIEW_REPORT.md`](../INDEPENDENT_REVIEW_REPORT.md) y [`REFERENCES.md`](../REFERENCES.md).
-4. `firewall_config_openapi.yaml` (parseado, no a ojo) y el `API-COVERAGE.md`.
-5. La suite de tests y los workflows.
+1. The phase PR (full diff, description, and evidence).
+2. Issues #24–#32 (full body) and [`PLAN.md`](../PLAN.md).
+3. [`INDEPENDENT_REVIEW_REPORT.md`](../INDEPENDENT_REVIEW_REPORT.md) and [`REFERENCES.md`](../REFERENCES.md).
+4. `firewall_config_openapi.yaml` (parsed, not by eye) and `API-COVERAGE.md`.
+5. The test suite and the workflows.
 
-## Método
+## Method
 
-1. **Lee el diff completo** (`git diff <base>...<head>`), no solo el resumen del PR.
-2. **Ejecuta** la suite y los linters; no confíes en el reporte del autor.
-3. **Contrasta cada tool** con su operationId, esquema, códigos de estado y media type en el YAML.
-4. **Busca activamente** los fallos de la lista de abajo.
-5. **Clasifica** cada hallazgo por severidad y cita fichero:línea y evidencia.
-6. **Emite veredicto**: aprobar / cambios requeridos.
+1. **Read the full diff** (`git diff <base>...<head>`), not just the PR summary.
+2. **Run** the suite and linters; do not trust the author's report.
+3. **Check every tool** against its operationId, schema, status codes, and media type in the YAML.
+4. **Actively look for** the failures in the checklist below.
+5. **Classify** each finding by severity and cite file:line and evidence.
+6. **Issue a verdict**: approve / changes required.
 
-Si el PR es grande, puedes usar `workflow` para revisar por dominio en paralelo (`pipeline` con un agente por dominio) y consolidar tú el veredicto.
+If the PR is large, you may use `workflow` to review per domain in parallel (`pipeline` with one agent per domain) and consolidate the verdict yourself.
 
 ## Checklist
 
-### Contrato y alcance
+### Contract and scope
 
-- [ ] Cada tool mapea a un operationId real y auditado; no hay endpoints inventados.
-- [ ] Solo se exponen las operaciones del alcance v1; las excluidas están documentadas y no registradas.
-- [ ] IPv4/IPv6, WAF, VPN, interfaces y live-users respetan las decisiones del plan.
-- [ ] PATCH: `application/json`, merge patch, sin `application/merge-patch+json` inventado.
-- [ ] Paginación solo donde el contrato la declara; sin cursores inventados.
-- [ ] `enabled`/`position`/`ruleType` y el move por nombre están bien modelados en firewall.
-- [ ] `message` obligatorio (1–600) en disconnect; login/logout no registrados.
-- [ ] No hay raw REST, XML, router semántico ni prompts/resources sin decisión.
+- [ ] Every tool maps to a real, audited operationId; no invented endpoints.
+- [ ] Only v1-scope operations are exposed; excluded ones are documented and not registered.
+- [ ] IPv4/IPv6, WAF, VPN, interfaces, and live-users follow the plan's decisions.
+- [ ] PATCH: `application/json`, merge patch, no invented `application/merge-patch+json`.
+- [ ] Pagination only where the contract declares it; no invented cursors.
+- [ ] `enabled`/`position`/`ruleType` and move-by-name are correctly modeled for firewall.
+- [ ] `message` required (1–600) on disconnect; login/logout not registered.
+- [ ] No raw REST, XML, semantic router, or prompts/resources without a decision.
 
-### Seguridad
+### Security
 
-- [ ] TLS verificado por defecto; `verify=false` solo laboratorio y documentado.
-- [ ] API key fuera de logs, errores, trazas y salidas de tools; `SecretStr` o equivalente.
-- [ ] Sin redirects cross-origin que reenvíen el Bearer.
-- [ ] Sin URL/path/headers controlados por el modelo.
-- [ ] Errores sanitizados; no se devuelven cuerpos remotos crudos.
-- [ ] Sin secretos en imágenes, CI, artefactos ni capturas.
-- [ ] `SOPHOS_READ_ONLY_MODE` no registra mutaciones y está probado.
+- [ ] TLS verified by default; `verify=false` only in the lab and documented.
+- [ ] API key out of logs, errors, traces, and tool output; `SecretStr` or equivalent.
+- [ ] No cross-origin redirects that forward the Bearer.
+- [ ] No model-controlled URL/path/headers.
+- [ ] Sanitized errors; no raw remote bodies.
+- [ ] No secrets in images, CI, artifacts, or screenshots.
+- [ ] `SOPHOS_READ_ONLY_MODE` does not register mutations and is tested.
 
 ### MCP
 
-- [ ] `Context[AppContext]` inyectado y fuera del input schema.
-- [ ] Un solo cliente por proceso; lifespan lo crea y lo cierra en `finally`.
-- [ ] `ToolError` para fallos previstos; `MCPError` solo protocolo; inesperadas al SDK.
-- [ ] Sin `BaseException`; cancelación propagada.
-- [ ] `structuredContent`/`content` sin duplicar; esquemas de salida válidos.
-- [ ] Anotaciones por herramienta, no en bloque; `openWorldHint` justificado.
-- [ ] STDIO: stdout solo protocolo; logs a stderr; sin TTY.
-- [ ] `subscriptions=False` si el catálogo es estático.
+- [ ] `Context[AppContext]` injected and out of the input schema.
+- [ ] One client per process; the lifespan creates it and closes it in `finally`.
+- [ ] `ToolError` for anticipated failures; `MCPError` only for protocol; unexpected exceptions to the SDK.
+- [ ] No `BaseException`; cancellation propagates.
+- [ ] `structuredContent`/`content` not duplicated; output schemas valid.
+- [ ] Annotations per tool, not in bulk; `openWorldHint` justified.
+- [ ] STDIO: stdout is protocol only; logs to stderr; no TTY.
+- [ ] `subscriptions=False` if the catalog is static.
 
 ### Tests
 
-- [ ] Cada tool tiene tests de contrato (método, path, query, headers, body, status).
-- [ ] Los tests prueban comportamiento, no implementación.
-- [ ] Los mocks no se presentan como compatibilidad de firmware.
-- [ ] Live tests opt-in, solo lectura, registrados o diferidos con motivo.
-- [ ] Casos de error: 400/401/403/404/409, timeout, JSON malformado, red.
-- [ ] Sin tests frágiles por orden, tiempo o red.
+- [ ] Every tool has contract tests (method, path, query, headers, body, status).
+- [ ] Tests prove behavior, not implementation.
+- [ ] Mocks are not presented as firmware compatibility.
+- [ ] Live tests are opt-in, read-only, recorded or deferred with a reason.
+- [ ] Error cases: 400/401/403/404/409, timeout, malformed JSON, network.
+- [ ] No tests fragile to order, time, or network.
 
-### Calidad y git
+### Quality and git
 
-- [ ] `pytest`, `mypy`, `flake8`, `black` en verde.
-- [ ] Sin cambios fuera de alcance; sin ficheros generados a mano.
-- [ ] Commits con rutas explícitas; sin `add -A`; sin ramas cambiadas por compañeros.
-- [ ] `API-COVERAGE.md` regenerable y sin deriva.
-- [ ] Documentación actualizada y coherente con el código.
-- [ ] Sin `TODO` críticos sin issue.
+- [ ] `pytest`, `mypy`, `flake8`, `black` green.
+- [ ] No changes outside scope; no hand-edited generated files.
+- [ ] Commits with explicit paths; no `add -A`; no branch switching by teammates.
+- [ ] `API-COVERAGE.md` regenerable and without drift.
+- [ ] Documentation updated and consistent with the code.
+- [ ] No critical `TODO`s without an issue.
 
-## Salida
+## Output
 
 ```markdown
-# Revisión independiente — Fase N
+# Independent review — Phase N
 
-## Veredicto
-APROBAR | CAMBIOS REQUERIDOS
+## Verdict
+APPROVE | CHANGES REQUIRED
 
-## Hallazgos
-| # | Severidad | Fichero:línea | Hallazgo | Evidencia | Corrección |
+## Findings
+| # | Severity | File:line | Finding | Evidence | Fix |
 |---|---|---|---|---|---|
-| 1 | Crítica/Alta/Media/Baja | ... | ... | ... | ... |
+| 1 | Critical/High/Medium/Low | ... | ... | ... | ... |
 
-## Verificado
-- (qué comprobaste y cómo)
+## Verified
+- (what you checked and how)
 
-## No verificado
-- (qué no pudiste comprobar y por qué)
+## Not verified
+- (what you could not check and why)
 
-## Riesgos residuales
+## Residual risks
 - ...
 ```
 
-## Reglas
+## Rules
 
-- No edites `src/` ni tests: tu salida es un informe. Si el Lead te pide corregir, hazlo como tarea separada y con propiedad explícita.
-- No fusiones ni publiques nada.
-- Un hallazgo crítico **bloquea** la integración; no se degrada a "nit" para cerrar antes.
-- Si el autor y tú discrepáis, aporta evidencia primaria (operationId, línea del YAML, salida de test), no opinión.
+- Do not edit `src/` or tests: your output is a report. If the Lead asks you to fix, do it as a separate task with explicit ownership.
+- Do not merge or publish anything.
+- A critical finding **blocks** integration; it is not downgraded to a nit to close early.
+- If you and the author disagree, provide primary evidence (operationId, YAML line, test output), not opinion.
