@@ -534,6 +534,10 @@ INVALID_PATHS = [
     "https://evil.example/steal",
     "http://evil.example/steal",
     "/firewall/../administration",
+    "/network/%2e%2e/administration/x",
+    "/network/%2E%2E/administration/x",
+    "/network/%2e./administration/x",
+    "/network/.%2e/administration/x",
     "/firewall\\rules",
     "/firewall/rules?page=1",
     "/firewall/rules#fragment",
@@ -581,6 +585,31 @@ async def test_absolute_url_is_rejected(router: Any) -> None:
 
     assert "scheme" in str(info.value) or "absolute" in str(info.value)
     assert catch_all.call_count == 0
+
+
+async def test_percent_encoded_dots_are_rejected_with_a_clear_error(router: Any) -> None:
+    catch_all = router.route().mock(return_value=httpx.Response(200, json={}))
+    client = make_client()
+    try:
+        with pytest.raises(ValueError) as info:
+            await client.get("/network/%2e%2e/administration/system-settings")
+    finally:
+        await client.aclose()
+
+    assert "%2e" in str(info.value)
+    assert catch_all.call_count == 0
+
+
+async def test_literal_dot_in_an_object_name_is_accepted(router: Any) -> None:
+    path = "/firewall/rules/ipv4/allow.lan.to.wan"
+    route = router.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json={"name": path}))
+    client = make_client()
+    try:
+        assert await client.get(path) == {"name": path}
+    finally:
+        await client.aclose()
+
+    assert str(route.calls.last.request.url) == f"{BASE}{path}"
 
 
 # -- Redirects and proxy behaviour -------------------------------------------
@@ -877,18 +906,33 @@ async def test_async_context_manager_closes(router: Any) -> None:
     assert client._client.is_closed is True
 
 
-async def test_client_reuses_one_pool(router: Any) -> None:
+async def test_one_pool_is_created_for_many_calls(
+    router: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two tool calls must share one connection pool: count client constructions."""
+    constructions: list[httpx.AsyncClient] = []
+    real_client = httpx.AsyncClient
+
+    def factory(**kwargs: Any) -> httpx.AsyncClient:
+        created = real_client(**kwargs)
+        constructions.append(created)
+        return created
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
     router.get(f"{BASE}/a").mock(return_value=httpx.Response(200, json={}))
     router.get(f"{BASE}/b").mock(return_value=httpx.Response(200, json={}))
     client = make_client()
-    inner = client._client
     try:
         await client.get("/a")
         await client.get("/b")
-        assert client._client is inner
-        assert inner.is_closed is False
+        assert len(constructions) == 1
+        assert constructions[0].is_closed is False
     finally:
         await client.aclose()
+
+    assert len(constructions) == 1
+    assert constructions[0].is_closed is True
 
 
 # -- Secret handling ---------------------------------------------------------

@@ -279,6 +279,13 @@ class SophosRestClient:
             raise ValueError(
                 "path must not start with '//'; absolute URLs and host overrides are not allowed"
             )
+        if "%2e" in path.lower():
+            # httpx sends percent-encoded segments verbatim; an appliance that decodes the path
+            # first could turn %2e%2e into '..' and escape the fixed API prefix.
+            raise ValueError(
+                "path must not contain percent-encoded dots ('%2e'); they can be decoded into "
+                "'..' and escape the API prefix"
+            )
         for token, description in (
             ("..", "'..'"),
             ("\\", "a backslash"),
