@@ -34,7 +34,7 @@ surface, extend live coverage to the 24 SKIPs, and make the SFOS 23 support unmi
 | 1 | `nat-out` | M2 NAT, M13, M14, M12 NAT | `models/nat.py`, `tools/nat_rules.py`, `tests/test_nat_rules.py` |
 | 1 | `users-out` | M2 users | `models/users.py`, `tools/users_auth.py`, `tests/test_users_auth.py` |
 | 1 | `firewall-out` | M12 firewall | `models/firewall.py`, `tools/firewall_rules.py`, `tests/test_firewall_rules.py` |
-| 1 | `network-out` | M15, M16, L8, L9, L10 | `models/network.py`, `tools/network.py`, `tools/system.py`, tests |
+| 1 | `network-out` | M15, M16, L8, L9, L10 | `models/network.py`, `tools/network.py`, `tools/system.py`, `models/vpn.py`, `tools/vpn.py`, tests |
 | 1 | `common-out` | L1, M10 | `models/common.py`, `tools/__init__.py`, tests |
 | 2 | `polish` | M11, L6, L7, L3, M9 | the domain models/tools/tests (after wave 1) |
 | 3 | `live-skip` | 24 SKIPs with disposable objects | `docs/live-evidence/phase-5-skip-coverage.md` |
