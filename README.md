@@ -307,6 +307,11 @@ administrator profile for any deployment that only needs inspection.
 
 ## Known limitations and accepted regressions
 
+- **Input parameter naming is not yet uniform.** 79 tools (firewall, network, VPN) publish the Sophos
+  wire names (`pageSize`, `nameContains`, `idOrName`) and 61 tools (NAT, objects, users) publish
+  snake_case (`page_size`, `name_contains`, `id_or_name`); 12 tools take no parameters. Each tool's
+  schema is self-describing, so this is an ergonomics inconsistency, not a functional one. It is
+  scheduled to be unified in **0.5.0** as a documented breaking change.
 - **Target firmware build is not verified.** The contract exposes no version endpoint
   (`getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`), so the SFOS build
   behind the checked-in OpenAPI file is unknown. This project makes **no firmware compatibility claim**;

@@ -256,6 +256,9 @@ Read-only smoke test against the lab appliance; full evidence in [`docs/live-evi
 | `firewall_rule_by_name` | `GET /firewall/rules/ipv4/{name}` works with the real name (spaces and dots, URL-encoded) and returns the full object. | Name-or-id path parameters are usable with names; still accept UUIDs. |
 | `read_only_key` | The lab key belongs to a dedicated `admin_mcp` administrator with the 'Read only Admin' profile (47 read-only permissions, inferred). No write was attempted. | Live tests stay read-only until the owner provides a write key and a disposable-object plan. |
 | `firmware_unknown` | The SFOS build is not exposed by the contract (`getSystemSettings` returns only hostname, loginDisclaimer and updatedAt). | Firmware compatibility remains unverified; live evidence must record the build when it becomes known. |
+| `phase3_live_run` | Phase-3 read-only run (2026-11-15, `SOPHOS_READ_ONLY_MODE=true`, GET only): the 98 read-only tools produced 74 PASS, 24 SKIP (the appliance holds no object of that kind) and 0 FAIL. Appliance model, SFOS build and API allowlist source are not exposed by the API and remain unknown. | Recorded in `docs/live-evidence/phase-3-live-matrix.md`; no write behaviour is claimed. The 54 mutation tools remain contract-tested only. |
+| `empty_builtin_address_lists` | `GET /network/addresses/ipv4\\|ipv6` returns `ipv4Addresses: []` / `ipv6Addresses: []` for the built-in `##ALL_RW`, `##ALL_IPSEC_RW` and `##ALL_SSLVPN_RW` objects, while the contract declares `minItems: 1`. | The output list models accept an empty list (documented deviation); the create/update input models keep `min_length=1`. Regression tests in `tests/test_live_deviations.py`. |
+| `empty_updated_at` | `GET /network/dns/settings` returns `"updatedAt": ""` where the contract declares `format: date-time`. | The output model maps an empty string to `None` (documented deviation); any other non-date value still fails with a sanitized `ToolError`. |
 
 ### 4.10 Accepted regressions
 
@@ -271,7 +274,7 @@ The REST contract does not expose every capability of the old XML tooling or the
 
 Unresolved. The contract exposes no version endpoint and `getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`. SFOS 23.0 GA Build 371 is the documented reference for the REST API, not a verified target build.
 
-Live evidence: [`docs/live-evidence/api-smoke-2026-11-15.md`](live-evidence/api-smoke-2026-11-15.md). The opt-in `pytest -m live` protocol and the `docs/live-evidence/<domain>.md` record format are documented in [`docs/live-evidence/README.md`](live-evidence/README.md).
+Live evidence: [`docs/live-evidence/api-smoke-2026-11-15.md, docs/live-evidence/phase-3-live-matrix.md`](live-evidence/api-smoke-2026-11-15.md, docs/live-evidence/phase-3-live-matrix.md). The opt-in `pytest -m live` protocol and the `docs/live-evidence/<domain>.md` record format are documented in [`docs/live-evidence/README.md`](live-evidence/README.md).
 
 ## 5. Operations by domain
 
