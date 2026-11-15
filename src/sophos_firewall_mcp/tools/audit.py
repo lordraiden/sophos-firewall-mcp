@@ -243,11 +243,11 @@ class _Budget:
         """Project the budget into the bounded, explicit scan report."""
         return ScanReport(
             collections=list(self.collections),
-            items_scanned=self.items_scanned,
-            pages_read=self.pages_read,
-            item_limit_per_collection=self.max_items_per_collection,
+            itemsScanned=self.items_scanned,
+            pagesRead=self.pages_read,
+            itemLimitPerCollection=self.max_items_per_collection,
             truncated=self.truncated,
-            truncated_collections=list(self.truncated_collections),
+            truncatedCollections=list(self.truncated_collections),
         )
 
 
@@ -285,7 +285,7 @@ class _Findings:
 
 @dataclass
 class _UnverifiableEntry:
-    """One aggregated ``not_verifiable`` reason."""
+    """One aggregated ``notVerifiable`` reason."""
 
     subjects: list[str] = field(default_factory=list)
     count: int = 0
@@ -311,7 +311,7 @@ class _Unverifiable:
                 check=check,
                 reason=reason,
                 subjects=list(entry.subjects),
-                subject_count=entry.count,
+                subjectCount=entry.count,
             )
             for (check, reason), entry in ordered
         ]
@@ -1322,11 +1322,11 @@ class AuditAdapter(DomainAdapter):
 
         return AuditFirewallRulesOutput(
             findings=findings.finalize(),
-            findings_truncated=findings.truncated,
-            checks_run=list(checks),
-            not_verifiable=unverifiable.models(),
-            rules_examined=rules_examined,
-            nat_rules_examined=nat_rules_examined,
+            findingsTruncated=findings.truncated,
+            checksRun=list(checks),
+            notVerifiable=unverifiable.models(),
+            rulesExamined=rules_examined,
+            natRulesExamined=nat_rules_examined,
             scan=budget.report(),
             notes=notes,
         )
@@ -1658,13 +1658,13 @@ class AuditAdapter(DomainAdapter):
         )
 
         return FindObjectUsageOutput(
-            object_type=request.object_type,
+            objectType=request.object_type,
             identifier=request.identifier,
-            resolved_name=resolved_name,
-            resolved_id=resolved_id,
+            resolvedName=resolved_name,
+            resolvedId=resolved_id,
             found=bool(matches),
             references=references,
-            reference_count=total,
+            referenceCount=total,
             truncated=total > len(references) or budget.truncated,
             scan=budget.report(),
             notes=notes,
@@ -1734,10 +1734,10 @@ def _check_any_any(
                     severity=severity,
                     summary=summary,
                     evidence=FindingEvidence(
-                        rule_name=rule.name,
-                        rule_id=rule.id,
+                        ruleName=rule.name,
+                        ruleId=rule.id,
                         position=position,
-                        ip_family=family,
+                        ipFamily=family,
                         fields=fields,
                         detail=(
                             "The enabled accept rule matches every value of the cited criteria, "
@@ -1775,10 +1775,10 @@ def _check_disabled(
                     severity="low",
                     summary=f"Rule '{rule.name}' is disabled",
                     evidence=FindingEvidence(
-                        rule_name=rule.name,
-                        rule_id=rule.id,
+                        ruleName=rule.name,
+                        ruleId=rule.id,
                         position=position,
-                        ip_family=family,
+                        ipFamily=family,
                         fields=["enabled"],
                         detail=(
                             "The rule is present and occupies an evaluation position but is "
@@ -1852,10 +1852,10 @@ def _check_shadowed(
                         else f"Rule '{later.name}' is shadowed by rule '{earlier.name}'"
                     ),
                     evidence=FindingEvidence(
-                        rule_name=later.name,
-                        rule_id=later.id,
+                        ruleName=later.name,
+                        ruleId=later.id,
                         position=later_index + 1,
-                        ip_family=family,
+                        ipFamily=family,
                         fields=[
                             "sourceZones",
                             "destinationZones",
@@ -1909,10 +1909,10 @@ def _check_no_logging(
                     severity="low",
                     summary=f"Rule '{rule.name}' does not log traffic",
                     evidence=FindingEvidence(
-                        rule_name=rule.name,
-                        rule_id=rule.id,
+                        ruleName=rule.name,
+                        ruleId=rule.id,
                         position=position,
-                        ip_family=family,
+                        ipFamily=family,
                         fields=["logTraffic"],
                         detail=(
                             "The enabled rule accepts or drops traffic but traffic logging is "
@@ -1965,9 +1965,9 @@ def _check_unused_object(
                 severity="low",
                 summary=f"{entry.object_type.replace('-', ' ').capitalize()} '{entry.name}' is unused",
                 evidence=FindingEvidence(
-                    object_name=entry.name,
-                    object_type=entry.object_type,
-                    ip_family=entry.family if entry.family in ("ipv4", "ipv6") else None,
+                    objectName=entry.name,
+                    objectType=entry.object_type,
+                    ipFamily=entry.family if entry.family in ("ipv4", "ipv6") else None,
                     fields=["reference-scan"],
                     detail=(
                         "No scanned firewall rule, NAT rule or group references this object, so "
@@ -2002,10 +2002,10 @@ def _check_nat_without_rule(
                         severity=severity,
                         summary=f"NAT rule '{nat_rule.name}' has no linked firewall rule",
                         evidence=FindingEvidence(
-                            object_name=nat_rule.name,
-                            object_type="nat-rule",
+                            objectName=nat_rule.name,
+                            objectType="nat-rule",
                             position=position,
-                            ip_family=family,
+                            ipFamily=family,
                             fields=["linkedFirewallRule"],
                             detail=(
                                 "The NAT rule carries no linkedFirewallRule, so no firewall rule "
@@ -2034,10 +2034,10 @@ def _check_nat_without_rule(
                         f"'{linked.name}'"
                     ),
                     evidence=FindingEvidence(
-                        object_name=nat_rule.name,
-                        object_type="nat-rule",
+                        objectName=nat_rule.name,
+                        objectType="nat-rule",
                         position=position,
-                        ip_family=family,
+                        ipFamily=family,
                         fields=["linkedFirewallRule"],
                         detail=(
                             "The linkedFirewallRule names a rule that is not present in the "
@@ -2115,10 +2115,10 @@ def _check_unrestricted_service(
                     severity="high",
                     summary=(f"Rule '{rule.name}' allows any service from a non-WAN zone to WAN"),
                     evidence=FindingEvidence(
-                        rule_name=rule.name,
-                        rule_id=rule.id,
+                        ruleName=rule.name,
+                        ruleId=rule.id,
                         position=position,
-                        ip_family=family,
+                        ipFamily=family,
                         fields=[
                             "servicesOrGroups.any",
                             "sourceZones",
@@ -2306,7 +2306,7 @@ def _routing_for(
                 decision="default-route",
                 destination=destination.ip,
                 gateway=wan.name,
-                gateway_ip=gateway_ip,
+                gatewayIp=gateway_ip,
                 interface=wan.interface.name if wan.interface is not None else None,
                 truncated=truncated,
                 note=f"{note}; {cut}" if cut is not None else note,
@@ -2344,9 +2344,9 @@ def _routing_for(
     return RoutingDecision(
         decision="default-route" if best_prefix == 0 else "static-route",
         destination=destination.ip,
-        route_name=best_route.name,
+        routeName=best_route.name,
         gateway=_gateway_name(gateways, gateway_ip),
-        gateway_ip=gateway_ip,
+        gatewayIp=gateway_ip,
         interface=interface,
         truncated=truncated,
         note=f"{note}; {cut}" if cut is not None else note,
@@ -2403,14 +2403,14 @@ def _evaluate_rules(
                     name=rule.name,
                     id=rule.id,
                     position=position,
-                    ip_family=family,
+                    ipFamily=family,
                     enabled=rule.enabled,
                     action=rule.action,
                     decisive=False,
                     applied=False,
-                    matched_fields=matched_fields,
-                    unresolved_fields=unresolved,
-                    log_traffic=rule.logTraffic,
+                    matchedFields=matched_fields,
+                    unresolvedFields=unresolved,
+                    logTraffic=rule.logTraffic,
                     note=(
                         "the rule matches every criterion that could be resolved, but its "
                         f"{', '.join(unresolved)} reference objects whose membership this "
@@ -2426,14 +2426,14 @@ def _evaluate_rules(
                     name=rule.name,
                     id=rule.id,
                     position=position,
-                    ip_family=family,
+                    ipFamily=family,
                     enabled=rule.enabled,
                     action=rule.action,
                     decisive=False,
                     applied=False,
-                    matched_fields=matched_fields,
-                    unresolved_fields=["enabled"],
-                    log_traffic=rule.logTraffic,
+                    matchedFields=matched_fields,
+                    unresolvedFields=["enabled"],
+                    logTraffic=rule.logTraffic,
                     note=(
                         "the rule matches the flow criteria but its enabled state is not "
                         "projected, so it may be decisive"
@@ -2447,13 +2447,13 @@ def _evaluate_rules(
             name=rule.name,
             id=rule.id,
             position=position,
-            ip_family=family,
+            ipFamily=family,
             enabled=rule.enabled,
             action=rule.action,
             decisive=rule.enabled and not preempted,
             applied=rule.enabled and not preempted,
-            matched_fields=matched_fields,
-            log_traffic=rule.logTraffic,
+            matchedFields=matched_fields,
+            logTraffic=rule.logTraffic,
             note=(
                 "disabled: matches the criteria but is not evaluated"
                 if not rule.enabled
@@ -2566,11 +2566,11 @@ def _evaluate_nat(
                     name=nat_rule.name,
                     id=nat_rule.id,
                     position=position,
-                    ip_family=family,
+                    ipFamily=family,
                     enabled=nat_rule.enabled,
-                    matched_fields=matched_fields,
-                    linked_firewall_rule=(linked.name if linked is not None else None),
-                    linked_rule_exists=(
+                    matchedFields=matched_fields,
+                    linkedFirewallRule=(linked.name if linked is not None else None),
+                    linkedRuleExists=(
                         None
                         if linked is None or rules_truncated
                         else (
@@ -2579,8 +2579,8 @@ def _evaluate_nat(
                             else (True if linked.name in rule_names else None)
                         )
                     ),
-                    translated_source=_translation_label(nat_rule.translatedSource),
-                    translated_destination=_translation_label(nat_rule.translatedDestination),
+                    translatedSource=_translation_label(nat_rule.translatedSource),
+                    translatedDestination=_translation_label(nat_rule.translatedDestination),
                     note=(
                         "only NAT rules whose criteria all match definitely are reported; "
                         "object-based criteria are not resolved"
@@ -2659,7 +2659,7 @@ def _explain_output(
                 InterfaceMatch(
                     name=name,
                     zone=zone,
-                    ip_family="ipv4" if ":" not in address else "ipv6",
+                    ipFamily="ipv4" if ":" not in address else "ipv6",
                     address=address,
                     role=role,  # type: ignore[arg-type]
                 )
@@ -2673,7 +2673,7 @@ def _explain_output(
                 InterfaceMatch(
                     name=routing.interface,
                     zone=route_zone,
-                    ip_family=destination.family or "ipv4",
+                    ipFamily=destination.family or "ipv4",
                     address=None,
                     role="route",
                 )
@@ -2691,19 +2691,19 @@ def _explain_output(
 
     return ExplainConnectivityOutput(
         verdict=verdict,  # type: ignore[arg-type]
-        verdict_reason=verdict_reason,
+        verdictReason=verdict_reason,
         source=_endpoint_summary(source, canonical_zones),
         destination=_endpoint_summary(destination, canonical_zones),
         service=service,
-        ip_families=list(families) if families else ["ipv4"],
+        ipFamilies=list(families) if families else ["ipv4"],
         zones=zone_models,
         interfaces=interface_models,
-        firewall_rules=reported_rules,
-        decisive_rule=decisive,
-        nat_rules=nat,
+        firewallRules=reported_rules,
+        decisiveRule=decisive,
+        natRules=nat,
         routing=routing,
-        missing_evidence=missing[:20],
-        rules_examined=rules_examined,
+        missingEvidence=missing[:20],
+        rulesExamined=rules_examined,
         truncated=truncated,
         scan=budget.report(),
         notes=notes,
@@ -2718,7 +2718,7 @@ def _endpoint_summary(
         ip=endpoint.ip,
         zone=endpoint.zone,
         fqdn=endpoint.fqdn,
-        resolved_zones=[
+        resolvedZones=[
             _canonical_zone_name(canonical_zones, name) for name in sorted(endpoint.zones)
         ],
         interfaces=list(endpoint.interfaces),
@@ -2761,7 +2761,7 @@ def _collect_references(
                                 kind="firewall-rule",
                                 name=rule.name,
                                 id=rule.id,
-                                ip_family=family,
+                                ipFamily=family,
                                 position=position,
                                 enabled=rule.enabled,
                                 field=f"{side}.{field_name}",
@@ -2776,7 +2776,7 @@ def _collect_references(
                                 kind="firewall-rule",
                                 name=rule.name,
                                 id=rule.id,
-                                ip_family=family,
+                                ipFamily=family,
                                 position=position,
                                 enabled=rule.enabled,
                                 field=f"servicesOrGroups.{field_name}",
@@ -2797,7 +2797,7 @@ def _collect_references(
                                 kind="nat-rule",
                                 name=nat_rule.name,
                                 id=nat_rule.id,
-                                ip_family=family,
+                                ipFamily=family,
                                 position=position,
                                 enabled=nat_rule.enabled,
                                 field=f"{side}.{field_name}",
@@ -2813,7 +2813,7 @@ def _collect_references(
                                 kind="nat-rule",
                                 name=nat_rule.name,
                                 id=nat_rule.id,
-                                ip_family=family,
+                                ipFamily=family,
                                 position=position,
                                 enabled=nat_rule.enabled,
                                 field=f"originalServicesOrGroups.{field_name}",
@@ -2826,7 +2826,7 @@ def _collect_references(
                         kind="nat-rule",
                         name=nat_rule.name,
                         id=nat_rule.id,
-                        ip_family=family,
+                        ipFamily=family,
                         position=position,
                         enabled=nat_rule.enabled,
                         field="translatedService",
@@ -2843,7 +2843,7 @@ def _collect_references(
                             kind="nat-rule",
                             name=nat_rule.name,
                             id=nat_rule.id,
-                            ip_family=family,
+                            ipFamily=family,
                             position=position,
                             enabled=nat_rule.enabled,
                             field=side,
@@ -2857,7 +2857,7 @@ def _collect_references(
                             kind="nat-rule",
                             name=nat_rule.name,
                             id=nat_rule.id,
-                            ip_family=family,
+                            ipFamily=family,
                             position=position,
                             enabled=nat_rule.enabled,
                             field="overrideSnatForOutboundInterfaces.translatedSource",
@@ -2871,7 +2871,7 @@ def _collect_references(
                     kind="group",
                     name=group.name,
                     id=group.id,
-                    ip_family=group.family if group.family in ("ipv4", "ipv6") else None,
+                    ipFamily=group.family if group.family in ("ipv4", "ipv6") else None,
                     field="members",
                     detail=f"member of {group.kind} '{group.name}'",
                 )
@@ -2912,8 +2912,8 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "rule-scoped finding carries rule name/id, evaluation position and IP family in "
             "its evidence; an object- or NAT-scoped finding carries object name/type instead "
             "and leaves the rule fields null. "
-            "findings_truncated and scan.truncated are true only when a limit was actually hit. "
-            "When the projection cannot support a claim the check is listed in not_verifiable "
+            "findingsTruncated and scan.truncated are true only when a limit was actually hit. "
+            "When the projection cannot support a claim the check is listed in notVerifiable "
             "instead of guessed. Shadowing compares projected criteria only: user-authentication "
             "and exclusion members are not projected, so treat a shadowing finding as a "
             "candidate for review. Reads the audited list operations through the domain "
