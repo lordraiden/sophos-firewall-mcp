@@ -105,3 +105,54 @@ the **missing global output-naming test** that let the High finding through. All
 - **The live SKIP coverage is 6 of 24.** 17 remain deferred (connectivity risk or no create tool) and 1 is appliance-blocked; the read-only surface is 77 PASS / 18 SKIP, not a complete live matrix.
 - **The release pack is prepared but not published.** The tag, image and GitHub release are still pending owner approval; the publication checklist has one stale item (finding 7) and the "APPROVE" item is now blocked by this review.
 - **The private-SDK seam** (`MCPServer._tool_manager`, `Tool.fn_metadata.arg_model`, `Tool.parameters`) is still a pinned-version dependency; the tests pin it, but an SDK upgrade breaks argument validation for every tool.
+
+---
+
+## Re-check after fixes
+
+**Re-checked HEAD:** `825c137` (commits `f7f0135`, `ff938ac`, `37cb93b`, `825c137`). **Date:** 2026-11-15.
+**Scope:** focused re-check of findings 1–10 on the pushed HEAD, not a second full review. The original
+verdict above is unchanged; this section records the status after the fixes.
+
+### Finding status
+
+| # | Severity | Status | Evidence |
+|---|---|---|---|
+| 1 | **High** | **Closed** | `f7f0135` renames the audit output DTOs. Enumerated `tools/list` on `825c137`: 152 tools, **0** off-convention output tools (was 3), 4,547 output property occurrences over 430 distinct names, all camelCase at every depth; inputs still **0** off-convention. Audit distinct names: `audit_firewall_rules` 29, `explain_connectivity` 55, `find_object_usage` 23. The audit logic is unchanged: the `tools/audit.py` diff is pure attribute renames, and I ran four representative scenarios (default audit, `unused-object` + `ip_family`, `explain_connectivity`, `find_object_usage`) against `b4b6914` and `825c137` and compared the outputs after normalizing keys — **identical**. |
+| 2 | **Medium** | **Closed** | `ff938ac` adds the serializer to `vpn._Output`. End-to-end `ipsec_profile_get` → `createdAt: None`, `updatedAt: "2026-11-15T10:00:00Z"`. All eight VPN output models with `createdAt` map the sentinel to `None`, preserve `1970-01-01T00:00:01Z`, and keep the parsed value (`datetime(1970, 1, 1, tzinfo=UTC)`) for the audit heuristic. New tests: 10 parametrized model tests plus one end-to-end tool test. |
+| 3 | **Medium** | **Closed** | `CHANGELOG.md:28-30` and `docs/release/RELEASE-0.6.0.md:38-40` now say "the heavy domains (firewall rules, NAT, services) state the approximate size of a full page". The five tools with the size sentence are exactly those domains. |
+| 4 | **Medium** | **Closed** | `tests/test_tool_surface.py` adds `test_every_published_output_property_is_camel_case_at_every_depth`, walking every output schema recursively and pinning 4,547 occurrences / 430 names / 152 tools (the counts match my enumeration). I injected a synthetic tool with `rule_name` and a nested `object_type` and re-ran the test: it **fails** with both paths flagged (`output.rule_name`, `output.nested.object_type`); the real surface passes. |
+| 5 | Low | **Closed** | The breakdown is now "12 NAT, 8 users and 3 audit tools" in `CHANGELOG.md:17-18`, `README.md:354-355` and `docs/release/RELEASE-0.6.0.md:12,29`. |
+| 6 | Low | **Closed** | `docs/live-evidence/phase-5-skip-coverage.md:278-281` now says "**Fixed in this PR:** commit `7680ab0` …", and the intro says "fixed in this PR, §7". |
+| 7 | Low | **Closed** | `docs/release/RELEASE-0.6.0.md:98-99` now says "The bump is part of this PR (commit `6dd66a7`)". |
+| 8 | Low | **Closed** | The deviation is recorded in `PHASE-5-PLAN.md` ("Live-run deviation (recorded)") and the skip-coverage doc now calls it "the **bulk-delete endpoint** the safety rules exclude" (`:34-44`). |
+| 9 | Low | **Closed** | `docs/live-evidence/phase-5-skip-coverage.md:212` now reads "**PASS** (defect found)", and a paragraph at `:228-232` states the 6-PASS tally is not 6 clean conversions. |
+| 10 | Low | **Closed** | `CHANGELOG.md:21-23` and `docs/release/RELEASE-0.6.0.md:21-23` now say "The JSON request body sent to the appliance is unchanged; the default `pageSize` query value changes from 50 to 10". |
+
+### New findings
+
+| # | Severity | File:line | Finding | Evidence | Fix |
+|---|---|---|---|---|---|
+| 11 | Low | `README.md:350-353`; `CHANGELOG.md:18-20`; `docs/release/RELEASE-0.6.0.md:26-28`; `src/sophos_firewall_mcp/models/audit.py:24-29` | **The user-facing docs still explain the output convention as "the Sophos wire name … because outputs are projections of the appliance payload", which is not true for the three audit composites.** Their output members are camelCase by the same convention but are derived, not wire names, and the composites add no Sophos operation. The audit models docstring states this precisely ("camelCase by the same convention rather than by a wire name of their own"), but the README, CHANGELOG and release notes do not. This does **not** reopen finding 1: the naming is uniform and the High is closed. | `README.md:350-353` ("Every published output property is the Sophos wire name … because outputs are projections of the appliance payload"); `CHANGELOG.md:18-20`; `docs/release/RELEASE-0.6.0.md:26-28`; `src/sophos_firewall_mcp/models/audit.py:24-29` (the precise statement). Enumerated output names for the three composites: `checksRun`, `findingsTruncated`, `verdictReason`, `referenceCount`, … — camelCase, no wire counterpart. | Add one clause to the README/CHANGELOG/release notes: "the three audit composites are camelCase by the same convention; their members are derived, not wire names." |
+
+### Gates re-run on `825c137`
+
+| Gate | Command | Result |
+|---|---|---|
+| Tests | `UV_CACHE_DIR=/tmp/dsh-uv-cache uv run --no-sync pytest -q` | **1133 passed, 100 skipped** (was 1121/100; +12 tests) |
+| Types | `uv run --no-sync mypy src/sophos_firewall_mcp` | clean (26 files) |
+| Lint | `uv run --no-sync flake8 src/sophos_firewall_mcp tests scripts` | clean |
+| Format | `uv run --no-sync black --check src tests scripts` | 51 files unchanged |
+| Coverage drift | `uv run --no-sync python scripts/generate_coverage.py --check` | `docs/API-COVERAGE.md` up to date |
+| Lock | `uv lock --check` | 55 packages |
+| CI on `825c137` | `gh pr checks 42` | 3.12, 3.13, 3.14 pass; lint, image build + smoke, dependency audit and Semgrep pass; **3.11 still pending** at the time of the re-check |
+
+### Re-check verdict
+
+**APPROVE.** All ten findings (1 High, 3 Medium, 6 Low) are **closed** on `825c137`. The phase acceptance
+criteria are met: **0 off-convention output tools**, inputs still snake_case, the JSON request body
+unchanged, M9–M16 and L1/L3/L6–L10 closed, the live SKIP coverage baseline == final with zero leftovers,
+the SFOS 23 positioning accurate, and 0.6.0 prepared and unpublished. The first two residual risks above
+(audit output naming, L6 VPN gap) are resolved. One new **Low** documentation-precision finding (11)
+remains; it is non-blocking and does not reopen the High. The only open item on the release checklist is
+the "Independent review APPROVE" box, which this re-check now supports.
