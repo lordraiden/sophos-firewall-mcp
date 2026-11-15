@@ -49,6 +49,9 @@ domains:
       - "WAF rule variant (`ruleType: waf`): create/update schemas are discriminated by `ruleType`; v1 tools accept only `ruleType: firewall` (PLAN §4; #27)."
     caveats:
       - "The contract has no firewall rule groups; do not infer them from other object groups."
+      - "The list tools omit WAF items and report `wafRulesSkipped`, so the exclusion is visible rather than silent."
+      - "`after`/`before` positions require `referenceItem` (semantic validation beyond the literal schema) to avoid a doomed request."
+      - "`idOrName` values are rejected when they cannot be one URL path segment (no `/`, `\\`, `..`, `?`, `#`), so the failure is a clear validation error instead of a transport error."
       - "`move` changes rule ordering and is a separate operation (`moveFirewallRuleIpv4/Ipv6`)."
       - "The Firewall AI Assistant default (disabled, placed last) is not evidence for the REST POST default; represent and return the applied state explicitly."
       - "`firewall_rule_set_enabled_*` and `firewall_rule_clone_*` are composite tools over the audited operations; they add no new endpoint."
@@ -167,7 +170,7 @@ domains:
       - "Zone, gateway, static-route, SD-WAN, DHCP, DNS, neighbor and router-advertisement mutations are excluded from v1."
       - "Global DHCP server settings and neighbor settings are classified but not exposed."
     caveats:
-      - "Physical, bridge, LAG and XFRM interfaces stay read-only because a wrong mutation can interrupt management connectivity. The VLAN tools must read the interface first with `getNetworkInterface` (in scope; the response carries `type`) and refuse any type other than `vlan` before create, update or delete; `deleteNetworkInterface` has no request body, so that pre-read is the only way to enforce the rule."
+      - "Physical, bridge, LAG and XFRM interfaces stay read-only because a wrong mutation can interrupt management connectivity. Update and delete pre-read the **target** interface with `getNetworkInterface` and refuse any type other than `vlan`; `deleteNetworkInterface` has no request body, so that pre-read is the only enforcement. Create cannot read the object it is about to create, so it pre-reads the **parent** interface (`parentInterface` must exist and be `physical`, `vlan`, `bridge` or `lag`; `cellularWan` and `xfrm` parents are refused) and always sends `type: vlan`."
       - "The network domain is the read-only architecture view; it is not a configuration editor for routing or DHCP."
       - "Distinguish configured routes and gateways from live state; the contract exposes no live routing table."
     default_exclusion: "Not in the v1 network scope: global settings reads and operations outside the read-only architecture view are classified here (PLAN §4; #31)."
