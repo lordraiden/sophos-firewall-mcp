@@ -1,6 +1,6 @@
 # Referencias — Sophos Firewall MCP REST redesign
 
-**Última revisión:** 14 de noviembre de 2026.  
+**Última revisión:** 15 de noviembre de 2026.  
 **Principio de autoridad:** primero el YAML exacto versionado en este repositorio; después su contraste con el portal OpenAPI oficial y la versión/build de SFOS del appliance objetivo. Las páginas online pueden actualizarse independientemente del YAML local.
 
 Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
@@ -24,7 +24,7 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 | R01 | Sophos Firewall API Reference — overview | https://docs.sophos.com/nsg/sophos-firewall/rest-api/index.html | Descripción del API del appliance, base URL, autenticación, acceso desde endpoints/zones y referencia. |
 | R02 | Sophos Firewall Configuration API — catálogo OpenAPI | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/sophos-firewall-configuration-api/index.html | Referencia generada desde OpenAPI 3.0; portal indica API version 1.0.0, Bearer auth, base URL, formatos comunes de nombres/UUID y JSON Merge Patch como default de PATCH salvo excepciones documentadas. El YAML local también fue parseado y confirma info.version 1.0.0. |
 | R03 | Get started with Sophos Firewall REST API — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIRestAPI/index.html | Requisitos previos, consideraciones y API key Bearer. |
-| R04 | REST API access and API keys — SFOS 23.0 | https://docs.sophos.com/nsg/sophos-firewall/23.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIRestAPI/APIAccessAndKeys/index.html | Habilitar API access, Allowed IP hosts, API keys, permisos heredados, duración un año, límite de 10 claves por administrador y 1.024 por appliance, y funcionalidades no soportadas. La lista no es exhaustiva. |
+| R04 | REST API access and API keys — SFOS 23.0 | https://docs.sophos.com/nsg/sophos-firewall/23.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/APIRestAPI/APIAccessAndKeys/index.html | API access desactivada por defecto; Allowed IP hosts (máximo 64 entradas); API keys específicas por administrador, máximo 10 por administrador y 1.024 por appliance; caducidad de un año; secreto mostrado una sola vez; permisos heredados del perfil; lista de features no soportadas no exhaustiva. |
 | R05 | SFOS 23.0 GA Build 371 release notes | https://docs.sophos.com/releasenotes/output/en-us/nsg/sf_230_rn.html | Publicación 4 Nov 2026; la nota sobre reglas deshabilitadas al crearse se refiere al Firewall AI Assistant en Sophos Fusion, no debe extrapolarse sin probar al POST REST. |
 | R06 | Firewall rules — GET all IPv4 / operaciones enlazadas | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/get-all-firewall-rules-ipv-4/index.html | La navegación lista IPv4/IPv6 GET, POST create, GET by ID/name, PATCH, DELETE, bulk delete y move. Ejemplos de códigos distintos por operación. |
 | R06a | Create IPv4 firewall rule | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/create-firewall-rule-ipv-4/index.html | POST /firewall/rules/ipv4; respuestas documentadas 201, 400, 401, 403, 409 y 500. |
@@ -48,6 +48,8 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 - API access allowlist y Device access/zones son controles distintos; revisar ambos.
 - API keys heredan permisos de administrador y expiran al año. La rotación de claves es manual según el flujo documentado.
 - Los códigos HTTP varían por operación. R06a/R06b/R07a/R09/R10 ofrecen ejemplos verificables; no construir una tabla universal.
+- Sophos recomienda dedicar una cuenta de administrador por automatización y asignar únicamente permisos necesarios. Los perfiles pueden dar permisos None/Read-only/Read-write por configuración; API access allowlisting y Device Access son controles separados.
+- La consola administrativa HTTPS usa 4444 por defecto en SFOS 23.0 y se puede configurar. No inferir que la interfaz WAN deba habilitar Web Admin Console; Sophos lo desaconseja.
 - A diferencia de la regla genérica de HTTP, Sophos documenta para esta Configuration REST API que PATCH usa JSON Merge Patch (RFC 7396) por defecto salvo overrides por operación. Las excepciones y el tratamiento de arrays/oneOf prevalecen; no cambiar el Content-Type sin contrato explícito.
 - GET /authentication/users y /authentication/users/network-users tienen page/pageSize/pageTotal; GET /authentication/live-users responde items + pages metadata, pero el YAML no define query parameters de paginación para ese endpoint.
 - La lista de features no soportadas en R04 no es exhaustiva; consultar cada endpoint del API Reference.
@@ -59,6 +61,11 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 
 | R25 | DNS protection status endpoint | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/get-dns-protection-status/index.html | Operación GET /network/dns/protection/status (getDnsProtectionStatus), disponible en el YAML local. |
 | R26 | Cellular WAN modem status endpoint | https://docs.sophos.com/nsg/sophos-firewall/rest-api/api/firewall-config-openapi/get-cellular-wan-status/index.html | Operación GET /network/cellular-wan/modem-status (getCellularWanStatus), disponible en el YAML local. |
+| R27 | Web admin console HTTPS settings — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/StartupHelp/ManageSophosFirewall/GettingStartedWebAdminConsole/index.html | HTTPS Web Admin Console, puerto predeterminado 4444, interfaz LAN; habilitar acceso desde otras zonas en Administration > Device access; Sophos desaconseja exponer la consola en interfaces WAN. |
+| R28 | Device access profiles — SFOS 23.0 | https://docs.sophos.com/nsg/Sophos-firewall/23.0/help/en-us/webhelp/onlinehelp/AdministratorHelp/Profiles/DeviceAccess/index.html | Los perfiles aplican a Web Admin Console y API; incluyen permisos None, Read-only y Read-write por configuración/función. |
+| R29 | MCP Python SDK v2 — Tools | https://py.sdk.modelcontextprotocol.io/v2/servers/tools/ | Tool schemas, nombres/títulos/descripciones, inputs tipados y anotaciones readOnly/openWorld/destructive/idempotent. Los hints no son un control de seguridad. |
+| R30 | MCP Python SDK v2 — Lifespan | https://py.sdk.modelcontextprotocol.io/v2/handlers/lifespan/ | El lifespan produce un único contexto compartido; el SDK inyecta Context y excluye ese parámetro del input schema. |
+| R31 | MCP Python SDK v2 — Structured Output | https://py.sdk.modelcontextprotocol.io/v2/servers/structured-output/ | El tipo de retorno define outputSchema; validación del resultado y canales content/structuredContent. Para interoperabilidad con clientes anteriores, preferir objetos raíz tipados y probar las dos eras. |
 
 ## C. MCP — SDK oficial, protocolo y prácticas
 
