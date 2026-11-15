@@ -22,17 +22,30 @@ classifiers = [
     "Topic :: System :: Networking :: Firewalls",
 ]
 dependencies = [
-    # >=2 for MCPServer: mcp.server.fastmcp was removed in 2.0 and replaced by mcp.server.mcpserver
-    "mcp[cli]>=2.0.0,<3.0.0",
+    # >=2.3 for MCPServer (mcp.server.mcpserver); the CLI extra is development-only and is not
+    # installed in the runtime image.
+    "mcp>=2.3.0,<3",
     "httpx>=0.20.0",
-    "xmltodict>=0.13.0",
     "pydantic>=2.0.0",
 ]
 
 [project.optional-dependencies]
+# Legacy FastEmbed router extra. The router was removed in the REST migration; this extra and the
+# Dockerfile step that installs it are removed by #32 (packaging/release), not by the foundation.
 router = [
     "fastembed>=0.4.0",
     "numpy>=1.26.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+    "mypy>=2.4.0",
+    "flake8>=7.4.1",
+    "black>=26.10.1",
+    "pyyaml>=6.0",
 ]
 
 [project.urls]
@@ -55,6 +68,11 @@ include = ["sophos_firewall_mcp*"]
 asyncio_mode = "auto"
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = [
+    # Opt-in live tests against a real appliance. Skipped by default: they need SOPHOS_HOST,
+    # SOPHOS_PORT and SOPHOS_API_KEY (or SOPHOS_API_KEY_FILE). Read-only with the lab key.
+    "live: live appliance verification (opt-in, read-only, skipped by default)",
+]
 filterwarnings = [
     "ignore::pytest.PytestAssertRewriteWarning"
 ]
