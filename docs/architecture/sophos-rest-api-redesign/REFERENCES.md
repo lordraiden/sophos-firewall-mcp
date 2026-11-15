@@ -66,6 +66,7 @@ Los identificadores [Rxx] se utilizan en [PLAN.md](./PLAN.md).
 | R29 | MCP Python SDK v2 — Tools | https://py.sdk.modelcontextprotocol.io/v2/servers/tools/ | Tool schemas, nombres/títulos/descripciones, inputs tipados y anotaciones readOnly/openWorld/destructive/idempotent. Los hints no son un control de seguridad. |
 | R30 | MCP Python SDK v2 — Lifespan | https://py.sdk.modelcontextprotocol.io/v2/handlers/lifespan/ | El lifespan produce un único contexto compartido; el SDK inyecta Context y excluye ese parámetro del input schema. |
 | R31 | MCP Python SDK v2 — Structured Output | https://py.sdk.modelcontextprotocol.io/v2/servers/structured-output/ | El tipo de retorno define outputSchema; validación del resultado y canales content/structuredContent. Para interoperabilidad con clientes anteriores, preferir objetos raíz tipados y probar las dos eras. |
+| R32 | MCP Tool Annotations as Risk Vocabulary | https://blog.modelcontextprotocol.io/posts/2026-03-16-tool-annotations/ | Explica el significado contextual de openWorldHint: límite externo/de confianza y posibilidad de que la salida contenga contenido no confiable; las anotaciones son hints, no controles de seguridad. |
 
 ## C. MCP — SDK oficial, protocolo y prácticas
 
