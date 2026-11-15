@@ -342,7 +342,7 @@ El SDK v2 infiere `outputSchema` del tipo de retorno y valida el resultado. El c
 
 ## Anotaciones y riesgo
 
-Definir `title`, `readOnlyHint` y `openWorldHint` de forma deliberada. En principio, `openWorldHint=false` es correcto porque cada herramienta opera sobre el conjunto acotado de recursos de un único appliance configurado; cambiarlo solo si una herramienta realmente interactúa con un mundo externo/abierto. Para herramientas de escritura, definir además `destructiveHint` e `idempotentHint` según los efectos reales; no inferir idempotencia del verbo HTTP. No incluir hints de escritura en herramientas read-only. Las anotaciones son metadatos consultivos: no autentican, no autorizan y no fuerzan confirmaciones. La seguridad efectiva reside en permisos del perfil Sophos, allowlist/red, herramientas limitadas y políticas de aprobación del host. No añadir un parámetro `confirm=true` como falsa barrera de seguridad. [R18]
+`openWorldHint` debe evaluarse desde el límite de confianza real, no solo por el número de appliances. Estas herramientas llaman a un firewall externo al proceso MCP y devuelven datos de configuración/estado que pueden contener nombres, descripciones u otros valores introducidos por administradores o sistemas externos. Por tanto, usar `openWorldHint=true` como postura conservadora para las herramientas Sophos que consultan o modifican el appliance. Solo justificar `false` para una herramienta cuyo origen y dominio de datos sean realmente cerrados y controlados por el propio servidor. Definir `title` y `readOnlyHint` según el comportamiento; para herramientas de escritura, definir además `destructiveHint` e `idempotentHint` según los efectos reales, sin inferir idempotencia del verbo HTTP. No incluir hints de escritura en herramientas read-only. Las anotaciones son metadatos consultivos: no autentican, no autorizan y no fuerzan confirmaciones. La seguridad efectiva reside en permisos del perfil Sophos, allowlist/red, herramientas limitadas y políticas de aprobación del host. No añadir un parámetro `confirm=true` como falsa barrera de seguridad. [R18] [R32]
 
 ## Errores MCP
 
@@ -351,7 +351,8 @@ Definir `title`, `readOnlyHint` y `openWorldHint` de forma deliberada. En princi
 - Excepciones inesperadas: dejar que el SDK las registre con traceback en el servidor; el modelo no debe recibir stack traces ni secretos.
 - No devolver un string "error: ..." con isError=false.
 - No reproducir el wrapper actual que captura BaseException; nunca convertir cancelación/shutdown en un error normal.
-- Los mensajes de error del cliente Sophos deben ser claros, sanitizados y específicos por operación. [R19]
+- Los mensajes de error del cliente Sophos deben ser claros, sanitizados y específicos por operación. Nunca devolver cuerpos de respuesta sin filtrar ni incrustar datos remotos en mensajes/instrucciones para el modelo.
+- Tratar todos los valores devueltos por Sophos —incluidos nombres de objetos, comentarios, descripciones, labels y mensajes del appliance— como datos externos no confiables, nunca como instrucciones. Limitar longitudes, normalizar caracteres de control y no renderizar HTML/Markdown remoto como contenido activo. Mantener estos valores en campos de datos estructurados y no concatenarlos en instrucciones operativas. [R32]
 
 ## Router semántico
 
@@ -368,6 +369,7 @@ Eliminar FastEmbed y las herramientas meta route_tools/call_routed_tool en la pr
 # 8. Seguridad operativa y semántica de escritura
 
 - API Key en secreto de despliegue, nunca en repo, imagen, salida, trazas o logs.
+- Tratar todas las respuestas del firewall como datos externos no confiables. Los nombres, comentarios y descripciones pueden ser controlados por usuarios/admins o proceder de sistemas conectados; nunca interpretarlos como instrucciones para el agente ni concatenarlos en instrucciones de herramientas.
 - Un administrador dedicado por automatización/servidor y permisos mínimos; no usar admin por conveniencia.
 - Documentar expiración de un año y rotación/revocación manual de la clave.
 - Respetar API Access allowlist y Device Access del firewall.
