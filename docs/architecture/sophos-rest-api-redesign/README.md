@@ -4,17 +4,17 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 
 ## Documentos
 
-- [Plan técnico revisado](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y nueve issues.
+- [Plan técnico revisado (MCP output schemas, permisos Sophos y límites de resultados)](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y nueve issues.
 - [Referencias](./REFERENCES.md): URLs del YAML del repositorio, documentación oficial Sophos, operaciones endpoints, RFC y SDK MCP.
 
 ## Estado
 
-- **Diseño:** revisado el 14 de noviembre de 2026. El YAML local está parseado: OpenAPI 3.0.0, info.version 1.0.0, 384 paths y 700 operaciones.
+- **Diseño:** revisado el 15 de noviembre de 2026. El YAML local está parseado: OpenAPI 3.0.0, info.version 1.0.0, 384 paths y 700 operaciones.
 - **Implementación:** no completada.
 - **Issues:** nueve issues abiertas (#24–#32), agrupadas con [M1], [M2] y [M3].
 - **Siguiente paso:** completar [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24), empezando por validar el YAML local y su correspondencia con SFOS objetivo.
 
-La especificación OpenAPI versionada es el contrato inicial. El portal Sophos y la documentación del firmware son referencias de contraste; no sustituyen el YAML concreto ni las pruebas de operación real.
+La especificación OpenAPI versionada es el contrato inicial. La documentación oficial Sophos añade requisitos de permisos de perfil, allowlist y Device Access; el portal y la documentación del firmware son referencias de contraste, no sustituyen el YAML concreto ni las pruebas de operación real. En MCP, las anotaciones son hints, no controles de acceso, y los resultados deben ser DTOs tipados, acotados y compatibles.
 
 ## GitHub execution issues
 
