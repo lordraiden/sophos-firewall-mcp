@@ -67,6 +67,7 @@ from __future__ import annotations
 import ipaddress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, TypeVar
 
 from mcp.server.mcpserver import Context, MCPServer
@@ -209,6 +210,14 @@ RuleOutput = FirewallRuleIpv4Output | FirewallRuleIpv6Output
 #: The verdicts the rule evaluation can reach internally (``truncated`` is mapped later).
 _OutcomeVerdict = str
 
+#: The checks that report a firewall rule; ``rule_name_contains`` narrows the report to them.
+_RULE_SCOPED_CHECKS = frozenset(
+    {"any-any", "disabled", "shadowed", "no-logging", "unrestricted-service"}
+)
+
+#: Severity order used to sort findings before the output bound is applied.
+_SEVERITY_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2, "info": 3}
+
 PageT = TypeVar("PageT", bound=BaseModel)
 ItemT = TypeVar("ItemT")
 
@@ -242,7 +251,12 @@ class _Budget:
 
 
 class _Findings:
-    """Collect findings up to the requested limit and record the truncation."""
+    """Collect findings and apply the output bound after sorting them by severity.
+
+    Findings are collected unbounded (the scan itself is bounded) and sorted by severity
+    before ``max_findings`` is applied, so truncation drops the least important findings
+    instead of whichever check happened to run last.
+    """
 
     def __init__(self, limit: int) -> None:
         self._limit = limit
@@ -250,14 +264,22 @@ class _Findings:
         self.truncated = False
 
     def add(self, finding: AuditFinding) -> None:
-        if len(self._items) >= self._limit:
-            self.truncated = True
-            return
         self._items.append(finding)
 
-    @property
-    def items(self) -> list[AuditFinding]:
-        return self._items
+    def finalize(self) -> list[AuditFinding]:
+        """Sort by severity, then canonical check order, and apply the output bound."""
+        check_order = {check: index for index, check in enumerate(ALL_CHECKS)}
+        ordered = sorted(
+            enumerate(self._items),
+            key=lambda item: (
+                _SEVERITY_ORDER.get(item[1].severity, len(_SEVERITY_ORDER)),
+                check_order.get(item[1].check, len(ALL_CHECKS)),
+                item[0],
+            ),
+        )
+        selected = [finding for _, finding in ordered[: self._limit]]
+        self.truncated = len(self._items) > self._limit
+        return selected
 
 
 @dataclass
@@ -302,6 +324,7 @@ class _ObjectEntry:
     id: str | None
     object_type: ObjectType
     family: AddressFamily | None
+    built_in: bool = False
 
 
 @dataclass(frozen=True)
@@ -364,6 +387,22 @@ def _string_names(value: object) -> set[str]:
     if not isinstance(value, list):
         return set()
     return {item for item in value if isinstance(item, str)}
+
+
+def _is_built_in(name: str, *timestamps: datetime | None) -> bool:
+    """Whether an object is built-in or auto-generated and therefore not removable.
+
+    The appliance prefixes its built-in objects with ``##`` (``##ALL_RW``) and its
+    auto-generated interface objects with ``#`` (``#Port2``); it also stamps built-in objects
+    with the Unix epoch as a "never" sentinel. An operator cannot remove any of them, so
+    reporting them as removable is noise.
+    """
+    if name.startswith("#"):
+        return True
+    return any(
+        timestamp is not None and timestamp.replace(tzinfo=None) == datetime(1970, 1, 1)
+        for timestamp in timestamps
+    )
 
 
 def _translation_names(translation: NatRuleTranslationOutput | None) -> set[str]:
@@ -927,7 +966,19 @@ class AuditAdapter(DomainAdapter):
                 )
 
             for address_ipv4 in await self._walk("addresses-ipv4", budget, fetch_ipv4):
-                entries.append(_ObjectEntry(address_ipv4.name, address_ipv4.id, "address", "ipv4"))
+                entries.append(
+                    _ObjectEntry(
+                        address_ipv4.name,
+                        address_ipv4.id,
+                        "address",
+                        "ipv4",
+                        _is_built_in(
+                            address_ipv4.name,
+                            address_ipv4.created_at,
+                            address_ipv4.updated_at,
+                        ),
+                    )
+                )
         if "ipv6" in families:
 
             async def fetch_ipv6(page: int) -> ListPage[Ipv6Address]:
@@ -942,7 +993,19 @@ class AuditAdapter(DomainAdapter):
                 )
 
             for address_ipv6 in await self._walk("addresses-ipv6", budget, fetch_ipv6):
-                entries.append(_ObjectEntry(address_ipv6.name, address_ipv6.id, "address", "ipv6"))
+                entries.append(
+                    _ObjectEntry(
+                        address_ipv6.name,
+                        address_ipv6.id,
+                        "address",
+                        "ipv6",
+                        _is_built_in(
+                            address_ipv6.name,
+                            address_ipv6.created_at,
+                            address_ipv6.updated_at,
+                        ),
+                    )
+                )
         if "fqdn" in families:
 
             async def fetch_fqdn(page: int) -> ListPage[FqdnAddress]:
@@ -958,7 +1021,15 @@ class AuditAdapter(DomainAdapter):
 
             for fqdn in await self._walk("addresses-fqdn", budget, fetch_fqdn):
                 if fqdn.name is not None:
-                    entries.append(_ObjectEntry(fqdn.name, fqdn.id, "address", "fqdn"))
+                    entries.append(
+                        _ObjectEntry(
+                            fqdn.name,
+                            fqdn.id,
+                            "address",
+                            "fqdn",
+                            _is_built_in(fqdn.name, fqdn.created_at, fqdn.updated_at),
+                        )
+                    )
         return entries
 
     async def _address_groups(
@@ -1057,7 +1128,13 @@ class AuditAdapter(DomainAdapter):
             )
 
         return [
-            _ObjectEntry(service.name, service.id, "service", None)
+            _ObjectEntry(
+                service.name,
+                service.id,
+                "service",
+                None,
+                _is_built_in(service.name, service.created_at, service.updated_at),
+            )
             for service in await self._walk("services", budget, fetch)
         ]
 
@@ -1096,6 +1173,18 @@ class AuditAdapter(DomainAdapter):
         checks: tuple[AuditCheck, ...] = (
             tuple(request.checks) if request.checks is not None else ALL_CHECKS
         )
+        notes: list[str] = []
+        if request.rule_name_contains is not None:
+            # A rule-name filter selects rule-scoped findings; the object- and NAT-scoped
+            # checks are not narrowed by it, so running them would bury the answer.
+            skipped = [check for check in checks if check not in _RULE_SCOPED_CHECKS]
+            checks = tuple(check for check in checks if check in _RULE_SCOPED_CHECKS)
+            if skipped:
+                notes.append(
+                    "rule_name_contains selects rule-scoped findings, so the non-rule-scoped "
+                    f"checks ({', '.join(skipped)}) were skipped; omit rule_name_contains to "
+                    "run them."
+                )
         requested = set(checks)
         families: tuple[IpFamily, ...] = (
             (request.ip_family,) if request.ip_family is not None else ("ipv4", "ipv6")
@@ -1103,17 +1192,31 @@ class AuditAdapter(DomainAdapter):
         budget = _Budget()
         findings = _Findings(request.max_findings)
         unverifiable = _Unverifiable()
-        notes: list[str] = []
 
         rules: dict[IpFamily, list[RuleOutput]] = {}
         for family in families:
             rules[family] = await self._rules(family, budget)
-        rules_examined = sum(len(items) for items in rules.values())
+        rules_examined = sum(len(rules[family]) for family in families)
+
+        # The unused-object check must see the references of both families: services and
+        # FQDN objects are family-neutral, so a rule of the other family can reference an
+        # object that the requested family's rule base never mentions. Reporting an in-use
+        # object as removable is worse than reporting nothing.
+        reference_families: tuple[IpFamily, ...] = families
+        if "unused-object" in requested and request.ip_family is not None:
+            reference_families = ("ipv4", "ipv6")
+            for family in reference_families:
+                if family not in rules:
+                    rules[family] = await self._rules(family, budget)
 
         nat_by_family: dict[IpFamily, list[NatRuleOutput]] = {}
         if requested & {"unused-object", "nat-without-rule"}:
-            for family in families:
+            nat_families = reference_families if "unused-object" in requested else families
+            for family in nat_families:
                 nat_by_family[family] = await self._nat_rules(family, budget)
+        nat_rules_examined = sum(
+            len(nat_by_family[family]) for family in families if family in nat_by_family
+        )
 
         zones: list[Zone] = []
         if "unrestricted-service" in requested:
@@ -1122,7 +1225,7 @@ class AuditAdapter(DomainAdapter):
         objects: list[_ObjectEntry] = []
         groups: list[_GroupEntry] = []
         if "unused-object" in requested:
-            # Only the object families the scanned rule bases can reference are inventoried:
+            # Only the object families the requested rule base can reference are inventoried:
             # an IPv4 rule can reference IPv4 and FQDN objects, an IPv6 rule IPv6 objects.
             inventory_families = _inventory_families(request.ip_family)
             objects = await self._addresses(inventory_families, budget)
@@ -1149,7 +1252,7 @@ class AuditAdapter(DomainAdapter):
         if "unused-object" in requested:
             _check_unused_object(
                 rules,
-                families,
+                reference_families,
                 nat_by_family,
                 groups,
                 objects,
@@ -1182,18 +1285,30 @@ class AuditAdapter(DomainAdapter):
                 "unused-object counts a reference from any scanned rule, NAT rule or group; a "
                 "group membership is a reference even when the group itself is unused."
             )
+            notes.append(
+                "unused-object excludes built-in and auto-generated objects (names starting "
+                "with '#', or carrying the appliance's epoch timestamp) because an operator "
+                "cannot remove them."
+            )
+            if request.ip_family is not None:
+                notes.append(
+                    "unused-object scans the references of both IP families regardless of "
+                    "ip_family, so an object referenced only by the other family is not "
+                    "reported as unused; the object inventory stays limited to the requested "
+                    "family."
+                )
         if requested & {"any-any", "disabled", "shadowed", "no-logging", "unrestricted-service"}:
             notes.append(
                 "WAF rules are out of v1 scope and are not part of the firewall-rule projection."
             )
 
         return AuditFirewallRulesOutput(
-            findings=findings.items,
+            findings=findings.finalize(),
             findings_truncated=findings.truncated,
             checks_run=list(checks),
             not_verifiable=unverifiable.models(),
             rules_examined=rules_examined,
-            nat_rules_examined=sum(len(items) for items in nat_by_family.values()),
+            nat_rules_examined=nat_rules_examined,
             scan=budget.report(),
             notes=notes,
         )
@@ -1295,8 +1410,8 @@ class AuditAdapter(DomainAdapter):
                     destination.zones.add(route_zone.casefold())
                 if routing.decision == "no-route":
                     missing.append(
-                        "no configured static unicast route matches the destination; dynamic "
-                        "routing is not evaluated"
+                        "no configured static unicast route matches the destination and no WAN "
+                        "gateway is configured; dynamic routing is not evaluated"
                     )
 
         if not source.zones and source.ip is not None and not source.local:
@@ -1314,6 +1429,18 @@ class AuditAdapter(DomainAdapter):
         for family in families:
             rules[family] = await self._rules(family, budget)
             nat[family] = await self._nat_rules(family, budget)
+
+        # When both endpoints are zones the family is ambiguous, but an empty rule base is
+        # not: default to the family that actually has rules instead of refusing to answer.
+        scanned_both_families = len(families) == 2
+        if len(families) == 2:
+            populated = tuple(family for family in families if rules[family])
+            empty = tuple(family for family in families if not rules[family])
+            if len(populated) == 1 and empty:
+                families = populated
+                notes.append(
+                    f"the {empty[0]} rule base is empty, so the {populated[0]} rule base was used"
+                )
 
         outcomes = {
             family: _evaluate_rules(
@@ -1390,7 +1517,7 @@ class AuditAdapter(DomainAdapter):
             destination,
             rule_names,
             rules_truncated,
-            len(families) == 2,
+            scanned_both_families,
         )
 
         if verdict == "allowed":
@@ -1781,7 +1908,11 @@ def _check_unused_object(
     findings: _Findings,
     unverifiable: _Unverifiable,
 ) -> None:
-    """Report objects no scanned rule, NAT rule or group references."""
+    """Report user-created objects no scanned rule, NAT rule or group references.
+
+    Built-in and auto-generated objects are skipped: an operator cannot remove them, so
+    reporting them as removable is noise.
+    """
     truncated_sources = [
         label
         for label in budget.truncated_collections
@@ -1797,6 +1928,10 @@ def _check_unused_object(
         return
     referenced = _referenced_names(rules, families, nat_by_family, groups)
     for entry in objects:
+        if entry.built_in:
+            # A built-in or auto-generated object cannot be removed by an operator, so it is
+            # not a finding even when nothing references it.
+            continue
         if entry.name in referenced:
             continue
         findings.add(
@@ -2079,12 +2214,27 @@ def _resolve_endpoint(
     return _ResolvedEndpoint(fqdn=endpoint.fqdn, unresolved=True)
 
 
+def _wan_gateway(
+    gateways: list[GatewayIpv4 | GatewayIpv6],
+) -> GatewayIpv4 | GatewayIpv6 | None:
+    """The first configured WAN gateway, which is the appliance's default route."""
+    for gateway in gateways:
+        if getattr(gateway, "type", None) == "wan":
+            return gateway
+    return None
+
+
 def _routing_for(
     destination: _ResolvedEndpoint,
     gateways: list[GatewayIpv4 | GatewayIpv6],
     routes: list[UnicastRouteIpv4 | UnicastRouteIpv6],
 ) -> RoutingDecision:
-    """Select the best configured static route for a non-local destination."""
+    """Select the best configured route for a non-local destination.
+
+    A static unicast route wins when one matches. Otherwise the configured WAN gateway is
+    the appliance's default route: the contract exposes no live routing table, so the
+    active/backup role and dynamic routing are not evaluated.
+    """
     if destination.ip is None:
         return RoutingDecision(decision="not-verified", note="the destination is not an IP address")
     address = ipaddress.ip_address(destination.ip)
@@ -2099,12 +2249,28 @@ def _routing_for(
             best_route = route
             best_prefix = network.prefixlen
     if best_route is None:
+        wan = _wan_gateway(gateways)
+        if wan is not None:
+            gateway_ip = getattr(wan, "ipv4Address", None) or getattr(wan, "ipv6Address", None)
+            return RoutingDecision(
+                decision="default-route",
+                destination=destination.ip,
+                gateway=wan.name,
+                gateway_ip=gateway_ip,
+                interface=wan.interface.name if wan.interface is not None else None,
+                note=(
+                    "no configured static unicast route matches the destination, so the "
+                    "configured WAN gateway is used as the default route; the contract exposes "
+                    "no live routing table, so the active/backup role and dynamic routing are "
+                    "not evaluated"
+                ),
+            )
         return RoutingDecision(
             decision="no-route",
             destination=destination.ip,
             note=(
-                "no configured static unicast route matches the destination; dynamic routing "
-                "is not evaluated"
+                "no configured static unicast route matches the destination and no WAN gateway "
+                "is configured; dynamic routing is not evaluated"
             ),
         )
     gateway_ip = (
@@ -2144,27 +2310,42 @@ def _evaluate_rules(
                 matched=matched, verdict="truncated", examined=examined, truncated=True
             )
         examined += 1
-        zone_source = _zone_match(rule.sourceZones, source.zones)
-        zone_destination = _zone_match(rule.destinationZones, destination.zones)
-        if zone_source is False or zone_destination is False:
+        criteria = (
+            ("sourceZones", _zone_match(rule.sourceZones, source.zones)),
+            ("destinationZones", _zone_match(rule.destinationZones, destination.zones)),
+            ("sourceNetworks", _network_match(rule.sourceNetworks)),
+            ("destinationNetworks", _network_match(rule.destinationNetworks)),
+            ("servicesOrGroups", _service_match(rule.servicesOrGroups, request.service)),
+        )
+        if any(value is False for _, value in criteria):
+            # A criterion that definitively does not match excludes the rule: it must not be
+            # decisive, and it is not a candidate either.
             continue
-        network_source = _network_match(rule.sourceNetworks)
-        network_destination = _network_match(rule.destinationNetworks)
-        service = _service_match(rule.servicesOrGroups, request.service)
-        unresolved: list[str] = []
-        if zone_source is None:
-            unresolved.append("sourceZones")
-        if zone_destination is None:
-            unresolved.append("destinationZones")
-        if network_source is None:
-            unresolved.append("sourceNetworks")
-        if network_destination is None:
-            unresolved.append("destinationNetworks")
-        if service is None:
-            unresolved.append("servicesOrGroups")
+        unresolved = [name for name, value in criteria if value is None]
+        matched_fields = [name for name, value in criteria if value is True]
         if unresolved:
             if rule.enabled is not True:
                 continue
+            matched.append(
+                RuleEvaluation(
+                    name=rule.name,
+                    id=rule.id,
+                    position=position,
+                    ip_family=family,
+                    enabled=rule.enabled,
+                    action=rule.action,
+                    decisive=False,
+                    applied=False,
+                    matched_fields=matched_fields,
+                    unresolved_fields=unresolved,
+                    log_traffic=rule.logTraffic,
+                    note=(
+                        "the rule matches every criterion that could be resolved, but its "
+                        f"{', '.join(unresolved)} reference objects whose membership this "
+                        "analysis does not resolve, so it may match the flow"
+                    ),
+                )
+            )
             return _RuleOutcome(
                 matched=matched,
                 verdict="not-verifiable",
@@ -2173,18 +2354,26 @@ def _evaluate_rules(
                 indeterminate_position=position,
                 unresolved_fields=unresolved,
             )
-        matched_fields = [
-            name
-            for name, value in (
-                ("sourceZones", zone_source),
-                ("destinationZones", zone_destination),
-                ("sourceNetworks", network_source),
-                ("destinationNetworks", network_destination),
-                ("servicesOrGroups", service),
-            )
-            if value
-        ]
         if rule.enabled is None:
+            matched.append(
+                RuleEvaluation(
+                    name=rule.name,
+                    id=rule.id,
+                    position=position,
+                    ip_family=family,
+                    enabled=rule.enabled,
+                    action=rule.action,
+                    decisive=False,
+                    applied=False,
+                    matched_fields=matched_fields,
+                    unresolved_fields=["enabled"],
+                    log_traffic=rule.logTraffic,
+                    note=(
+                        "the rule matches the flow criteria but its enabled state is not "
+                        "projected, so it may be decisive"
+                    ),
+                )
+            )
             return _RuleOutcome(
                 matched=matched,
                 verdict="not-verifiable",
@@ -2256,6 +2445,10 @@ def _evaluate_nat(
                     _nat_services_match(nat_rule.original_services_or_groups, request.service),
                 ),
             )
+            if any(value is False for _, value in criteria):
+                # A criterion that definitively does not match excludes the NAT rule, exactly
+                # like a zone mismatch: it must not be reported as matching the flow.
+                continue
             for name, value in criteria:
                 if value is True:
                     matched_fields.append(name)

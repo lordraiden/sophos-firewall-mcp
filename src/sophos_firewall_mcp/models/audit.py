@@ -283,7 +283,10 @@ class AuditFirewallRulesOutput(_Output):
     findings: list[AuditFinding] = Field(
         default_factory=list,
         max_length=MAX_FINDINGS,
-        description="Findings in canonical check order, bounded by max_findings.",
+        description=(
+            "Findings sorted by severity (high first), then canonical check order, bounded by "
+            "max_findings."
+        ),
     )
     findings_truncated: bool = Field(
         default=False, description="True only when more findings existed than were returned."
@@ -291,7 +294,7 @@ class AuditFirewallRulesOutput(_Output):
     checks_run: list[AuditCheck] = Field(
         default_factory=list,
         max_length=len(ALL_CHECKS),
-        description="The checks that were requested, in canonical order.",
+        description="The checks that were run, in canonical order.",
     )
     not_verifiable: list[UnverifiableCheck] = Field(
         default_factory=list,
@@ -444,11 +447,13 @@ class InterfaceMatch(_Output):
 
 
 class RuleEvaluation(_Output):
-    """One firewall rule that matched the flow, in evaluation order.
+    """One firewall rule the scan examined, in evaluation order.
 
-    ``matched_fields`` names the criteria that matched. ``decisive`` marks the first enabled
-    matching rule: its action decides the verdict. ``applied`` is false for a disabled rule
-    that matches the criteria but is not evaluated by the appliance.
+    ``matched_fields`` names the criteria that matched. ``unresolved_fields`` names the
+    criteria whose object membership the analysis could not resolve; such a rule is a
+    candidate, not a decision. ``decisive`` marks the first enabled matching rule: its action
+    decides the verdict. ``applied`` is false for a disabled rule that matches the criteria
+    but is not evaluated by the appliance.
     """
 
     name: str = Field(..., max_length=60)
@@ -463,6 +468,11 @@ class RuleEvaluation(_Output):
         default_factory=list,
         max_length=MAX_EVIDENCE_FIELDS,
         description="Rule criteria that matched the flow.",
+    )
+    unresolved_fields: list[str] = Field(
+        default_factory=list,
+        max_length=MAX_EVIDENCE_FIELDS,
+        description="Criteria whose object membership could not be resolved.",
     )
     log_traffic: bool | None = Field(default=None, description="Projected logging flag.")
     note: str | None = Field(

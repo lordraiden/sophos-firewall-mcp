@@ -616,6 +616,75 @@ async def test_unused_object_does_not_inventory_an_unscanned_family(router: Any)
     assert ADDR_FQDN in called_paths(router)
 
 
+async def test_unused_object_scans_both_families_when_ip_family_is_set(router: Any) -> None:
+    # H1: with ip_family=ipv6 the IPv4 rule base is still read for references, so a service
+    # used by an IPv4 rule is not reported as removable.
+    install(
+        router,
+        {
+            RULES_V4: page(
+                [
+                    firewall_rule(
+                        name="use-8080",
+                        servicesOrGroups={"services": [{"name": "8080"}]},
+                    )
+                ]
+            ),
+            RULES_V6: page([]),
+            SERVICES: page([service("8080"), service("orphan-service")]),
+        },
+    )
+
+    result = await call_tool(
+        "audit_firewall_rules", {"checks": ["unused-object"], "ip_family": "ipv6"}
+    )
+
+    output = result.structured_content
+    assert [finding["evidence"]["object_name"] for finding in output["findings"]] == [
+        "orphan-service"
+    ]
+    assert RULES_V4 in called_paths(router)
+    assert any("both IP families" in note for note in output["notes"])
+
+
+async def test_unused_object_excludes_built_in_objects(router: Any) -> None:
+    # M5: built-in and auto-generated objects cannot be removed, so they are not findings.
+    install(
+        router,
+        {
+            RULES_V4: page([firewall_rule(name="r1")]),
+            ADDR_V4: page(
+                [
+                    ipv4_address(name="##ALL_RW"),
+                    ipv4_address(name="#Port2", id=UUID_2),
+                    ipv4_address(name="orphan", id="11111111-1111-1111-1111-111111111111"),
+                ]
+            ),
+            SERVICES: page(
+                [
+                    dict(
+                        service("AH"),
+                        createdAt="1970-01-01T00:00:00Z",
+                        updatedAt="1970-01-01T00:00:00Z",
+                    ),
+                    service("orphan-service"),
+                ]
+            ),
+        },
+    )
+
+    result = await call_tool(
+        "audit_firewall_rules", {"checks": ["unused-object"], "ip_family": "ipv4"}
+    )
+
+    output = result.structured_content
+    assert [finding["evidence"]["object_name"] for finding in output["findings"]] == [
+        "orphan",
+        "orphan-service",
+    ]
+    assert any("built-in" in note for note in output["notes"])
+
+
 async def test_unused_object_is_not_verifiable_when_the_rule_scan_is_truncated(
     router: Any,
 ) -> None:
@@ -884,6 +953,26 @@ async def test_rule_name_filter_selects_reported_findings(router: Any) -> None:
     assert any("rule_name_contains" in note for note in result.structured_content["notes"])
 
 
+async def test_rule_name_filter_skips_non_rule_scoped_checks(router: Any) -> None:
+    # M6: a rule-name filter must narrow the report, not leave 100 unrelated object findings.
+    install(
+        router,
+        {
+            RULES_V4: page([firewall_rule(name="allow-all")]),
+            ADDR_V4: page([ipv4_address(name="orphan")]),
+            SERVICES: page([service("HTTP")]),
+        },
+    )
+
+    result = await call_tool("audit_firewall_rules", {"rule_name_contains": "zzz-no-match"})
+
+    output = result.structured_content
+    assert output["findings"] == []
+    assert "unused-object" not in output["checks_run"]
+    assert "nat-without-rule" not in output["checks_run"]
+    assert any("non-rule-scoped" in note for note in output["notes"])
+
+
 async def test_findings_are_bounded_and_truncation_is_explicit(router: Any) -> None:
     install(
         router,
@@ -906,6 +995,46 @@ async def test_findings_are_bounded_and_truncation_is_explicit(router: Any) -> N
     output = result.structured_content
     assert len(output["findings"]) == 2
     assert output["findings_truncated"] is True
+
+
+async def test_findings_are_sorted_by_severity_before_truncation(router: Any) -> None:
+    # M4: a medium shadowed finding must not be dropped while low disabled findings are kept.
+    install(
+        router,
+        {
+            RULES_V4: page(
+                [
+                    firewall_rule(
+                        name="cover",
+                        servicesOrGroups={"services": [{"name": "HTTP"}]},
+                    ),
+                    firewall_rule(
+                        name="shadowed",
+                        sourceZones={"zones": [{"name": "LAN"}]},
+                        destinationZones={"zones": [{"name": "WAN"}]},
+                        servicesOrGroups={"services": [{"name": "HTTP"}]},
+                    ),
+                    firewall_rule(name="off-1", enabled=False),
+                    firewall_rule(name="off-2", enabled=False),
+                    firewall_rule(name="off-3", enabled=False),
+                ]
+            )
+        },
+    )
+
+    result = await call_tool(
+        "audit_firewall_rules",
+        {
+            "checks": ["disabled", "shadowed"],
+            "ip_family": "ipv4",
+            "max_findings": 2,
+        },
+    )
+
+    output = result.structured_content
+    assert output["findings_truncated"] is True
+    assert [finding["check"] for finding in output["findings"]] == ["shadowed", "disabled"]
+    assert output["findings"][0]["severity"] == "medium"
 
 
 async def test_a_truncated_scan_is_reported_with_its_collection(router: Any) -> None:
@@ -944,7 +1073,8 @@ async def test_audit_maps_a_transport_failure_to_a_sanitized_error(router: Any) 
 
     assert result.is_error is True
     text = result.content[0].text
-    assert "not allowed" in text
+    # A 401 is an authentication failure (the key), not a permission problem (the profile).
+    assert "authentication failed" in text
     assert KEY not in text
 
 
@@ -956,6 +1086,7 @@ def connectivity_collections(
     rules: list[dict[str, Any]],
     nat: list[dict[str, Any]] | None = None,
     routes: list[dict[str, Any]] | None = None,
+    gateways: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     return {
         RULES_V4: page(rules),
@@ -969,7 +1100,7 @@ def connectivity_collections(
             ]
         ),
         ZONES: page([zone("LAN", "lan"), zone("WAN", "wan")]),
-        GATEWAYS_V4: page([gateway()]),
+        GATEWAYS_V4: page(gateways if gateways is not None else [gateway()]),
         GATEWAYS_V6: page([]),
         ROUTES_V4: page(routes if routes is not None else [route()]),
         ROUTES_V6: page([]),
@@ -1052,6 +1183,113 @@ async def test_explain_connectivity_reports_no_matching_rule(router: Any) -> Non
     assert output["firewall_rules"] == []
 
 
+# B1: a rule whose service criterion does not match must never be decisive. The matrix is
+# 12 zone pairs x 4 service names; only LAN -> WAN with DNS matches the DNS-only block rule.
+ZONE_PAIRS = [
+    ("LAN", "WAN"),
+    ("LAN", "DMZ"),
+    ("LAN", "VPN"),
+    ("DMZ", "WAN"),
+    ("DMZ", "LAN"),
+    ("DMZ", "VPN"),
+    ("VPN", "WAN"),
+    ("VPN", "LAN"),
+    ("VPN", "DMZ"),
+    ("WAN", "LAN"),
+    ("WAN", "DMZ"),
+    ("WAN", "VPN"),
+]
+SERVICE_NAMES = ["DNS", "SSH", "HTTPS", "NoSuchService"]
+
+
+@pytest.mark.parametrize(("source_zone", "destination_zone"), ZONE_PAIRS)
+@pytest.mark.parametrize("service_name", SERVICE_NAMES)
+async def test_explain_connectivity_never_decides_on_a_mismatched_service(
+    router: Any,
+    source_zone: str,
+    destination_zone: str,
+    service_name: str,
+) -> None:
+    rule = firewall_rule(
+        name="DNS to WAN - BLOCK",
+        action="drop",
+        sourceZones={"zones": [{"name": "LAN"}]},
+        destinationZones={"zones": [{"name": "WAN"}]},
+        servicesOrGroups={"services": [{"name": "DNS"}, {"name": "DNS - DoT (853)"}]},
+    )
+    install(router, connectivity_collections(rules=[rule]))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"zone": source_zone},
+            "destination": {"zone": destination_zone},
+            "service": {"name": service_name},
+            "ip_family": "ipv4",
+        },
+    )
+
+    output = result.structured_content
+    matches = source_zone == "LAN" and destination_zone == "WAN" and service_name == "DNS"
+    if matches:
+        assert output["verdict"] == "denied"
+        assert output["decisive_rule"]["name"] == "DNS to WAN - BLOCK"
+    else:
+        assert output["verdict"] == "no-matching-rule"
+        assert output["decisive_rule"] is None
+        assert output["firewall_rules"] == []
+
+
+async def test_explain_connectivity_does_not_allow_on_a_mismatched_service(
+    router: Any,
+) -> None:
+    # B1 also produces a false `allowed` when the mismatched rule is an accept rule.
+    rule = firewall_rule(
+        name="DNS to WAN - ALLOW",
+        action="accept",
+        sourceZones={"zones": [{"name": "LAN"}]},
+        destinationZones={"zones": [{"name": "WAN"}]},
+        servicesOrGroups={"services": [{"name": "DNS"}]},
+    )
+    install(router, connectivity_collections(rules=[rule]))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"zone": "LAN"},
+            "destination": {"zone": "WAN"},
+            "service": {"name": "SSH"},
+            "ip_family": "ipv4",
+        },
+    )
+
+    output = result.structured_content
+    assert output["verdict"] == "no-matching-rule"
+    assert output["decisive_rule"] is None
+
+
+async def test_explain_connectivity_does_not_report_a_nat_rule_with_a_mismatched_service(
+    router: Any,
+) -> None:
+    # The same latent bug in _evaluate_nat: a False service criterion must exclude the rule.
+    nat = nat_rule(
+        name="dnat",
+        originalServicesOrGroups={"services": [{"name": "DNS"}]},
+    )
+    install(router, connectivity_collections(rules=[ALLOW_RULE], nat=[nat]))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "198.51.100.9"},
+            "service": {"name": "SSH"},
+        },
+    )
+
+    assert result.structured_content["nat_rules"] == []
+
+
 async def test_explain_connectivity_is_not_verifiable_for_object_criteria(
     router: Any,
 ) -> None:
@@ -1077,6 +1315,45 @@ async def test_explain_connectivity_is_not_verifiable_for_object_criteria(
     assert output["decisive_rule"] is None
     assert any("allow-object" in item for item in output["missing_evidence"])
     assert any("sourceNetworks" in item for item in output["missing_evidence"])
+
+
+async def test_explain_connectivity_reports_the_candidate_rule_when_not_verifiable(
+    router: Any,
+) -> None:
+    # M7: the indeterminate rule must be a structured candidate, not only prose.
+    rule = firewall_rule(
+        name="allow-object",
+        sourceZones={"zones": [{"name": "LAN"}]},
+        destinationZones={"zones": [{"name": "WAN"}]},
+        sourceNetworks={"ipv4Addresses": [{"name": "LAN-NET"}]},
+    )
+    install(router, connectivity_collections(rules=[rule]))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "198.51.100.9"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    assert output["verdict"] == "not-verifiable"
+    assert output["decisive_rule"] is None
+    candidates = output["firewall_rules"]
+    assert [candidate["name"] for candidate in candidates] == ["allow-object"]
+    candidate = candidates[0]
+    assert candidate["position"] == 1
+    assert candidate["decisive"] is False
+    assert candidate["applied"] is False
+    assert candidate["unresolved_fields"] == ["sourceNetworks"]
+    assert candidate["matched_fields"] == [
+        "sourceZones",
+        "destinationZones",
+        "destinationNetworks",
+        "servicesOrGroups",
+    ]
 
 
 async def test_explain_connectivity_is_not_verifiable_for_an_fqdn(router: Any) -> None:
@@ -1186,7 +1463,7 @@ async def test_explain_connectivity_reports_a_static_route(router: Any) -> None:
 
 
 async def test_explain_connectivity_reports_no_route(router: Any) -> None:
-    install(router, connectivity_collections(rules=[ALLOW_RULE], routes=[]))
+    install(router, connectivity_collections(rules=[ALLOW_RULE], routes=[], gateways=[]))
 
     result = await call_tool(
         "explain_connectivity",
@@ -1200,6 +1477,30 @@ async def test_explain_connectivity_reports_no_route(router: Any) -> None:
     output = result.structured_content
     assert output["routing"]["decision"] == "no-route"
     assert any("route" in item for item in output["missing_evidence"])
+
+
+async def test_explain_connectivity_uses_the_wan_gateway_as_the_default_route(
+    router: Any,
+) -> None:
+    # H4: the appliance has no static unicast route but one WAN gateway, which *is* the
+    # default route. Reporting no-route for an internet destination is wrong.
+    install(router, connectivity_collections(rules=[ALLOW_RULE], routes=[]))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "8.8.8.8"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    routing = result.structured_content["routing"]
+    assert routing["decision"] == "default-route"
+    assert routing["gateway"] == "wan-gateway"
+    assert routing["gateway_ip"] == "203.0.113.1"
+    assert routing["interface"] == "Port2"
+    assert "WAN gateway" in routing["note"]
 
 
 async def test_explain_connectivity_analyses_both_families_for_a_zone_flow(
@@ -1230,6 +1531,38 @@ async def test_explain_connectivity_analyses_both_families_for_a_zone_flow(
     assert output["ip_families"] == ["ipv4", "ipv6"]
     assert output["verdict"] == "allowed"
     assert output["routing"]["decision"] == "not-verified"
+
+
+async def test_explain_connectivity_infers_the_family_when_one_rule_base_is_empty(
+    router: Any,
+) -> None:
+    # M8: both endpoints are zones, so the family is ambiguous, but the IPv6 rule base is
+    # empty. The natural answer is IPv4, not not-verifiable.
+    install(
+        router,
+        {
+            RULES_V4: page([ALLOW_RULE]),
+            RULES_V6: page([]),
+            NAT_V4: page([]),
+            NAT_V6: page([]),
+            INTERFACES: page([interface("Port1", "LAN", "10.0.0.1", 24)]),
+            ZONES: page([zone("LAN", "lan"), zone("WAN", "wan")]),
+        },
+    )
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"zone": "LAN"},
+            "destination": {"zone": "WAN"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    assert output["ip_families"] == ["ipv4"]
+    assert output["verdict"] == "allowed"
+    assert any("ipv6 rule base is empty" in note for note in output["notes"])
 
 
 async def test_explain_connectivity_is_not_verifiable_when_the_rule_scan_is_truncated(
