@@ -1,8 +1,8 @@
-"""Tests for the startup environment guard (issue #8).
+"""Tests for the startup environment guard (issue #8, finding L6).
 
 The guard exists because an unusable interpreter environment killed the server before it could say why,
-and the MCP client only ever saw an empty error. Each branch here is one of the two failures that cost a
-real investigation: a shadowed venv, and an mcp too old to have ``mcp.server.mcpserver``.
+and the MCP client only ever saw an empty error. The prefix check is a warning (a legitimate layout can
+trip it); the missing ``mcp.server.mcpserver`` check is still a hard exit.
 """
 
 import sys
@@ -18,34 +18,56 @@ def test_real_environment_passes():
     _env_guard.verify_local_mcp()
 
 
-def test_exits_when_mcp_resolves_outside_the_environment(monkeypatch, tmp_path):
+def test_warns_but_starts_when_mcp_resolves_outside_the_environment(monkeypatch, tmp_path, capsys):
+    """L6: a legitimate layout (system-site-packages, pipx, container) must start with a warning."""
     outside = tmp_path / "someone-elses-venv" / "mcp" / "__init__.py"
     outside.parent.mkdir(parents=True)
     outside.write_text("")
 
     monkeypatch.setattr(_env_guard, "mcp_location", lambda: outside)
+    monkeypatch.setattr(_env_guard, "has_mcpserver", lambda: True)
 
-    with pytest.raises(SystemExit) as exc:
-        _env_guard.verify_local_mcp()
-    assert exc.value.code == 2
+    _env_guard.verify_local_mcp()  # must not raise: the real import decides
+
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()
+    assert str(outside) in err
 
 
-def test_shadowed_message_is_actionable(monkeypatch, tmp_path, capsys):
+def test_shadowed_warning_is_actionable(monkeypatch, tmp_path, capsys):
     """The message must name the cause, the guilty path and the fix -- that is the whole point."""
     outside = tmp_path / "elsewhere" / "__init__.py"
     outside.parent.mkdir(parents=True)
     outside.write_text("")
 
     monkeypatch.setattr(_env_guard, "mcp_location", lambda: outside)
+    monkeypatch.setattr(_env_guard, "has_mcpserver", lambda: True)
 
-    with pytest.raises(SystemExit):
-        _env_guard.verify_local_mcp()
+    _env_guard.verify_local_mcp()
     err = capsys.readouterr().err
 
-    assert "shadowing the venv" in err
     assert "PYTHONPATH" in err
     assert str(outside) in err
+    assert str(Path(sys.prefix).resolve()) in err
     assert "env -u PYTHONPATH" in err
+
+
+def test_a_shadowed_mcp_still_exits_when_mcpserver_is_missing(monkeypatch, tmp_path, capsys):
+    """The warning must not swallow the unambiguous failure: mcp 1.x still aborts."""
+    outside = tmp_path / "elsewhere" / "__init__.py"
+    outside.parent.mkdir(parents=True)
+    outside.write_text("")
+
+    monkeypatch.setattr(_env_guard, "mcp_location", lambda: outside)
+    monkeypatch.setattr(_env_guard, "has_mcpserver", lambda: False)
+
+    with pytest.raises(SystemExit) as exc:
+        _env_guard.verify_local_mcp()
+    assert exc.value.code == 2
+
+    err = capsys.readouterr().err
+    assert "warning" in err.lower()
+    assert "mcp>=2" in err
 
 
 def test_exits_when_mcpserver_is_missing(monkeypatch, capsys):
@@ -59,6 +81,18 @@ def test_exits_when_mcpserver_is_missing(monkeypatch, capsys):
         _env_guard.verify_local_mcp()
     assert exc.value.code == 2
     assert "mcp>=2" in capsys.readouterr().err
+
+
+def test_a_local_mcp_does_not_warn(monkeypatch, capsys):
+    """The normal path stays silent: no warning when mcp resolves inside this environment."""
+    local = Path(sys.prefix) / "lib" / "site-packages" / "mcp" / "__init__.py"
+
+    monkeypatch.setattr(_env_guard, "mcp_location", lambda: local)
+    monkeypatch.setattr(_env_guard, "has_mcpserver", lambda: True)
+
+    _env_guard.verify_local_mcp()
+
+    assert capsys.readouterr().err == ""
 
 
 def test_tolerates_missing_mcp(monkeypatch):

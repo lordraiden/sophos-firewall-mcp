@@ -27,7 +27,7 @@ from typing import Annotated, Any, Literal, Self
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, model_validator
 
-from .common import ObjectNameOrId, ObjectRef
+from .common import ObjectNameOrId, ObjectRef, OutputModel
 from .objects import serialize_epoch_sentinel
 
 __all__ = [
@@ -189,7 +189,7 @@ SslVpnEncryptionAlgorithm = Literal[
 SslVpnAuthenticationAlgorithm = Literal["sha512", "sha384", "sha256", "sha1", "md5"]
 
 
-class _Output(BaseModel):
+class _Output(OutputModel):
     """Base for response projections: unknown server fields are ignored, never echoed.
 
     The epoch "never" sentinel is published as ``null`` (L6); see

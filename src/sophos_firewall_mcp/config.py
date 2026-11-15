@@ -12,7 +12,7 @@ Security rules enforced here:
 * ``SOPHOS_HOST`` is a bare hostname or IP address -- no scheme, user information, port, path,
   query or fragment -- so the base URL cannot be pointed at another origin;
 * the base URL is HTTPS by construction;
-* no legacy XML-era setting is read: the only recognised variables are the eight listed above.
+* no legacy XML-era setting is read: the only recognised variables are the nine listed above.
 """
 
 from __future__ import annotations
@@ -45,6 +45,20 @@ DEFAULT_PORT = 4444
 #: Default read/write/connect timeout in seconds.
 DEFAULT_TIMEOUT = 30.0
 
+#: Default number of requests the shared client keeps in flight at once.
+#:
+#: The MCP specification lists "rate limit tool invocations" among the things a server MUST do, and
+#: a model that fans out can otherwise open one connection per tool call. Four is enough to keep a
+#: composite tool parallel without turning a runaway loop into a burst against the appliance, which
+#: rate-limits on its own side.
+DEFAULT_MAX_CONCURRENCY = 4
+
+#: Upper bound for ``SOPHOS_MAX_CONCURRENCY``.
+#:
+#: The setting exists to *bound* concurrency; accepting an arbitrarily large value would let a
+#: misconfiguration switch the protection off, so the ceiling is enforced here rather than trusted.
+MAX_CONCURRENCY_LIMIT = 64
+
 _HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _HOSTNAME_PATTERN = re.compile(rf"^{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")
 
@@ -56,6 +70,7 @@ _ENV_VERIFY_SSL = "SOPHOS_VERIFY_SSL"
 _ENV_CA_BUNDLE = "SOPHOS_CA_BUNDLE"
 _ENV_TIMEOUT = "SOPHOS_TIMEOUT"
 _ENV_READ_ONLY_MODE = "SOPHOS_READ_ONLY_MODE"
+_ENV_MAX_CONCURRENCY = "SOPHOS_MAX_CONCURRENCY"
 
 
 class ConfigurationError(ValueError):
@@ -172,6 +187,7 @@ class Settings(BaseModel):
     ca_bundle: Path | None = None
     timeout: float = Field(default=DEFAULT_TIMEOUT)
     read_only_mode: bool = False
+    max_concurrency: int = Field(default=DEFAULT_MAX_CONCURRENCY)
 
     @field_validator("host")
     @classmethod
@@ -208,6 +224,15 @@ class Settings(BaseModel):
     def _check_timeout(cls, value: float) -> float:
         if not math.isfinite(value) or value <= 0:
             raise ValueError("timeout must be a finite number of seconds greater than 0")
+        return value
+
+    @field_validator("max_concurrency")
+    @classmethod
+    def _check_max_concurrency(cls, value: int) -> int:
+        if not 1 <= value <= MAX_CONCURRENCY_LIMIT:
+            raise ValueError(
+                f"max_concurrency must be between 1 and {MAX_CONCURRENCY_LIMIT} concurrent requests"
+            )
         return value
 
     @field_validator("ca_bundle")
@@ -305,6 +330,9 @@ class Settings(BaseModel):
         read_only_mode = _optional(source, _ENV_READ_ONLY_MODE)
         if read_only_mode is not None:
             values["read_only_mode"] = read_only_mode
+        max_concurrency = _optional(source, _ENV_MAX_CONCURRENCY)
+        if max_concurrency is not None:
+            values["max_concurrency"] = max_concurrency
 
         try:
             return cls(**values)

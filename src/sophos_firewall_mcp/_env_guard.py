@@ -1,4 +1,5 @@
-"""Refuse to start when ``mcp`` resolves outside this server's own environment.
+"""Warn when ``mcp`` resolves outside this server's environment, and refuse to start when
+``mcp.server.mcpserver`` is missing.
 
 The dependency is pinned to ``mcp>=2`` because ``mcp.server.fastmcp`` was removed in 2.0 and replaced by ``mcp.server.mcpserver``. That pin protects
 the *install*, not the *run*: a parent process that exports ``PYTHONPATH`` pointing at another
@@ -6,8 +7,15 @@ site-packages shadows the venv, the import raises, and the process dies before i
 JSON-RPC frame. The MCP client on the other side sees no message at all -- just an empty error -- which is
 how this failure gets misdiagnosed as bad credentials or bad networking.
 
-This module turns that into one actionable sentence on stderr and a non-zero exit, before the server
-pretends to be alive.
+This module turns that into one actionable sentence on stderr before the server pretends to be
+alive. The response depends on how unambiguous the evidence is:
+
+* ``mcp`` imported from outside ``sys.prefix`` is a *warning*: the string-prefix test also fires in
+  legitimate layouts (a ``--system-site-packages`` virtualenv, a ``pipx``/``uv tool`` install, a
+  container whose package prefix is not the interpreter's ``sys.prefix``), so a hard exit would turn
+  a working install into "cannot start". The real import decides.
+* ``mcp`` is importable but has no ``mcp.server.mcpserver`` is a *hard exit*: that one is
+  unambiguous, and the server cannot serve a single frame without it.
 """
 
 import sys
@@ -27,6 +35,21 @@ _MESSAGE = """sophos-firewall-mcp: cannot start.
   and skips real dependencies:
 
       env -u PYTHONPATH -u PYTHONHOME ./venv/bin/pip install .
+"""
+
+
+_WARNING = """sophos-firewall-mcp: warning: 'mcp' resolved outside this server's environment.
+
+  mcp imported from : {where}
+  this environment  : {prefix}
+
+  This is expected for a virtualenv created with --system-site-packages, a pipx/uv tool install
+  whose dependency environment is not the interpreter's sys.prefix, or a container that installs
+  the package into a different prefix. The server continues and the import decides.
+
+  If it then fails to import 'mcp.server.mcpserver', run it with a clean interpreter environment:
+
+      env -u PYTHONPATH -u PYTHONHOME ./venv/bin/sophos-firewall-mcp-server
 """
 
 
@@ -53,6 +76,12 @@ def has_mcpserver() -> bool:
     return True
 
 
+def _warn(where: str, prefix: str) -> None:
+    """Report a suspicious but not necessarily broken layout, and keep going."""
+    sys.stderr.write(_WARNING.format(where=where, prefix=prefix))
+    sys.stderr.flush()
+
+
 def _fail(reason: str, where: str, prefix: str) -> None:
     sys.stderr.write(_MESSAGE.format(reason=reason, where=where, prefix=prefix))
     sys.stderr.flush()
@@ -60,12 +89,14 @@ def _fail(reason: str, where: str, prefix: str) -> None:
 
 
 def verify_local_mcp() -> None:
-    """Exit with a diagnosable message when the interpreter environment is not usable.
+    """Warn or exit when the interpreter environment looks unusable.
 
-    Two distinct failures, two distinct reasons, because they have different fixes:
+    Two distinct failures, two distinct responses, because they have different fixes:
 
-    * ``mcp`` imported from outside ``sys.prefix`` -- a ``PYTHONPATH`` is shadowing the venv.
-    * ``mcp`` is local but is version 1.x -- ``mcp.server.mcpserver`` does not exist yet.
+    * ``mcp`` imported from outside ``sys.prefix`` -- a ``PYTHONPATH`` may be shadowing the venv,
+      but the same prefix test also fires in legitimate layouts, so this only warns.
+    * ``mcp`` is local but is version 1.x -- ``mcp.server.mcpserver`` does not exist yet, and no
+      layout makes that work: this exits.
     """
     prefix = str(Path(sys.prefix).resolve())
     location = mcp_location()
@@ -74,11 +105,7 @@ def verify_local_mcp() -> None:
         return  # nothing installed to inspect; the real import reports its own error
 
     if not str(location).startswith(prefix):
-        _fail(
-            "'mcp' resolved outside this server's environment -- a PYTHONPATH is shadowing the venv",
-            str(location),
-            prefix,
-        )
+        _warn(str(location), prefix)
 
     if not has_mcpserver():
         _fail(

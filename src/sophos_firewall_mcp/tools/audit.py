@@ -57,6 +57,11 @@ appliance's ``pages.total`` metadata or on a short page. Every result carries a
 :class:`~sophos_firewall_mcp.models.audit.ScanReport`; ``truncated`` is true only when a
 limit was actually hit.
 
+The three composite tools report progress once per page they read, against the global page
+cap, so a multi-page scan is observable instead of an opaque hang. Progress is advisory:
+it never changes the checks, the verdicts or the output shape, and the SDK makes the
+notification a no-op when the client did not supply a progress token.
+
 Errors are mapped by the domain adapters through
 :func:`~sophos_firewall_mcp.tools.tool_error`; this module adds no transport handling and
 never catches ``BaseException`` or ``CancelledError``.
@@ -222,6 +227,12 @@ _SEVERITY_ORDER: dict[str, int] = {"high": 0, "medium": 1, "low": 2, "info": 3}
 PageT = TypeVar("PageT", bound=BaseModel)
 ItemT = TypeVar("ItemT")
 
+#: Best-effort progress reporter: ``(current, total, message)``.
+#:
+#: The SDK's ``Context.report_progress`` matches this shape. It is a no-op when the
+#: client did not supply a progress token, so the walk can always call it.
+ProgressReporter = Callable[[float, float | None, str | None], Awaitable[None]]
+
 
 # -- Bounded walk and collectors -------------------------------------------------------
 
@@ -238,6 +249,23 @@ class _Budget:
     collections: list[str] = field(default_factory=list)
     truncated_collections: list[str] = field(default_factory=list)
     truncated: bool = False
+    progress: ProgressReporter | None = None
+
+    async def report_page(self, label: str) -> None:
+        """Report one page read, when the caller attached a progress reporter.
+
+        ``total`` is the global page cap rather than an exact count: the walk cannot know
+        how many pages a collection holds before it reads the first one, so the client is
+        shown progress against the documented worst case (``MAX_PAGES_TOTAL``) instead of
+        an invented total. ``current`` is the number of pages actually read so far.
+        """
+        if self.progress is None:
+            return
+        await self.progress(
+            float(self.pages_read),
+            float(self.max_pages_total),
+            f"read page {self.pages_read} of up to {self.max_pages_total} ({label})",
+        )
 
     def report(self) -> ScanReport:
         """Project the budget into the bounded, explicit scan report."""
@@ -810,6 +838,7 @@ class AuditAdapter(DomainAdapter):
                 break
             result = await fetch(page)
             budget.pages_read += 1
+            await budget.report_page(label)
             items = list(result.items)
             collected.extend(items)
             budget.items_scanned += len(items)
@@ -1180,9 +1209,14 @@ class AuditAdapter(DomainAdapter):
     # -- audit_firewall_rules ----------------------------------------------------------
 
     async def audit_firewall_rules(
-        self, request: AuditFirewallRulesInput
+        self, request: AuditFirewallRulesInput, *, progress: ProgressReporter | None = None
     ) -> AuditFirewallRulesOutput:
-        """Run the requested checks over the rule base and return bounded findings."""
+        """Run the requested checks over the rule base and return bounded findings.
+
+        ``progress`` is called once per page the bounded walk reads, so a multi-page scan
+        is observable instead of an opaque hang; it never changes the checks, the verdicts
+        or the output shape.
+        """
         checks: tuple[AuditCheck, ...] = (
             tuple(request.checks) if request.checks is not None else ALL_CHECKS
         )
@@ -1202,7 +1236,7 @@ class AuditAdapter(DomainAdapter):
         families: tuple[IpFamily, ...] = (
             (request.ip_family,) if request.ip_family is not None else ("ipv4", "ipv6")
         )
-        budget = _Budget()
+        budget = _Budget(progress=progress)
         findings = _Findings(request.max_findings)
         unverifiable = _Unverifiable()
 
@@ -1333,10 +1367,15 @@ class AuditAdapter(DomainAdapter):
     # -- explain_connectivity ----------------------------------------------------------
 
     async def explain_connectivity(
-        self, request: ExplainConnectivityInput
+        self, request: ExplainConnectivityInput, *, progress: ProgressReporter | None = None
     ) -> ExplainConnectivityOutput:
-        """Explain, from configuration, which interface, rule, NAT entry and route apply."""
-        budget = _Budget()
+        """Explain, from configuration, which interface, rule, NAT entry and route apply.
+
+        ``progress`` is called once per page the bounded walk reads, so a multi-page scan
+        is observable instead of an opaque hang; it never changes the verdicts or the
+        output shape.
+        """
+        budget = _Budget(progress=progress)
         missing: list[str] = []
         notes: list[str] = [
             "Configuration analysis only: the REST contract exposes no ping, traceroute, "
@@ -1585,9 +1624,16 @@ class AuditAdapter(DomainAdapter):
 
     # -- find_object_usage -------------------------------------------------------------
 
-    async def find_object_usage(self, request: FindObjectUsageInput) -> FindObjectUsageOutput:
-        """Find every reference to one object across rules, NAT rules and groups."""
-        budget = _Budget()
+    async def find_object_usage(
+        self, request: FindObjectUsageInput, *, progress: ProgressReporter | None = None
+    ) -> FindObjectUsageOutput:
+        """Find every reference to one object across rules, NAT rules and groups.
+
+        ``progress`` is called once per page the bounded walk reads, so a multi-page scan
+        is observable instead of an opaque hang; it never changes the references or the
+        output shape.
+        """
+        budget = _Budget(progress=progress)
         notes: list[str] = []
         families = _address_families(request.ip_family)
 
@@ -2916,13 +2962,18 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "instead of guessed. Shadowing compares projected criteria only: user-authentication "
             "and exclusion members are not projected, so treat a shadowing finding as a "
             "candidate for review. Reads the audited list operations through the domain "
-            "adapters; adds no endpoint and never mutates."
+            "adapters; adds no endpoint and never mutates. "
+            f"Reads up to {MAX_PAGES_TOTAL} pages; expect a few seconds on a small rule base "
+            "and up to a minute on a large one. Progress is reported once per page when the "
+            "client supplies a progress token."
         ),
     )
     async def audit_firewall_rules(
         request: AuditFirewallRulesInput, ctx: Context[AppContext]
     ) -> AuditFirewallRulesOutput:
-        return await AuditAdapter.from_context(ctx).audit_firewall_rules(request)
+        return await AuditAdapter.from_context(ctx).audit_firewall_rules(
+            request, progress=ctx.report_progress
+        )
 
     @register_tool(
         server,
@@ -2945,13 +2996,18 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "unicast routes and gateways (no live routing table exists). Rules whose network or "
             "service criteria reference objects are reported as not verifiable because "
             "address- and service-object membership is not resolved here; an FQDN endpoint "
-            "cannot be resolved without DNS. Truncation is explicit. Read-only."
+            "cannot be resolved without DNS. Truncation is explicit. Read-only. "
+            f"Reads up to {MAX_PAGES_TOTAL} pages; expect a few seconds on a small "
+            "configuration and up to a minute on a large one. Progress is reported once per "
+            "page when the client supplies a progress token."
         ),
     )
     async def explain_connectivity(
         request: ExplainConnectivityInput, ctx: Context[AppContext]
     ) -> ExplainConnectivityOutput:
-        return await AuditAdapter.from_context(ctx).explain_connectivity(request)
+        return await AuditAdapter.from_context(ctx).explain_connectivity(
+            request, progress=ctx.report_progress
+        )
 
     @register_tool(
         server,
@@ -2968,10 +3024,15 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "UUID; a UUID is resolved to its name from the list), optional ip_family to narrow "
             "address lookups, and max_references. Returns at most 100 references, whether the "
             "object itself was found, the total reference count and explicit truncation flags. "
-            "A group membership counts as a reference. Never mutates and adds no endpoint."
+            "A group membership counts as a reference. Never mutates and adds no endpoint. "
+            f"Reads up to {MAX_PAGES_TOTAL} pages; expect a few seconds on a small "
+            "configuration and up to a minute on a large one. Progress is reported once per "
+            "page when the client supplies a progress token."
         ),
     )
     async def find_object_usage(
         request: FindObjectUsageInput, ctx: Context[AppContext]
     ) -> FindObjectUsageOutput:
-        return await AuditAdapter.from_context(ctx).find_object_usage(request)
+        return await AuditAdapter.from_context(ctx).find_object_usage(
+            request, progress=ctx.report_progress
+        )

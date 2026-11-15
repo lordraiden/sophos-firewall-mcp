@@ -10,15 +10,18 @@ Nothing here performs I/O or knows about a specific domain: the modules are pure
 from __future__ import annotations
 
 import re
-from typing import Annotated, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
+from pydantic.json_schema import GetJsonSchemaHandler, JsonSchemaValue
+from pydantic_core import CoreSchema
 
 __all__ = [
     "ListPage",
     "ObjectName",
     "ObjectNameOrId",
     "ObjectRef",
+    "OutputModel",
     "Pages",
     "validate_object_name",
     "validate_object_name_or_id",
@@ -33,8 +36,153 @@ _UUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
+#: Keys a nullable union's non-null branch may carry and still be folded into a
+#: ``type: [X, "null"]`` list. Every key here constrains only values of its own JSON type
+#: (``maxLength`` only strings, ``minimum`` only numbers, ``items`` only arrays), so a
+#: ``null`` instance passes the merged schema exactly as it passed the ``anyOf`` form.
+#: ``$ref``, ``enum`` and ``const`` are deliberately absent: folding a ``$ref`` would lose
+#: the reference, and folding an ``enum``/``const`` would reject ``null``.
+_COMPACTABLE_NULLABLE_KEYS = frozenset(
+    {
+        "type",
+        "format",
+        "maxLength",
+        "minLength",
+        "pattern",
+        "minimum",
+        "maximum",
+        "exclusiveMinimum",
+        "exclusiveMaximum",
+        "multipleOf",
+        "items",
+        "minItems",
+        "maxItems",
+        "uniqueItems",
+        "properties",
+        "required",
+        "additionalProperties",
+    }
+)
 
-class Pages(BaseModel):
+
+def _strip_property_titles(node: dict[str, Any]) -> None:
+    """Drop the auto-generated ``title`` from every property of ``node``, recursively.
+
+    Pydantic derives a property title from the field name, which produces mangled values
+    such as ``"Idorname"``, ``"Ruletype"`` and ``"Logtraffic"``. The title is display-only
+    and the mangled form is worse than none, so it is removed from the published schema.
+    A model-level title (the class name) is left alone: it is not a property title.
+    """
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        for child in properties.values():
+            if isinstance(child, dict):
+                child.pop("title", None)
+                _strip_property_titles(child)
+    for keyword in ("items", "additionalProperties"):
+        child = node.get(keyword)
+        if isinstance(child, dict):
+            _strip_property_titles(child)
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        branches = node.get(keyword)
+        if isinstance(branches, list):
+            for branch in branches:
+                if isinstance(branch, dict):
+                    _strip_property_titles(branch)
+    definitions = node.get("$defs")
+    if isinstance(definitions, dict):
+        for definition in definitions.values():
+            if isinstance(definition, dict):
+                _strip_property_titles(definition)
+
+
+def _compact_nullable_union(node: dict[str, Any]) -> None:
+    """Fold ``anyOf: [{type: X, ...}, {type: null}]`` into ``type: [X, "null"]``.
+
+    Only a non-null branch whose keys all constrain values of their own JSON type is
+    folded (see :data:`_COMPACTABLE_NULLABLE_KEYS`). The parent's own keys -- ``default``,
+    ``description`` and any other annotation -- are kept, so the published default and
+    description are unchanged.
+    """
+    branches = node.get("anyOf")
+    if not isinstance(branches, list) or len(branches) != 2:
+        return
+    null_branches = [
+        branch for branch in branches if isinstance(branch, dict) and branch.get("type") == "null"
+    ]
+    if len(null_branches) != 1 or set(null_branches[0]) != {"type"}:
+        return
+    other = branches[0] if branches[1] is null_branches[0] else branches[1]
+    if not isinstance(other, dict) or not set(other) <= _COMPACTABLE_NULLABLE_KEYS:
+        return
+    other_type = other.get("type")
+    if not isinstance(other_type, str):
+        return
+    merged = {key: value for key, value in node.items() if key != "anyOf"}
+    merged.update(other)
+    merged["type"] = [other_type, "null"]
+    node.clear()
+    node.update(merged)
+
+
+def _compact_nullable_unions(node: dict[str, Any]) -> None:
+    """Compact every nullable union reachable from ``node``, children before parents."""
+    for keyword in ("items", "additionalProperties"):
+        child = node.get(keyword)
+        if isinstance(child, dict):
+            _compact_nullable_unions(child)
+    for keyword in ("anyOf", "oneOf", "allOf"):
+        branches = node.get(keyword)
+        if isinstance(branches, list):
+            for branch in branches:
+                if isinstance(branch, dict):
+                    _compact_nullable_unions(branch)
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        for child in properties.values():
+            if isinstance(child, dict):
+                _compact_nullable_unions(child)
+    definitions = node.get("$defs")
+    if isinstance(definitions, dict):
+        for definition in definitions.values():
+            if isinstance(definition, dict):
+                _compact_nullable_unions(definition)
+    _compact_nullable_union(node)
+
+
+def _trim_published_schema(schema: dict[str, Any]) -> None:
+    """Apply the two lossless trims to one model's published JSON schema, in place."""
+    _strip_property_titles(schema)
+    _compact_nullable_unions(schema)
+
+
+class OutputModel(BaseModel):
+    """Base class for every published output model.
+
+    The published catalog is the largest thing a client loads, so an output model trims
+    its own JSON schema in two ways that lose no validation information:
+
+    * the auto-generated property-level ``title`` is dropped (Pydantic derives it from the
+      field name, which mangles it -- ``"Idorname"`` -- and it is display-only);
+    * a nullable field is published as ``type: [X, "null"]`` instead of
+      ``anyOf: [{type: X}, {type: "null"}]`` when the non-null branch is a plain
+      constraint on that type.
+
+    The trim is applied by :meth:`__get_pydantic_json_schema__`, so it reaches every
+    nested model that also inherits this base, and it changes only the published schema:
+    the model's validation and serialization behaviour is untouched.
+    """
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler, /
+    ) -> JsonSchemaValue:
+        schema = handler(core_schema)
+        _trim_published_schema(schema)
+        return schema
+
+
+class Pages(OutputModel):
     """The ``pages`` metadata a paginated Sophos collection returns.
 
     The API's shape varies by operation: ``current``, ``size`` and ``maxSize`` are the
@@ -81,7 +229,7 @@ class Pages(BaseModel):
 ItemT = TypeVar("ItemT")
 
 
-class ListPage(BaseModel, Generic[ItemT]):
+class ListPage(OutputModel, Generic[ItemT]):
     """One page of a Sophos collection: ``items`` plus optional ``pages`` metadata.
 
     ``pages`` is optional because the API declares it optional for at least one
@@ -95,7 +243,7 @@ class ListPage(BaseModel, Generic[ItemT]):
     pages: Pages | None = None
 
 
-class ObjectRef(BaseModel):
+class ObjectRef(OutputModel):
     """A nested Sophos object reference, for example ``{"name": "LAN"}``.
 
     References sometimes carry more members than ``name``; they are ignored rather than

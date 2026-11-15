@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib.metadata
+import json
 import os
 import re
 import subprocess
@@ -28,12 +29,14 @@ import pytest
 from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from sophos_firewall_mcp import resources as resources_module
 from sophos_firewall_mcp import server as server_module
 from sophos_firewall_mcp.client import SophosRestClient
-from sophos_firewall_mcp.config import ConfigurationError, Settings
+from sophos_firewall_mcp.config import API_PATH_PREFIX, ConfigurationError, Settings
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import (
     SophosAmbiguousWriteError,
@@ -60,6 +63,10 @@ from sophos_firewall_mcp.tools import (
     register_tool,
     tool_error,
 )
+
+# jsonschema is a transitive dependency of mcp, not a declared dev dependency; skip the
+# schema-validation test rather than fail collection if it ever disappears.
+jsonschema = pytest.importorskip("jsonschema")
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 
@@ -1239,3 +1246,444 @@ def test_stdio_keeps_stdout_clean_when_configuration_is_invalid():
     assert completed.returncode == 2
     assert completed.stdout == ""
     assert "SOPHOS_HOST is required" in completed.stderr
+
+
+# -- Resources and prompts (M3) --------------------------------------------------------
+#
+# The server publishes all three MCP primitives. These tests pin the resource and prompt
+# catalogs: non-empty, accurate against the generated coverage document and the live tool
+# registry, cheap to read, and free of internal planning markers. The tool surface itself
+# is pinned by ``tests/test_tool_surface.py``; nothing here changes it.
+
+#: The resource catalog, in registration order.
+RESOURCE_URIS = (
+    "sophos://api/surface",
+    "sophos://coverage",
+    "sophos://read-only-policy",
+    "sophos://conventions",
+)
+
+#: The prompt catalog, in registration order.
+PROMPT_NAMES = ("audit_firewall", "explain_flow", "find_unused_objects")
+
+#: The arguments each prompt needs to render. ``explain_flow`` is the only one with
+#: required arguments; the other two render with none.
+PROMPT_ARGUMENTS: dict[str, dict[str, str]] = {
+    "audit_firewall": {},
+    "explain_flow": {"source": "10.0.0.5", "destination": "8.8.8.8", "service": "HTTPS"},
+    "find_unused_objects": {},
+}
+
+#: Every documented prompt argument combination, including the values that used to render
+#: an invalid tool call (``fqdn`` for ``find_unused_objects``). Each rendered call is
+#: validated against the named tool's published input schema.
+PROMPT_ARGUMENT_MATRIX: dict[str, tuple[dict[str, str], ...]] = {
+    "audit_firewall": (
+        {},
+        {"ip_family": "ipv4"},
+        {"ip_family": "ipv6"},
+        {"checks": "any-any, shadowed"},
+        {"rule_name_contains": "Allow LAN to WAN"},
+        {"ip_family": "ipv6", "checks": "disabled", "rule_name_contains": "WAN"},
+    ),
+    "explain_flow": (
+        {"source": "10.0.0.5", "destination": "8.8.8.8", "service": "HTTPS"},
+        {"source": "DMZ", "destination": "WAN", "service": "HTTPS", "endpoint_type": "zone"},
+        {
+            "source": "a.example",
+            "destination": "b.example",
+            "service": "HTTPS",
+            "endpoint_type": "fqdn",
+        },
+        {
+            "source": "10.0.0.5",
+            "destination": "8.8.8.8",
+            "service": "HTTPS",
+            "protocol": "tcp",
+            "port": "443",
+        },
+        {
+            "source": "10.0.0.5",
+            "destination": "8.8.8.8",
+            "service": "HTTPS",
+            "protocol": "udp",
+            "port": "53",
+        },
+    ),
+    "find_unused_objects": (
+        {},
+        {"object_type": "service"},
+        {"object_type": "address-group"},
+        {"ip_family": "ipv4"},
+        {"ip_family": "ipv6"},
+        {"ip_family": "fqdn"},
+        {"object_type": "address-group", "ip_family": "fqdn"},
+    ),
+}
+
+#: The literal prefix of a rendered tool call.
+_RENDERED_REQUEST = '{"request":'
+
+#: A backticked snake_case token, which is how the prompt text names a tool.
+_BACKTICKED_NAME = re.compile(r"`([a-z][a-z0-9_]*)`")
+
+#: Upper bound for one resource body. A resource is passive context a client may inject
+#: into every turn, so it must stay cheap: the four bodies together are under 10 KB.
+MAX_RESOURCE_CHARS = 6_000
+MAX_RESOURCE_TOTAL_CHARS = 10_000
+
+#: Internal planning markers that must not reach published text (M4). The same rule the
+#: tool surface follows applies to resources and prompts: a model reads them as
+#: instructions, and a decision ID or a reference to the checked-in OpenAPI file is
+#: meaningless to it.
+PUBLISHED_MARKERS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("decision id (M<n>)", re.compile(r"\bM\d+\b")),
+    ("'contract'", re.compile(r"\bcontract", re.IGNORECASE)),
+    ("'lab appliance'", re.compile(r"\blab appliance\b", re.IGNORECASE)),
+    ("'issue #'", re.compile(r"\bissue #", re.IGNORECASE)),
+    ("'live observation'", re.compile(r"\blive observation\b", re.IGNORECASE)),
+)
+
+#: Repository root, for the generated coverage document the matrix summarises.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
+async def read_all_resources(server: MCPServer[AppContext]) -> dict[str, str]:
+    """Read every published resource, keyed by URI."""
+    contents: dict[str, str] = {}
+    for uri in RESOURCE_URIS:
+        result = await server.read_resource(uri)
+        contents[uri] = result[0].content
+    return contents
+
+
+def coverage_document_operation_counts() -> dict[str, int]:
+    """Parse the per-domain operation counts out of ``docs/API-COVERAGE.md`` section 5."""
+    text = (REPO_ROOT / "docs" / "API-COVERAGE.md").read_text(encoding="utf-8")
+    return {
+        title: int(count)
+        for title, count in re.findall(
+            r"^### 5\.\d+ (.+?) \((\d+) operations\)$", text, re.MULTILINE
+        )
+    }
+
+
+async def test_resources_list_publishes_the_four_resources():
+    """M3: the declared ``resources`` capability must not be empty."""
+    server = create_server(make_settings())
+
+    resources = await server.list_resources()
+
+    assert [resource.uri for resource in resources] == list(RESOURCE_URIS)
+    for resource in resources:
+        assert resource.name
+        assert resource.title
+        assert resource.description
+        assert resource.mime_type == "text/markdown"
+
+
+async def test_every_resource_reads_to_bounded_marker_free_markdown():
+    """M3/M4: each resource is a short Markdown document with no internal markers."""
+    server = create_server(make_settings())
+
+    contents = await read_all_resources(server)
+
+    assert set(contents) == set(RESOURCE_URIS)
+    for uri, text in contents.items():
+        assert text.strip(), f"{uri} is empty"
+        assert text.startswith("# "), f"{uri} must open with a Markdown title"
+        assert len(text) <= MAX_RESOURCE_CHARS, f"{uri} is {len(text)} characters"
+        for label, pattern in PUBLISHED_MARKERS:
+            match = pattern.search(text)
+            assert match is None, f"{uri} carries a {label}: {match.group(0)!r}"
+    assert sum(len(text) for text in contents.values()) <= MAX_RESOURCE_TOTAL_CHARS
+
+
+def test_the_coverage_matrix_matches_the_generated_document():
+    """M3: the matrix is a summary of the generated document, not a second opinion."""
+    documented = coverage_document_operation_counts()
+
+    assert documented, "the coverage document must list its domains"
+    assert sum(documented.values()) == resources_module.API_OPERATIONS
+    for domain in resources_module.COVERAGE_DOMAINS:
+        assert domain.title in documented, f"{domain.title} is not a section of the document"
+        assert domain.api_operations == documented[domain.title], domain.title
+    assert (
+        sum(domain.api_operations for domain in resources_module.COVERAGE_DOMAINS)
+        == resources_module.API_OPERATIONS
+    )
+
+
+async def test_the_coverage_matrix_tool_counts_match_the_live_registry():
+    """M3: the tool column is the real surface, and the prefixes partition it."""
+    server = create_server(make_settings())
+    names = {tool.name for tool in await server.list_tools()}
+
+    assert len(names) == resources_module.TOTAL_TOOL_COUNT
+    claimed: dict[str, str] = {}
+    for domain in resources_module.COVERAGE_DOMAINS:
+        matched = {name for name in names if name.startswith(domain.tool_prefixes)}
+        assert len(matched) == domain.tools, f"{domain.title}: {sorted(matched)}"
+        for name in matched:
+            assert name not in claimed, f"{name} is claimed by {claimed[name]} and {domain.title}"
+            claimed[name] = domain.title
+    assert claimed.keys() == names, "every published tool must belong to exactly one domain"
+    assert (
+        sum(domain.tools for domain in resources_module.COVERAGE_DOMAINS)
+        == resources_module.TOTAL_TOOL_COUNT
+    )
+
+
+async def test_the_surface_resource_states_the_real_api_facts():
+    """M3: the surface resource must not drift from the API it describes."""
+    server = create_server(make_settings())
+
+    text = (await server.read_resource("sophos://api/surface"))[0].content
+
+    assert API_PATH_PREFIX in text
+    for fact in ("384", "700", "145", "152", "98", "54"):
+        assert fact in text, f"the surface resource omits {fact}"
+    for name in resources_module.COMPOSITE_TOOLS:
+        assert f"`{name}`" in text, f"the surface resource omits the composite {name}"
+
+
+async def test_the_read_only_policy_states_the_mode_of_this_process():
+    """M3: the policy resource reports the mode the process actually runs in."""
+    writable = create_server(make_settings())
+    writable_text = (await writable.read_resource("sophos://read-only-policy"))[0].content
+
+    assert "**disabled**" in writable_text
+    assert f"all {resources_module.TOTAL_TOOL_COUNT} tools are registered" in writable_text
+
+    read_only = create_server(make_settings(read_only_mode=True))
+    read_only_text = (await read_only.read_resource("sophos://read-only-policy"))[0].content
+
+    assert "**enabled**" in read_only_text
+    assert "not registered at all" in read_only_text
+    assert len(await read_only.list_tools()) == resources_module.READ_ONLY_TOOL_COUNT
+
+
+async def test_the_conventions_resource_names_the_real_no_argument_tools():
+    """M3: the wrapper count and the no-argument list are the published surface."""
+    server = create_server(make_settings())
+
+    text = (await server.read_resource("sophos://conventions"))[0].content
+    tools = {tool.name: tool for tool in await server.list_tools()}
+
+    assert len(resources_module.NO_ARGUMENT_TOOLS) == 8
+    for name in resources_module.NO_ARGUMENT_TOOLS:
+        assert f"`{name}`" in text
+        assert "request" not in tools[name].input_schema.get("properties", {}), name
+    wrapped = [
+        tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
+    ]
+    assert len(wrapped) == resources_module.WRAPPED_TOOL_COUNT
+    assert (
+        f"{resources_module.WRAPPED_TOOL_COUNT} of the {resources_module.TOTAL_TOOL_COUNT}" in text
+    )
+
+
+async def test_prompts_list_publishes_the_three_workflows():
+    """M3: the declared ``prompts`` capability must not be empty."""
+    server = create_server(make_settings())
+
+    prompts = await server.list_prompts()
+
+    assert [prompt.name for prompt in prompts] == list(PROMPT_NAMES)
+    for prompt in prompts:
+        assert prompt.title
+        assert prompt.description
+        assert prompt.arguments
+        for argument in prompt.arguments:
+            assert argument.description, f"{prompt.name}.{argument.name} has no description"
+
+    by_name = {prompt.name: prompt for prompt in prompts}
+    assert {argument.name for argument in by_name["audit_firewall"].arguments} == {
+        "ip_family",
+        "checks",
+        "rule_name_contains",
+    }
+    assert {argument.name for argument in by_name["explain_flow"].arguments} == {
+        "source",
+        "destination",
+        "endpoint_type",
+        "service",
+        "protocol",
+        "port",
+    }
+    assert {argument.name for argument in by_name["find_unused_objects"].arguments} == {
+        "object_type",
+        "ip_family",
+    }
+    required = {
+        argument.name for argument in by_name["explain_flow"].arguments if argument.required
+    }
+    assert required == {"source", "destination", "service"}
+
+
+async def test_each_prompt_renders_a_self_contained_instruction():
+    """M3: a rendered prompt names the real tool and the real call shape."""
+    server = create_server(make_settings())
+
+    for name, arguments in PROMPT_ARGUMENTS.items():
+        result = await server.get_prompt(name, arguments)
+
+        assert len(result.messages) == 1, name
+        message = result.messages[0]
+        assert message.role == "user"
+        text = message.content.text
+        assert '{"request":' in text, f"{name} does not show the request wrapper"
+        assert "read-only" in text.lower() or "nothing" in text.lower(), name
+
+
+async def test_prompt_arguments_reach_the_tool_call():
+    """M3: an argument the user supplies must appear in the rendered call."""
+    server = create_server(make_settings())
+
+    audit = await server.get_prompt(
+        "audit_firewall", {"ip_family": "ipv6", "checks": "any-any, shadowed"}
+    )
+    audit_text = audit.messages[0].content.text
+    assert '"ip_family": "ipv6"' in audit_text
+    assert '"checks": ["any-any", "shadowed"]' in audit_text
+
+    flow = await server.get_prompt(
+        "explain_flow",
+        {
+            "source": "10.0.0.5",
+            "destination": "8.8.8.8",
+            "service": "HTTPS",
+            "protocol": "tcp",
+            "port": "443",
+        },
+    )
+    flow_text = flow.messages[0].content.text
+    assert '"source": {"ip": "10.0.0.5"}' in flow_text
+    assert '"destination": {"ip": "8.8.8.8"}' in flow_text
+    assert '"service": {"name": "HTTPS", "protocol": "tcp", "port": 443}' in flow_text
+
+    zone_flow = await server.get_prompt(
+        "explain_flow",
+        {"source": "DMZ", "destination": "WAN", "service": "HTTPS", "endpoint_type": "zone"},
+    )
+    zone_text = zone_flow.messages[0].content.text
+    assert '"source": {"zone": "DMZ"}' in zone_text
+    assert '"destination": {"zone": "WAN"}' in zone_text
+
+    unused = await server.get_prompt(
+        "find_unused_objects", {"object_type": "service", "ip_family": "ipv4"}
+    )
+    unused_text = unused.messages[0].content.text
+    assert '"object_type": "service"' in unused_text
+    assert '"ip_family": "ipv4"' in unused_text
+
+
+async def test_explain_flow_requires_its_endpoints():
+    """M3: a prompt that cannot describe a flow must fail instead of rendering one."""
+    server = create_server(make_settings())
+
+    with pytest.raises(ValueError):
+        await server.get_prompt("explain_flow", {})
+
+
+def rendered_tool_calls(text: str, tool_names: set[str]) -> list[tuple[str, dict[str, Any]]]:
+    """Extract every rendered ``{"request": ...}`` and the tool it belongs to.
+
+    The prompt text names the tool immediately before the call, so the nearest preceding
+    backticked token that is a registered tool is the callee. ``raw_decode`` parses the
+    nested object without needing to know where it ends.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for match in re.finditer(re.escape(_RENDERED_REQUEST), text):
+        prefix = text[: match.start()]
+        names = [name for name in _BACKTICKED_NAME.findall(prefix) if name in tool_names]
+        assert names, f"no tool name before the request at offset {match.start()}"
+        payload, _ = json.JSONDecoder().raw_decode(text[match.start() :])
+        calls.append((names[-1], payload))
+    return calls
+
+
+async def test_every_rendered_prompt_call_validates_against_its_tool_schema():
+    """L10: a rendered prompt must emit a call the named tool accepts.
+
+    This is the regression guard for the two defects CI missed: ``explain_flow`` used to
+    omit the required ``service``, and ``find_unused_objects`` used to forward
+    ``ip_family="fqdn"`` to ``audit_firewall_rules``, whose enum is ``ipv4|ipv6``.
+    """
+    server = create_server(make_settings())
+    tools = {tool.name: tool for tool in await server.list_tools()}
+
+    for name, argument_sets in PROMPT_ARGUMENT_MATRIX.items():
+        for arguments in argument_sets:
+            result = await server.get_prompt(name, arguments)
+            text = result.messages[0].content.text
+            calls = rendered_tool_calls(text, set(tools))
+            assert calls, f"{name} rendered no tool call for {arguments}"
+
+            for tool_name, payload in calls:
+                jsonschema.validate(payload, tools[tool_name].input_schema)
+
+
+async def test_explain_flow_rejects_a_port_without_a_tcp_or_udp_protocol():
+    """L10: a port the tool cannot accept must fail to render, not render an invalid call."""
+    server = create_server(make_settings())
+
+    with pytest.raises(ValueError) as raised:
+        await server.get_prompt(
+            "explain_flow",
+            {"source": "10.0.0.5", "destination": "8.8.8.8", "service": "HTTPS", "port": "443"},
+        )
+
+    # The SDK wraps the render failure; the actionable message is in the cause chain.
+    messages: list[str] = []
+    error: BaseException | None = raised.value
+    while error is not None:
+        messages.append(str(error))
+        error = error.__cause__
+    assert any("port requires protocol" in message for message in messages)
+
+
+async def test_published_resource_and_prompt_text_names_only_real_tools():
+    """M3: every tool-shaped name in the published text is a registered tool."""
+    server = create_server(make_settings())
+    names = {tool.name for tool in await server.list_tools()}
+    prefixes = tuple(
+        prefix for domain in resources_module.COVERAGE_DOMAINS for prefix in domain.tool_prefixes
+    )
+
+    texts = list((await read_all_resources(server)).values())
+    for name, arguments in PROMPT_ARGUMENTS.items():
+        result = await server.get_prompt(name, arguments)
+        texts.append(result.messages[0].content.text)
+
+    for text in texts:
+        for token in re.findall(r"`([a-z][a-z0-9_]*)`", text):
+            if token.startswith(prefixes):
+                assert token in names, f"{token} looks like a tool but is not registered"
+
+
+async def test_resources_and_prompts_are_registered_in_read_only_mode():
+    """M3: a read-only deployment is exactly where an audit prompt is useful."""
+    server = create_server(make_settings(read_only_mode=True))
+
+    assert len(await server.list_resources()) == len(RESOURCE_URIS)
+    assert len(await server.list_prompts()) == len(PROMPT_NAMES)
+
+
+async def test_resources_and_prompts_are_served_over_the_wire_with_cache_hints():
+    """M3/L7: the catalogs reach a real client, and they are cacheable like ``tools/list``."""
+    server = create_server(make_settings())
+
+    async with Client(server) as client:
+        resources = await client.list_resources()
+        prompts = await client.list_prompts()
+        read = await client.read_resource("sophos://coverage")
+        rendered = await client.get_prompt("find_unused_objects", {})
+
+    assert [resource.uri for resource in resources.resources] == list(RESOURCE_URIS)
+    assert resources.ttl_ms == server_module._CATALOG_TTL_MS
+    assert [prompt.name for prompt in prompts.prompts] == list(PROMPT_NAMES)
+    assert prompts.ttl_ms == server_module._CATALOG_TTL_MS
+    assert read.ttl_ms == server_module._CATALOG_TTL_MS
+    assert read.contents[0].text
+    assert rendered.messages[0].content.text

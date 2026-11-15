@@ -5,6 +5,17 @@ through its Configuration REST API. This module owns application construction, t
 lifespan and the STDIO entrypoint; domain tools live in :mod:`sophos_firewall_mcp.tools`
 and register themselves through the contract documented there.
 
+Surface
+-------
+The server publishes all three MCP primitives, because they do different jobs: tools are
+model-controlled actions (:mod:`sophos_firewall_mcp.tools`), resources are
+application-controlled passive context (:mod:`sophos_firewall_mcp.resources`) and prompts
+are user-controlled templates (:mod:`sophos_firewall_mcp.prompts`). The resources carry the
+REST API surface, the coverage matrix, the read-only policy and the calling conventions
+once, instead of repeating them in 152 tool descriptions; the prompts carry the three
+analysis workflows (audit the rule base, explain a flow, find unused objects). All three
+catalogs are static for the process lifetime.
+
 Lifecycle
 ---------
 ``create_server(settings)`` validates nothing about the environment -- it receives
@@ -19,12 +30,13 @@ client in ``finally`` on both normal and exceptional shutdown.
 Transport and diagnostics
 -------------------------
 STDIO only: stdout carries the MCP protocol and nothing else. Logging and diagnostics go
-to stderr. ``MCPServer(..., subscriptions=False)`` is used because the tool catalog is
-static for the process lifetime (the read-only mode is applied at startup), so the SDK
-must not advertise ``subscriptions/listen`` or ``listChanged``. The same static catalog
-is why ``cache_hints`` gives ``tools/list`` and ``server/discover`` a long TTL: the SDK
-default of ``0`` means "immediately stale" and makes a client re-fetch a ~894 KB payload
-on every turn.
+to stderr. ``MCPServer(..., subscriptions=False)`` is used because the tool, resource and
+prompt catalogs are static for the process lifetime (the read-only mode is applied at
+startup), so the SDK must not advertise ``subscriptions/listen`` or ``listChanged``. The
+same static catalogs are why ``cache_hints`` gives ``tools/list``, ``server/discover``,
+``resources/list``, ``resources/read`` and ``prompts/list`` a long TTL: the SDK default of
+``0`` means "immediately stale" and makes a client re-fetch a ~894 KB payload on every
+turn.
 
 Identity
 --------
@@ -56,6 +68,8 @@ from mcp.server.mcpserver import MCPServer  # noqa: E402
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
 from sophos_firewall_mcp.config import ConfigurationError, Settings  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
+from sophos_firewall_mcp.prompts import register_prompts  # noqa: E402
+from sophos_firewall_mcp.resources import register_resources  # noqa: E402
 from sophos_firewall_mcp.tools import DomainRegistrar  # noqa: E402
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
@@ -103,12 +117,18 @@ _UNKNOWN_VERSION = "0.0.0+unknown"
 #: mode) within a session.
 _CATALOG_TTL_MS = 3_600_000
 
-#: Cache hints for the two static catalog methods this server serves. ``server/discover``
+#: Cache hints for the static catalog methods this server serves. ``server/discover``
 #: carries the same identity and capability set for the process lifetime, so it is as
-#: cacheable as ``tools/list``.
+#: cacheable as ``tools/list``. The resource and prompt catalogs are static for the same
+#: reason -- the read-only mode is resolved before registration and every resource is a
+#: constant -- so a client that re-reads them per turn pays for nothing.
 _CATALOG_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
     "tools/list": CacheHint(ttl_ms=_CATALOG_TTL_MS),
     "server/discover": CacheHint(ttl_ms=_CATALOG_TTL_MS),
+    "resources/list": CacheHint(ttl_ms=_CATALOG_TTL_MS),
+    "resources/templates/list": CacheHint(ttl_ms=_CATALOG_TTL_MS),
+    "resources/read": CacheHint(ttl_ms=_CATALOG_TTL_MS),
+    "prompts/list": CacheHint(ttl_ms=_CATALOG_TTL_MS),
 }
 
 #: Server-level instructions shown to the model. Domain tools carry their own.
@@ -246,6 +266,11 @@ def create_server(
     )
     for register in domains:
         register(server, read_only=read_only)
+    # Resources and prompts are not domain tools: they publish the passive context and the
+    # analysis templates, are static for the process lifetime, and are registered in both
+    # modes (a read-only deployment is exactly where an audit prompt is useful).
+    register_resources(server, read_only=read_only)
+    register_prompts(server)
     return server
 
 

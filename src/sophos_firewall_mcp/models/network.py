@@ -45,7 +45,7 @@ from pydantic import (
     model_validator,
 )
 
-from .common import ObjectName, ObjectNameOrId, ObjectRef
+from .common import ObjectName, ObjectNameOrId, ObjectRef, OutputModel
 from .objects import serialize_epoch_sentinel
 
 __all__ = [
@@ -212,7 +212,7 @@ CellularNetworkMode = Literal["automatic", "manual"]
 EnabledState = Literal["enabled", "disabled"]
 
 
-class _Output(BaseModel):
+class _Output(OutputModel):
     """Base for response projections: unknown server fields are ignored, never echoed.
 
     The epoch "never" sentinel is published as ``null`` (L6); see
@@ -1236,7 +1236,7 @@ class KeysetPages(_Output):
 ItemT = TypeVar("ItemT")
 
 
-class KeysetPage(BaseModel, Generic[ItemT]):
+class KeysetPage(OutputModel, Generic[ItemT]):
     """One page of a keyset-paginated Sophos collection (DHCP leases)."""
 
     model_config = ConfigDict(extra="ignore")
@@ -1245,7 +1245,7 @@ class KeysetPage(BaseModel, Generic[ItemT]):
     pages: KeysetPages | None = None
 
 
-class UnpaginatedList(BaseModel, Generic[ItemT]):
+class UnpaginatedList(OutputModel, Generic[ItemT]):
     """A collection the API returns without ``pages`` metadata.
 
     ``getAllDhcpRelayIpv4``/``Ipv6`` and ``listDhcpServersIpv4``/``Ipv6`` declare only
