@@ -32,7 +32,7 @@ from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Literal, Self, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from sophos_firewall_mcp.models.common import (
     ObjectName,
@@ -331,12 +331,33 @@ class Ipv4AddressUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv4_address: IPv4Address | None = Field(None, alias="ipv4Address")
-    ipv4_network_address: IPv4Address | None = Field(None, alias="ipv4NetworkAddress")
+    ipv4_address: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_address", "ipv4Address"),
+        serialization_alias="ipv4Address",
+    )
+    ipv4_network_address: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_network_address", "ipv4NetworkAddress"),
+        serialization_alias="ipv4NetworkAddress",
+    )
     cidr: int | None = Field(None, ge=1, le=31)
-    ipv4_address_start: IPv4Address | None = Field(None, alias="ipv4AddressStart")
-    ipv4_address_end: IPv4Address | None = Field(None, alias="ipv4AddressEnd")
-    ipv4_addresses: list[IPv4Address] | None = Field(None, alias="ipv4Addresses", min_length=1)
+    ipv4_address_start: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_address_start", "ipv4AddressStart"),
+        serialization_alias="ipv4AddressStart",
+    )
+    ipv4_address_end: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_address_end", "ipv4AddressEnd"),
+        serialization_alias="ipv4AddressEnd",
+    )
+    ipv4_addresses: list[IPv4Address] | None = Field(
+        None,
+        min_length=1,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 class Ipv4AddressResult(_OutputModel):
@@ -471,12 +492,39 @@ class Ipv6AddressUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv6_address: IPv6Address | None = Field(None, alias="ipv6Address")
-    ipv6_network_address: IPv6Address | None = Field(None, alias="ipv6NetworkAddress")
-    prefix_length: int | None = Field(None, ge=1, le=127, alias="prefixLength")
-    ipv6_address_start: IPv6Address | None = Field(None, alias="ipv6AddressStart")
-    ipv6_address_end: IPv6Address | None = Field(None, alias="ipv6AddressEnd")
-    ipv6_addresses: list[IPv6Address] | None = Field(None, alias="ipv6Addresses", min_length=1)
+    ipv6_address: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_address", "ipv6Address"),
+        serialization_alias="ipv6Address",
+    )
+    ipv6_network_address: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_network_address", "ipv6NetworkAddress"),
+        serialization_alias="ipv6NetworkAddress",
+    )
+    prefix_length: int | None = Field(
+        None,
+        ge=1,
+        le=127,
+        validation_alias=AliasChoices("prefix_length", "prefixLength"),
+        serialization_alias="prefixLength",
+    )
+    ipv6_address_start: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_address_start", "ipv6AddressStart"),
+        serialization_alias="ipv6AddressStart",
+    )
+    ipv6_address_end: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_address_end", "ipv6AddressEnd"),
+        serialization_alias="ipv6AddressEnd",
+    )
+    ipv6_addresses: list[IPv6Address] | None = Field(
+        None,
+        min_length=1,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 class Ipv6AddressResult(_OutputModel):
@@ -543,7 +591,11 @@ class Ipv4AddressGroupCreate(_InputModel):
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv4_addresses: list[MemberRef] = Field(..., alias="ipv4Addresses")
+    ipv4_addresses: list[MemberRef] = Field(
+        ...,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 class Ipv4AddressGroupUpdateInput(_InputModel):
@@ -552,7 +604,11 @@ class Ipv4AddressGroupUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv4_addresses: list[MemberRef] | None = Field(None, alias="ipv4Addresses")
+    ipv4_addresses: list[MemberRef] | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 class Ipv4AddressGroupListInput(ListQuery):
@@ -575,7 +631,11 @@ class Ipv6AddressGroupCreate(_InputModel):
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv6_addresses: list[MemberRef] = Field(..., alias="ipv6Addresses")
+    ipv6_addresses: list[MemberRef] = Field(
+        ...,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 class Ipv6AddressGroupUpdateInput(_InputModel):
@@ -584,7 +644,11 @@ class Ipv6AddressGroupUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv6_addresses: list[MemberRef] | None = Field(None, alias="ipv6Addresses")
+    ipv6_addresses: list[MemberRef] | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 class Ipv6AddressGroupListInput(ListQuery):
@@ -726,15 +790,23 @@ class MacAddressUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    mac_address: MacAddressString | None = Field(None, alias="macAddress")
+    mac_address: MacAddressString | None = Field(
+        None,
+        validation_alias=AliasChoices("mac_address", "macAddress"),
+        serialization_alias="macAddress",
+    )
     mac_addresses: list[MacAddressString] | None = Field(
-        None, alias="macAddresses", min_length=1, max_length=1000
+        None,
+        min_length=1,
+        max_length=1000,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
     )
 
     @model_validator(mode="after")
     def _at_most_one_shape(self) -> Self:
         if self.mac_address is not None and self.mac_addresses is not None:
-            raise ValueError("provide at most one of macAddress and macAddresses")
+            raise ValueError("provide at most one of mac_address and mac_addresses")
         return self
 
 

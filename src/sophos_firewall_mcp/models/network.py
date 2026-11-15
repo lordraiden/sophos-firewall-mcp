@@ -35,7 +35,14 @@ from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Generic, Literal, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from .common import ObjectName, ObjectNameOrId, ObjectRef
 
@@ -226,11 +233,17 @@ class PageInput(_Input):
 
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(
-        default=50, ge=1, le=100, alias="pageSize", description="Page size, 1-100."
+        default=50,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("page_size", "pageSize"),
+        serialization_alias="pageSize",
+        description="Page size, 1-100.",
     )
     page_total: bool = Field(
         default=False,
-        alias="pageTotal",
+        validation_alias=AliasChoices("page_total", "pageTotal"),
+        serialization_alias="pageTotal",
         description="Ask the appliance for pages.total and pages.items.",
     )
 
@@ -240,14 +253,16 @@ class FilteredPageInput(PageInput):
 
     name_contains: str | None = Field(
         default=None,
-        alias="nameContains",
+        validation_alias=AliasChoices("name_contains", "nameContains"),
+        serialization_alias="nameContains",
         min_length=1,
         max_length=255,
         description="Only return objects whose name contains this text.",
     )
     name_not_equals: str | None = Field(
         default=None,
-        alias="nameNotEquals",
+        validation_alias=AliasChoices("name_not_equals", "nameNotEquals"),
+        serialization_alias="nameNotEquals",
         min_length=1,
         max_length=255,
         description="Exclude the object with exactly this name.",
@@ -258,7 +273,7 @@ class FilteredPageInput(PageInput):
         """Reject both name filters: the contract declares them mutually exclusive."""
         if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
-                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+                "name_contains and name_not_equals are mutually exclusive; set at most one"
             )
         return self
 
@@ -277,14 +292,16 @@ class FilterInput(_Input):
 
     name_contains: str | None = Field(
         default=None,
-        alias="nameContains",
+        validation_alias=AliasChoices("name_contains", "nameContains"),
+        serialization_alias="nameContains",
         min_length=1,
         max_length=255,
         description="Only return objects whose name contains this text.",
     )
     name_not_equals: str | None = Field(
         default=None,
-        alias="nameNotEquals",
+        validation_alias=AliasChoices("name_not_equals", "nameNotEquals"),
+        serialization_alias="nameNotEquals",
         min_length=1,
         max_length=255,
         description="Exclude the object with exactly this name.",
@@ -295,7 +312,7 @@ class FilterInput(_Input):
         """Reject both name filters: the contract declares them mutually exclusive."""
         if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
-                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+                "name_contains and name_not_equals are mutually exclusive; set at most one"
             )
         return self
 
@@ -312,33 +329,51 @@ class FilterInput(_Input):
 class InterfaceRefInput(_Input):
     """Identify one interface by name or UUID."""
 
-    id_or_name: InterfaceRef = Field(alias="idOrName", description="Interface name or UUID.")
+    id_or_name: InterfaceRef = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Interface name or UUID.",
+    )
 
 
 class ZoneRefInput(_Input):
     """Identify one zone by name or UUID."""
 
-    id_or_name: ZoneRef = Field(alias="idOrName", description="Zone name or UUID.")
+    id_or_name: ZoneRef = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Zone name or UUID.",
+    )
 
 
 class GatewayRefInput(_Input):
     """Identify one gateway by name or UUID."""
 
-    id_or_name: GatewayRef = Field(alias="idOrName", description="Gateway name or UUID.")
+    id_or_name: GatewayRef = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Gateway name or UUID.",
+    )
 
 
 class WideRefInput(_Input):
     """Identify one route, DHCP server, DNS entry or static neighbor by name or UUID."""
 
     id_or_name: WideRef = Field(
-        alias="idOrName", description="Object name or UUID (at most 64 characters)."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Object name or UUID (at most 64 characters).",
     )
 
 
 class SdwanRefInput(_Input):
     """Identify one SD-WAN route by name or UUID."""
 
-    id_or_name: SdwanRef = Field(alias="idOrName", description="SD-WAN route name or UUID.")
+    id_or_name: SdwanRef = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="SD-WAN route name or UUID.",
+    )
 
 
 class DhcpRelayRefInput(_Input):
@@ -355,20 +390,29 @@ class VlanIpv4Create(_Input):
     """IPv4 settings of a new VLAN interface (``ipv4`` member of the create body)."""
 
     assignment_type: Literal["static", "dhcp"] = Field(
-        alias="assignmentType", description="IPv4 assignment type."
+        validation_alias=AliasChoices("assignment_type", "assignmentType"),
+        serialization_alias="assignmentType",
+        description="IPv4 assignment type.",
     )
     ipv4_address: IPv4Address | None = Field(
-        default=None, alias="ipv4Address", description="Required when assignmentType is static."
+        default=None,
+        validation_alias=AliasChoices("ipv4_address", "ipv4Address"),
+        serialization_alias="ipv4Address",
+        description="Required when assignment_type is static.",
     )
     cidr: int | None = Field(
         default=None, ge=1, le=32, description="Prefix length; required for a static address."
     )
     gateway_name: GatewayName | None = Field(
-        default=None, alias="gatewayName", description="Name of the gateway object."
+        default=None,
+        validation_alias=AliasChoices("gateway_name", "gatewayName"),
+        serialization_alias="gatewayName",
+        description="Name of the gateway object.",
     )
     gateway_ip_address: IPv4Address | None = Field(
         default=None,
-        alias="gatewayIpAddress",
+        validation_alias=AliasChoices("gateway_ip_address", "gatewayIpAddress"),
+        serialization_alias="gatewayIpAddress",
         description="Gateway address; only applicable to a static assignment.",
     )
 
@@ -377,11 +421,11 @@ class VlanIpv4Create(_Input):
         if self.assignment_type == "static":
             if self.ipv4_address is None or self.cidr is None:
                 raise ValueError(
-                    "ipv4Address and cidr are required when assignmentType is 'static'"
+                    "ipv4_address and cidr are required when assignment_type is 'static'"
                 )
         elif self.ipv4_address is not None or self.cidr is not None:
             raise ValueError(
-                "ipv4Address and cidr are only applicable when assignmentType is 'static'"
+                "ipv4_address and cidr are only applicable when assignment_type is 'static'"
             )
         return self
 
@@ -390,23 +434,35 @@ class VlanIpv4Update(_Input):
     """IPv4 settings of an existing VLAN interface (``ipv4`` member of the PATCH body)."""
 
     assignment_type: Literal["static", "dhcp"] | None = Field(
-        default=None, alias="assignmentType", description="IPv4 assignment type."
+        default=None,
+        validation_alias=AliasChoices("assignment_type", "assignmentType"),
+        serialization_alias="assignmentType",
+        description="IPv4 assignment type.",
     )
     ipv4_address: IPv4Address | None = Field(
-        default=None, alias="ipv4Address", description="Only applicable to a static assignment."
+        default=None,
+        validation_alias=AliasChoices("ipv4_address", "ipv4Address"),
+        serialization_alias="ipv4Address",
+        description="Only applicable to a static assignment.",
     )
     cidr: int | None = Field(default=None, ge=1, le=32, description="Static prefix length.")
     gateway_name: GatewayName | None = Field(
-        default=None, alias="gatewayName", description="Name of the gateway object."
+        default=None,
+        validation_alias=AliasChoices("gateway_name", "gatewayName"),
+        serialization_alias="gatewayName",
+        description="Name of the gateway object.",
     )
     gateway_ip_address: IPv4Address | None = Field(
-        default=None, alias="gatewayIpAddress", description="Static gateway address."
+        default=None,
+        validation_alias=AliasChoices("gateway_ip_address", "gatewayIpAddress"),
+        serialization_alias="gatewayIpAddress",
+        description="Static gateway address.",
     )
 
     @model_validator(mode="after")
     def _check_static_fields(self) -> Self:
         if self.assignment_type == "static" and (self.ipv4_address is None or self.cidr is None):
-            raise ValueError("ipv4Address and cidr are required when assignmentType is 'static'")
+            raise ValueError("ipv4_address and cidr are required when assignment_type is 'static'")
         return self
 
 
@@ -414,19 +470,35 @@ class VlanIpv6Create(_Input):
     """IPv6 settings of a new VLAN interface (``ipv6`` member of the create body)."""
 
     assignment_type: Literal["static", "dhcp"] = Field(
-        alias="assignmentType", description="IPv6 assignment type."
+        validation_alias=AliasChoices("assignment_type", "assignmentType"),
+        serialization_alias="assignmentType",
+        description="IPv6 assignment type.",
     )
     ipv6_address: IPv6Address | None = Field(
-        default=None, alias="ipv6Address", description="Required when assignmentType is static."
+        default=None,
+        validation_alias=AliasChoices("ipv6_address", "ipv6Address"),
+        serialization_alias="ipv6Address",
+        description="Required when assignment_type is static.",
     )
     prefix_length: int | None = Field(
-        default=None, alias="prefixLength", ge=1, le=128, description="Static prefix length."
+        default=None,
+        validation_alias=AliasChoices("prefix_length", "prefixLength"),
+        serialization_alias="prefixLength",
+        ge=1,
+        le=128,
+        description="Static prefix length.",
     )
     gateway_name: GatewayName | None = Field(
-        default=None, alias="gatewayName", description="Name of the gateway object."
+        default=None,
+        validation_alias=AliasChoices("gateway_name", "gatewayName"),
+        serialization_alias="gatewayName",
+        description="Name of the gateway object.",
     )
     gateway_ip_address: IPv6Address | None = Field(
-        default=None, alias="gatewayIpAddress", description="Static gateway address."
+        default=None,
+        validation_alias=AliasChoices("gateway_ip_address", "gatewayIpAddress"),
+        serialization_alias="gatewayIpAddress",
+        description="Static gateway address.",
     )
 
     @model_validator(mode="after")
@@ -434,11 +506,11 @@ class VlanIpv6Create(_Input):
         if self.assignment_type == "static":
             if self.ipv6_address is None or self.prefix_length is None:
                 raise ValueError(
-                    "ipv6Address and prefixLength are required when assignmentType is 'static'"
+                    "ipv6_address and prefix_length are required when assignment_type is 'static'"
                 )
         elif self.ipv6_address is not None or self.prefix_length is not None:
             raise ValueError(
-                "ipv6Address and prefixLength are only applicable when assignmentType is 'static'"
+                "ipv6_address and prefix_length are only applicable when assignment_type is 'static'"
             )
         return self
 
@@ -447,19 +519,36 @@ class VlanIpv6Update(_Input):
     """IPv6 settings of an existing VLAN interface (``ipv6`` member of the PATCH body)."""
 
     assignment_type: Literal["static", "dhcp"] | None = Field(
-        default=None, alias="assignmentType", description="IPv6 assignment type."
+        default=None,
+        validation_alias=AliasChoices("assignment_type", "assignmentType"),
+        serialization_alias="assignmentType",
+        description="IPv6 assignment type.",
     )
     ipv6_address: IPv6Address | None = Field(
-        default=None, alias="ipv6Address", description="Only applicable to a static assignment."
+        default=None,
+        validation_alias=AliasChoices("ipv6_address", "ipv6Address"),
+        serialization_alias="ipv6Address",
+        description="Only applicable to a static assignment.",
     )
     prefix_length: int | None = Field(
-        default=None, alias="prefixLength", ge=1, le=128, description="Static prefix length."
+        default=None,
+        validation_alias=AliasChoices("prefix_length", "prefixLength"),
+        serialization_alias="prefixLength",
+        ge=1,
+        le=128,
+        description="Static prefix length.",
     )
     gateway_name: GatewayName | None = Field(
-        default=None, alias="gatewayName", description="Name of the gateway object."
+        default=None,
+        validation_alias=AliasChoices("gateway_name", "gatewayName"),
+        serialization_alias="gatewayName",
+        description="Name of the gateway object.",
     )
     gateway_ip_address: IPv6Address | None = Field(
-        default=None, alias="gatewayIpAddress", description="Static gateway address."
+        default=None,
+        validation_alias=AliasChoices("gateway_ip_address", "gatewayIpAddress"),
+        serialization_alias="gatewayIpAddress",
+        description="Static gateway address.",
     )
 
     @model_validator(mode="after")
@@ -468,7 +557,7 @@ class VlanIpv6Update(_Input):
             self.ipv6_address is None or self.prefix_length is None
         ):
             raise ValueError(
-                "ipv6Address and prefixLength are required when assignmentType is 'static'"
+                "ipv6_address and prefix_length are required when assignment_type is 'static'"
             )
         return self
 
@@ -483,9 +572,16 @@ class NetworkInterfaceCreateVlanInput(_Input):
     """
 
     name: InterfaceName = Field(description="Name of the new VLAN interface.")
-    vlan_id: int = Field(ge=1, le=4094, alias="vlanId", description="VLAN ID (1-4094).")
+    vlan_id: int = Field(
+        ge=1,
+        le=4094,
+        validation_alias=AliasChoices("vlan_id", "vlanId"),
+        serialization_alias="vlanId",
+        description="VLAN ID (1-4094).",
+    )
     parent_interface: InterfaceName = Field(
-        alias="parentInterface",
+        validation_alias=AliasChoices("parent_interface", "parentInterface"),
+        serialization_alias="parentInterface",
         description=(
             "Existing interface the VLAN is created on. It is read first with "
             "getNetworkInterface: it must exist and must be a physical, vlan, bridge or "
@@ -506,7 +602,9 @@ class NetworkInterfaceUpdateVlanInput(_Input):
     """
 
     id_or_name: InterfaceRef = Field(
-        alias="idOrName", description="VLAN interface to update (name or UUID)."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="VLAN interface to update (name or UUID).",
     )
     name: InterfaceName | None = Field(default=None, description="New name of the interface.")
     zone: ZoneName | None = Field(default=None, description="Zone the VLAN belongs to.")
@@ -532,7 +630,11 @@ class NetworkInterfaceDeleteVlanInput(_Input):
     is the only enforcement of the VLAN-only rule.
     """
 
-    id_or_name: InterfaceRef = Field(alias="idOrName", description="VLAN interface name or UUID.")
+    id_or_name: InterfaceRef = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="VLAN interface name or UUID.",
+    )
 
 
 # -- Interfaces ------------------------------------------------------------------------

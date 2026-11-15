@@ -9,7 +9,8 @@ the invariants that only the whole surface can prove:
 * the full surface declares exactly 54 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
   exactly those, leaving 98 read-only tools and zero mutations;
 * every tool publishes an object-rooted output schema, a non-empty input schema and
-  ``openWorldHint=true``.
+  ``openWorldHint=true``;
+* every published input parameter name is snake_case (M1, the 0.5.0 breaking change).
 
 The curated file is read directly: it is the human decision record the server is built from,
 and ``tests/test_coverage.py`` already validates its structure against the contract.
@@ -147,3 +148,46 @@ async def test_every_tool_publishes_an_input_schema_and_an_open_world_hint() -> 
         assert annotations is not None, name
         assert annotations.title, name
         assert annotations.open_world_hint is True, name
+
+
+def resolve_ref(schema: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
+    """Follow a local ``$ref`` to the definition it names."""
+    while "$ref" in node:
+        node = schema["$defs"][node["$ref"].rsplit("/", 1)[-1]]
+    return node
+
+
+async def test_every_published_input_property_is_snake_case() -> None:
+    """M1 (0.5.0): the published MCP input names use one convention, snake_case.
+
+    The convention applies to the tool's own parameters -- the properties of the
+    ``request`` object the caller sends. The counting method is the one recorded in
+    ``PHASE-3-REVIEW.md``: classify each tool's ``request`` object's own ``properties``
+    (camelCase = any uppercase letter). Nested request-body models keep the Sophos
+    contract's field names and are serialized with ``by_alias=True``; they are the wire
+    body, not tool parameters.
+
+    There is no exception list: every published input property must be snake_case.
+    """
+    tools = await tools_by_name()
+
+    camel_case: dict[str, list[str]] = {}
+    scanned = 0
+    for name, tool in tools.items():
+        schema = tool.input_schema
+        request = schema.get("properties", {}).get("request")
+        if request is None:
+            continue
+        properties = resolve_ref(schema, request).get("properties", {})
+        if not properties:
+            # A union request (for example the address/MAC create payloads) publishes no
+            # own properties; its variants are nested request-body models.
+            continue
+        scanned += 1
+        offending = [prop for prop in properties if any(ch.isupper() for ch in prop)]
+        if offending:
+            camel_case[name] = offending
+
+    # Guard against a schema-shape change that would make the assertion vacuous.
+    assert scanned > 0
+    assert camel_case == {}

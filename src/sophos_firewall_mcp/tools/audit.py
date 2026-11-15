@@ -791,7 +791,7 @@ class AuditAdapter(DomainAdapter):
 
             async def fetch_ipv4(page: int) -> ListPage[FirewallRuleIpv4Output]:
                 return await adapter.list_ipv4(
-                    ListFirewallRulesInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                    ListFirewallRulesInput(page=page, page_size=PAGE_SIZE, page_total=True)
                 )
 
             rules_ipv4: list[FirewallRuleIpv4Output] = await self._walk(
@@ -802,7 +802,7 @@ class AuditAdapter(DomainAdapter):
 
             async def fetch_ipv6(page: int) -> ListPage[FirewallRuleIpv6Output]:
                 return await adapter.list_ipv6(
-                    ListFirewallRulesInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                    ListFirewallRulesInput(page=page, page_size=PAGE_SIZE, page_total=True)
                 )
 
             rules_ipv6: list[FirewallRuleIpv6Output] = await self._walk(
@@ -829,7 +829,7 @@ class AuditAdapter(DomainAdapter):
 
         async def fetch(page: int) -> ListPage[Zone]:
             payload = await adapter.page(
-                ZONES_PATH, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                ZONES_PATH, FilteredPageInput(page=page, page_size=PAGE_SIZE, page_total=True)
             )
             return _validated_page(payload, ListPage[Zone], "zones")
 
@@ -841,7 +841,7 @@ class AuditAdapter(DomainAdapter):
 
         async def fetch(page: int) -> ListPage[NetworkInterface]:
             payload = await adapter.page(
-                INTERFACES_PATH, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                INTERFACES_PATH, FilteredPageInput(page=page, page_size=PAGE_SIZE, page_total=True)
             )
             return _validated_page(payload, ListPage[NetworkInterface], "interfaces")
 
@@ -856,7 +856,7 @@ class AuditAdapter(DomainAdapter):
 
             async def fetch_ipv4(page: int) -> ListPage[GatewayIpv4]:
                 payload = await adapter.page(
-                    path, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                    path, FilteredPageInput(page=page, page_size=PAGE_SIZE, page_total=True)
                 )
                 return _validated_page(payload, ListPage[GatewayIpv4], "IPv4 gateways")
 
@@ -866,7 +866,7 @@ class AuditAdapter(DomainAdapter):
 
             async def fetch_ipv6(page: int) -> ListPage[GatewayIpv6]:
                 payload = await adapter.page(
-                    path, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                    path, FilteredPageInput(page=page, page_size=PAGE_SIZE, page_total=True)
                 )
                 return _validated_page(payload, ListPage[GatewayIpv6], "IPv6 gateways")
 
@@ -885,7 +885,7 @@ class AuditAdapter(DomainAdapter):
 
             async def fetch_ipv4(page: int) -> ListPage[UnicastRouteIpv4]:
                 payload = await adapter.page(
-                    path, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                    path, FilteredPageInput(page=page, page_size=PAGE_SIZE, page_total=True)
                 )
                 return _validated_page(payload, ListPage[UnicastRouteIpv4], "IPv4 routes")
 
@@ -897,7 +897,7 @@ class AuditAdapter(DomainAdapter):
 
             async def fetch_ipv6(page: int) -> ListPage[UnicastRouteIpv6]:
                 payload = await adapter.page(
-                    path, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                    path, FilteredPageInput(page=page, page_size=PAGE_SIZE, page_total=True)
                 )
                 return _validated_page(payload, ListPage[UnicastRouteIpv6], "IPv6 routes")
 

@@ -22,7 +22,7 @@ import pytest
 import respx
 import yaml
 from mcp import Client
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.models.common import validate_object_name_or_id  # noqa: F401
@@ -494,7 +494,7 @@ async def test_create_relative_position_requires_an_anchor(router: Any) -> None:
     )
 
     assert result.is_error is True
-    assert "referenceItem" in result.content[0].text
+    assert "reference_item" in result.content[0].text
     assert router.calls == []
 
 
@@ -730,7 +730,7 @@ async def test_move_relative_position_requires_an_anchor(router: Any) -> None:
     )
 
     assert result.is_error is True
-    assert "referenceItem" in result.content[0].text
+    assert "reference_item" in result.content[0].text
     assert router.calls == []
 
 
@@ -982,7 +982,7 @@ async def test_create_input_schema_is_closed_and_requires_position() -> None:
     assert schema["additionalProperties"] is False
     assert "position" in schema["required"]
     assert schema["properties"]["enabled"]["default"] is False
-    assert schema["properties"]["ruleType"]["const"] == "firewall"
+    assert schema["properties"]["rule_type"]["const"] == "firewall"
     assert schema["properties"]["position"]["enum"] == ["after", "before", "bottom", "top"]
 
 
@@ -1027,7 +1027,7 @@ def test_create_requires_a_position() -> None:
 
 
 def test_create_model_requires_an_anchor_for_relative_position() -> None:
-    with pytest.raises(ValidationError, match="referenceItem"):
+    with pytest.raises(ValidationError, match="reference_item"):
         CreateFirewallRuleIpv4Input(**{**MINIMAL_CREATE, "position": "after"})
 
 
@@ -1109,7 +1109,7 @@ def test_update_model_rejects_null_for_a_member_that_cannot_be_removed() -> None
 def test_update_allows_null_for_a_removable_member() -> None:
     model = UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", description=None)
 
-    assert model.model_dump(exclude_unset=True) == {
+    assert model.model_dump(by_alias=True, exclude_unset=True) == {
         "idOrName": "allow-lan-to-wan",
         "description": None,
     }
@@ -1118,7 +1118,9 @@ def test_update_allows_null_for_a_removable_member() -> None:
 def test_update_excludes_members_the_caller_did_not_set() -> None:
     model = UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", enabled=True)
 
-    assert model.model_dump(exclude_unset=True, exclude={"idOrName"}) == {"enabled": True}
+    assert model.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
+        "enabled": True
+    }
 
 
 def test_move_input_requires_a_name() -> None:
@@ -1191,6 +1193,11 @@ def _properties(schema: dict[str, Any]) -> set[str]:
     return set(schema.get("properties", {}))
 
 
+def _wire_names(model: type[BaseModel]) -> set[str]:
+    """The Sophos wire names the model serializes to (the contract's property names)."""
+    return {field.serialization_alias or name for name, field in model.model_fields.items()}
+
+
 def _resolve(node: dict[str, Any]) -> dict[str, Any]:
     """Resolve one local ``$ref`` against the audited document."""
     ref = node.get("$ref")
@@ -1211,12 +1218,12 @@ def test_create_models_cover_exactly_the_contract_properties() -> None:
         _properties(ipv4_variant["allOf"][0]),
         _properties(ipv4_variant["allOf"][1]),
     )
-    assert set(CreateFirewallRuleIpv4Input.model_fields) == rule_fields | position_fields
+    assert _wire_names(CreateFirewallRuleIpv4Input) == rule_fields | position_fields
 
     ipv6_schema = _spec()["paths"]["/firewall/rules/ipv6"]["post"]["requestBody"]["content"][
         "application/json"
     ]["schema"]["allOf"]
-    assert set(CreateFirewallRuleIpv6Input.model_fields) == (
+    assert _wire_names(CreateFirewallRuleIpv6Input) == (
         _properties(ipv6_schema[0]) | _properties(ipv6_schema[1])
     )
 
@@ -1229,15 +1236,13 @@ def test_update_models_cover_exactly_the_contract_properties() -> None:
         schema = _spec()["paths"][f"/firewall/rules/{family}/{{idOrName}}"]["patch"]["requestBody"][
             "content"
         ]["application/json"]["schema"]
-        assert set(model.model_fields) == _properties(schema) | {"idOrName"}
+        assert _wire_names(model) == _properties(schema) | {"idOrName"}
 
 
 def test_list_input_covers_exactly_the_contract_query_parameters() -> None:
     parameters = _spec()["paths"]["/firewall/rules/ipv4"]["get"]["parameters"]
 
-    assert set(ListFirewallRulesInput.model_fields) == {
-        parameter["name"] for parameter in parameters
-    }
+    assert _wire_names(ListFirewallRulesInput) == {parameter["name"] for parameter in parameters}
 
 
 def test_move_input_covers_exactly_the_contract_body() -> None:
@@ -1245,7 +1250,7 @@ def test_move_input_covers_exactly_the_contract_body() -> None:
         "application/json"
     ]["schema"]
 
-    assert set(MoveFirewallRuleInput.model_fields) == _properties(schema)
+    assert _wire_names(MoveFirewallRuleInput) == _properties(schema)
 
 
 def test_dscp_marking_enum_matches_the_contract() -> None:
