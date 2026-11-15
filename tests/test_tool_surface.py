@@ -219,8 +219,8 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
 
     The counts are pinned deliberately. 144 tools publish a ``request`` object (152 minus
     the 8 tools whose operation declares no parameters), and the walk reaches 1,495
-    property occurrences over 167 distinct names, to a maximum depth of five. A change to
-    any of those numbers means the published input surface changed and must be
+    property occurrences over 167 distinct names, at every depth the schema nests. A
+    change to any of those numbers means the published input surface changed and must be
     acknowledged here rather than silently shrinking the scan.
     """
     tools = await tools_by_name()
