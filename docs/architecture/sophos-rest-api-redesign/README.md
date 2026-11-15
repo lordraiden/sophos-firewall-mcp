@@ -9,6 +9,7 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 - [Acceso al laboratorio](./LAB-ACCESS.md): endpoint del appliance, API key de solo lectura, variables de entorno y advertencias. Credencial en claro por decisión del propietario; solo laboratorio.
 - [Informe de auditoría independiente](./INDEPENDENT_REVIEW_REPORT.md): revisión de 15 de noviembre de 2026 con baseline verificado, tabla de conformidad MCP/Sophos, hallazgos, cambios realizados en el plan y las issues, y evidencia pendiente del appliance.
 - [Prompt de revisión independiente](./INDEPENDENT_REVIEW_PROMPT.md): auditoría exhaustiva de la planificación y las issues frente al contrato Sophos, la especificación MCP y el SDK Python oficial.
+- [Prompts de ejecución](./execution/README.md): maestro, fases 1–3 y protocolo de revisión para ejecutar el plan con subagentes y Agent Teams de DSH.
 
 ## Estado
 
