@@ -860,6 +860,19 @@ async def test_live_user_list_accepts_an_empty_collection(router: Any):
     assert result.structured_content["items"] == []
 
 
+async def test_live_user_list_description_does_not_name_an_unregistered_tool():
+    """L2: in read-only mode `live_user_disconnect` is not registered, so it must not be named."""
+    read_only_tools = {tool.name: tool for tool in await make_server(read_only=True).list_tools()}
+    assert "live_user_disconnect" not in read_only_tools
+    description = read_only_tools["live_user_list"].description
+    assert "live_user_disconnect" not in description
+    assert "read-only mode" in description
+
+    writable_tools = {tool.name: tool for tool in await make_server().list_tools()}
+    assert "live_user_disconnect" in writable_tools
+    assert "live_user_disconnect" in writable_tools["live_user_list"].description
+
+
 async def test_live_user_disconnect_posts_the_documented_body(router: Any):
     route = router.post(f"{BASE}{LIVE_USERS_DISCONNECT_PATH}").mock(
         return_value=httpx.Response(200, json={"disconnected": True})
@@ -889,7 +902,7 @@ async def test_live_user_disconnect_posts_the_documented_body(router: Any):
     ("tool", "payload", "method", "path", "status", "fragment"),
     [
         ("user_list", {}, "GET", USERS_PATH, 400, "rejected the request as invalid"),
-        ("user_list", {}, "GET", USERS_PATH, 401, "not allowed"),
+        ("user_list", {}, "GET", USERS_PATH, 401, "authentication failed"),
         ("user_list", {}, "GET", USERS_PATH, 403, "not allowed"),
         ("user_list", {}, "GET", USERS_PATH, 500, "unexpected error"),
         ("network_user_list", {}, "GET", NETWORK_USERS_PATH, 403, "not allowed"),
@@ -933,7 +946,7 @@ async def test_live_user_disconnect_posts_the_documented_body(router: Any):
             "POST",
             LIVE_USERS_DISCONNECT_PATH,
             401,
-            "not allowed",
+            "authentication failed",
         ),
         (
             "live_user_disconnect",

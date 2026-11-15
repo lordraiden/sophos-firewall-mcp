@@ -425,7 +425,12 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "(`current`, `size`, `maxSize`, and `total`/`items` when returned). The contract "
             "declares no request pagination for this operation, so this tool exposes no page "
             "parameters and reports the metadata exactly as returned; it does not loop over "
-            "pages. Use `live_user_disconnect` to terminate one session."
+            "pages."
+            + (
+                " Use `live_user_disconnect` to terminate one session."
+                if not read_only
+                else " Terminating a session is not available in read-only mode."
+            )
         ),
     )
     async def live_user_list(

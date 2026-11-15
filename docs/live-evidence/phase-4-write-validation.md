@@ -433,15 +433,34 @@ thing. A regression test
 (`test_network_user_create_surfaces_the_appliance_error_code`) now pins both halves of that
 behaviour.
 
-### 11.3 Verification
+### 11.3 L2 — `live_user_list` no longer names an unregistered tool
+
+`docs/live-evidence/phase-4-feedback.md` L2: the `live_user_list` description ended with
+"Use `live_user_disconnect` to terminate one session", but `live_user_disconnect` is a
+mutation and is not registered in read-only mode, so an agent following the description would
+call an unknown tool.
+
+The sentence is now conditional on the mode: with mutations enabled it still points at
+`live_user_disconnect`; in read-only mode it says "Terminating a session is not available in
+read-only mode." No behaviour change. A regression test
+(`test_live_user_list_description_does_not_name_an_unregistered_tool`) asserts that the
+read-only tool list does not contain `live_user_disconnect` and that its name does not appear
+in the description.
+
+### 11.4 Verification
 
 | Check | Result |
 |---|---|
-| `pytest -q` (full suite) | 966 passed, 100 skipped, 0 failed |
-| `pytest tests/test_users_auth.py -q` | 124 passed |
+| `pytest -q` (full suite) | 1058 passed, 100 skipped, 0 failed |
+| `pytest tests/test_users_auth.py -q` | 125 passed |
 | `black --check` on the three changed files | unchanged |
 | `flake8` on the three changed files | clean |
 | `mypy` on the two changed source files | no issues |
 | Live create/update/delete with a real group | PASS (§11.1) |
 | Cleanup | baseline == final, zero `mcp-test` objects |
+
+The two 401 expectations in `tests/test_users_auth.py` were updated to the split wording
+introduced by the concurrent `fix-client` change (`ff02c22`): HTTP 401 now reads
+"authentication failed: the API key is missing, invalid or expired…", while HTTP 403 keeps
+"not allowed". The 403 expectations were left unchanged.
 
