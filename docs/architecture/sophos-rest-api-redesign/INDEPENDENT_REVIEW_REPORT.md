@@ -14,7 +14,7 @@
 
 **Confianza global: alta** en el contrato OpenAPI y en las afirmaciones MCP/SDK (verificadas contra el SDK 2.3.0 instalado, el `schema.ts` de 2026-07-28 y las páginas oficiales); **media** en el comportamiento del appliance, porque ningún dato procede de un firewall real.
 
-Se corrigieron **14 defectos de planificación** y **9 issues**. Los más importantes:
+Se corrigieron **21 defectos de planificación y de issues** (tabla completa en §3) y se enmendaron **las nueve issues**. Los más importantes:
 
 1. **Device access vs Local service ACL (crítico para el operador).** El plan decía que la regla de excepción de Local service ACL no era un sustituto de Device access y que se investigara "solo si el firewall tiene una política adicional". Sophos documenta lo contrario: la regla de excepción es el **único mecanismo documentado** para permitir acceso restringido desde WAN a la consola/API, vive dentro de Administration > Device access y exige IPs de origen concretas (no `Any`/`0.0.0.0`). Corregido en PLAN.md §2 y en la issue #25.
 2. **`openapi-python-client` desactualizado.** El plan exigía ≥0.29.1; el 7 de noviembre de 2026 se publicó GHSA-jg6c-wvfg-fx69, que afecta a 0.29.0–0.29.x y se corrige en **0.30.0**. Corregido en PLAN.md §6 y #24.
