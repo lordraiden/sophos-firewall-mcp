@@ -330,7 +330,7 @@ Los handlers reciben `Context[AppContext]` y acceden al objeto de lifespan media
 - Nombres/títulos/descripciones claros. Cada descripción debe explicar cuándo usar la herramienta, efecto/side effect, identificadores requeridos y limitaciones relevantes.
 - No publicar como parámetros argumentos internos como client, headers, contexto, host, URL, path o API Key.
 - No crear una herramienta separada solo por una diferencia invisible de implementación; separar IPv4/IPv6 cuando los contratos o el significado lo justifiquen.
-- No añadir opciones MCP, prompts, recursos o completions por inercia. Mantener únicamente recursos/prompts que aporten valor claro y estén actualizados.
+- No añadir opciones MCP, prompts, recursos o completions por inercia. Mantener únicamente recursos/prompts que aporten valor claro y estén actualizados. No introducir Roots, Sampling ni MCP protocol Logging en el nuevo diseño: están deprecados en la revisión actual; usar configuración explícita, tools/resources y logging estándar de Python hacia stderr/observabilidad del proceso.
 
 ## Output schemas y resultados
 
@@ -372,7 +372,7 @@ Eliminar FastEmbed y las herramientas meta route_tools/call_routed_tool en la pr
 - Documentar expiración de un año y rotación/revocación manual de la clave.
 - Respetar API Access allowlist y Device Access del firewall.
 - Usar permisos `None`/`Read-only`/`Read-write` por módulo en el perfil de administrador de Sophos cuando estén disponibles; no asumir que la granularidad de permisos del servidor MCP reemplaza las ACL del appliance. Todos los administradores pueden ver el inventario de API Keys; el administrador predeterminado puede eliminar claves de otros administradores, por lo que la operación debe documentar el impacto de revocación y la rotación de claves usadas por integraciones.
-- Evaluar un modo de servidor `SOPHOS_READ_ONLY_MODE=true` que no registre herramientas de mutación como defensa adicional para despliegues de consulta. Este modo no sustituye el perfil read-only de Sophos ni debe usarse como única barrera.
+- Implementar un modo de servidor opcional `SOPHOS_READ_ONLY_MODE=true` que no registre herramientas de mutación como defensa adicional para despliegues de consulta (default `false`). Este modo no sustituye el perfil `Read-only` de Sophos ni debe usarse como única barrera.
 - No ofrecer raw REST, arbitrary path ni operaciones que permitan saltarse schemas de herramientas.
 - En operaciones de escritura, validar referencias antes de mutar y devolver los IDs reales.
 - No hacer read-modify-write si PATCH permite modificar de forma segura los campos solicitados. Si es necesario, preservar las propiedades no modificadas y probarlo.
