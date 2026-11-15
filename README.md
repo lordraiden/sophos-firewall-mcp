@@ -259,7 +259,7 @@ The image is published to GHCR as **`ghcr.io/lordraiden/sophos-firewall-mcp`**.
 |---|---|
 | `0.4.0`, `0.4` | Stable release tags, published only from an approved release. |
 | `latest` | Moved **only** by an approved release promotion — never by a push to `main`. |
-| `main`, `<commit-sha>` | Development builds from `main`. Not a release; no stability guarantee. |
+| `main`, `sha-<short>` | Development builds from `main`. Not a release; no stability guarantee. |
 
 The container runs the server over STDIO: no TTY, no HTTP port, no health endpoint. Pass configuration as
 environment variables (or mount the key as a file) and keep `stdin` open.

@@ -221,12 +221,14 @@ owner asks. Record the rollback (date, reason, digests) in the release issue.
       (`uv run python scripts/generate_coverage.py --check`).
 - [ ] Live evidence recorded or explicitly deferred with a reason in `docs/live-evidence/`.
 - [ ] Publish workflow policy verified: pushes to `main` produce **development tags only** (`main`,
-      commit SHA) and **never** move `latest`; stable tags come only from a `v*` tag.
+      `sha-<short>`) and **never** move `latest`; the semver tags and `latest` come only from a `v*` tag
+      in the `release` job, which uses the `release` GitHub Environment (required reviewers).
       Check before tagging:
       ```bash
-      grep -n "latest" .github/workflows/docker-publish.yml
+      grep -n "latest\|environment:" .github/workflows/docker-publish.yml
       ```
-      The only `latest` reference must be gated on the release path, not on `refs/heads/main`.
+      `latest` must appear only in the `release` job (gated on `refs/tags/v*`), never in the
+      `development` job.
 
 ### 3.2 Tag the release
 
@@ -258,9 +260,10 @@ docker manifest inspect ghcr.io/lordraiden/sophos-firewall-mcp:0.4   > /dev/null
 
 ### 3.4 Promote `latest` (approved promotion only)
 
-`latest` is moved **only** by this approved promotion — never by a push to `main`. Prefer a GitHub
-Environment with required reviewers for this step if one is available; otherwise promote manually and
-record the digests.
+`latest` is moved **only** by this approved promotion — never by a push to `main`. The `release` job in
+`.github/workflows/docker-publish.yml` runs in the `release` GitHub Environment, so configure required
+reviewers there and let the workflow publish the semver tags and `latest`; promote manually only if that
+environment is unavailable, and record the digests.
 
 **Record the current `latest` digest first** — it is the rollback target (§2.4):
 
