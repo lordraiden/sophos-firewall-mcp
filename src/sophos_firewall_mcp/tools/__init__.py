@@ -61,7 +61,9 @@ The SDK validates a call against an argument model it derives from the handler s
 before the handler runs, and renders a failure with the raw pydantic dump: the internal
 argument-model name, the rejected input values and a documentation URL. :func:`register_tool`
 replaces that model with a closed, sanitized subclass, so an unknown argument is rejected
-instead of silently dropped and the model only sees the field path and the rule.
+instead of silently dropped and the model only sees the field path and the rule. The
+replacement reaches the registered tool through the SDK's private registry; see the seam
+note above :func:`_registered_tool` for the pinned version and the exact attributes.
 """
 
 from __future__ import annotations
@@ -72,6 +74,7 @@ from typing import Any, Callable, Protocol, Self, TypeVar, cast
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.tools import Tool
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, ValidationError
 
@@ -368,6 +371,41 @@ class _SanitizedArgumentError(ValidationError):
         return self._sanitized_message
 
 
+# -- Private SDK seam: closing a registered tool's argument model ----------------------
+#
+# Pinned SDK: mcp 2.3.0 (pyproject.toml declares mcp>=2.3.0,<3; uv.lock pins 2.3.0).
+#
+# mcp 2.3.0 exposes no public way to close the argument model of a tool that is already
+# registered:
+#   * MCPServer.add_tool() returns None, so the Tool it built is not handed back;
+#   * MCPServer.list_tools() returns the wire MCPTool, which carries the JSON schema but
+#     not the pydantic argument model;
+#   * MCPServer has no public get_tool();
+#   * Tool.from_function()/func_metadata() accept no argument-model override.
+# The only route is the private attribute below, so it is confined to one accessor.
+#
+# Exact private surface this module depends on (mcp 2.3.0):
+#   MCPServer._tool_manager       private attribute, set in MCPServer.__init__
+#   ToolManager.get_tool(name)    public method on that private object
+#   Tool.fn_metadata.arg_model    read by Tool.run -> FuncMetadata.validate_arguments
+#   Tool.parameters               returned as input_schema by MCPServer.list_tools
+# If any of these moves, _registered_tool raises and tests/test_server.py fails.
+def _registered_tool(server: MCPServer[AppContext], name: str) -> Tool | None:
+    """Return the SDK's internal ``Tool`` for ``name`` through the pinned private seam.
+
+    This is the only place in the package that touches ``MCPServer._tool_manager``; see
+    the seam note above for the pinned version and the exact attributes it relies on.
+    """
+    manager = getattr(server, "_tool_manager", None)
+    if manager is None:
+        raise RuntimeError(
+            "the pinned MCP SDK seam moved: MCPServer._tool_manager is missing (expected "
+            "mcp 2.3.0). Argument validation for every tool depends on it; see the seam "
+            "note in sophos_firewall_mcp.tools."
+        )
+    return cast(Tool | None, manager.get_tool(name))
+
+
 def _close_argument_model(server: MCPServer[AppContext], name: str) -> None:
     """Replace a registered tool's argument model with the closed, sanitized subclass.
 
@@ -378,10 +416,11 @@ def _close_argument_model(server: MCPServer[AppContext], name: str) -> None:
     published input schema, which was derived from the original model at registration.
 
     ``add_tool`` returns nothing, so the registered tool is read back through the SDK's
-    private tool manager. The access is deliberate and pinned: the argument-validation
-    tests fail if a future SDK stops exposing the model there.
+    private tool manager (:func:`_registered_tool`, the single accessor for that seam).
+    The access is deliberate and pinned: the argument-validation tests fail if a future
+    SDK stops exposing the model there.
     """
-    tool = server._tool_manager.get_tool(name)
+    tool = _registered_tool(server, name)
     if tool is None:  # pragma: no cover - add_tool registered it immediately above
         return
     tool.fn_metadata.arg_model = _sanitized_argument_model(tool.fn_metadata.arg_model)
