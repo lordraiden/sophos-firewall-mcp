@@ -12,10 +12,12 @@ It is not the Sophos Central Firewall Management API: the only backend is
 `https://<SOPHOS_HOST>:<SOPHOS_PORT>/api/firewall-config/v1` on the appliance itself, authenticated with a
 Bearer API key.
 
-> **0.4.0 is a breaking, REST-only release.** The XML API transport, the XML username/password
-> credentials, the raw XML tool, the semantic tool router and the FastEmbed dependency are removed.
-> There is no compatibility mode. See [`CHANGELOG.md`](CHANGELOG.md) and the
-> [release notes](docs/release/RELEASE-0.4.0.md).
+> **0.5.0 is the current release.** It unifies every published input parameter on snake_case (a
+> breaking change from 0.4.0) and fixes the defects found by exercising the server against a live
+> appliance. 0.4.0 was the breaking, REST-only migration: the XML transport, the XML credentials, the
+> raw XML tool, the semantic router and FastEmbed are gone, with no compatibility mode. See
+> [`CHANGELOG.md`](CHANGELOG.md), the [0.5.0 release notes](docs/release/RELEASE-0.5.0.md) and the
+> [0.4.0 release notes](docs/release/RELEASE-0.4.0.md).
 
 ---
 
@@ -183,7 +185,7 @@ Desktop's `claude_desktop_config.json`, or the equivalent in Cursor / Antigravit
         "-e", "SOPHOS_API_KEY",
         "-e", "SOPHOS_VERIFY_SSL",
         "-e", "SOPHOS_READ_ONLY_MODE",
-        "ghcr.io/lordraiden/sophos-firewall-mcp:0.4.0"
+        "ghcr.io/lordraiden/sophos-firewall-mcp:0.5.0"
       ],
       "env": {
         "SOPHOS_HOST": "192.168.1.1",
@@ -257,7 +259,7 @@ The image is published to GHCR as **`ghcr.io/lordraiden/sophos-firewall-mcp`**.
 
 | Tag | Meaning |
 |---|---|
-| `0.4.0`, `0.4` | Stable release tags, published only from an approved release. |
+| `0.5.0`, `0.5` | Stable release tags, published only from an approved release. |
 | `latest` | Moved **only** by an approved release promotion — never by a push to `main`. |
 | `main`, `sha-<short>` | Development builds from `main`. Not a release; no stability guarantee. |
 
@@ -272,7 +274,7 @@ docker run -i --rm \
   -e SOPHOS_API_KEY_FILE=/run/secrets/sophos_api_key \
   -e SOPHOS_VERIFY_SSL=true \
   -v "$PWD/sophos_api_key:/run/secrets/sophos_api_key:ro" \
-  ghcr.io/lordraiden/sophos-firewall-mcp:0.4.0
+  ghcr.io/lordraiden/sophos-firewall-mcp:0.5.0
 ```
 
 `docker-compose.yml` in this repository is a REST-only reference: it passes the same variables, keeps
@@ -364,8 +366,10 @@ documented in [`docs/live-evidence/README.md`](docs/live-evidence/README.md).
   access and phase reviews.
 - [Live evidence](docs/live-evidence/) — what was verified against a real appliance, and what was
   deferred with a reason.
-- [Release notes 0.4.0](docs/release/RELEASE-0.4.0.md) — breaking changes, rollback plan and publication
-  checklist.
+- [Release notes 0.5.0](docs/release/RELEASE-0.5.0.md) — the refinement release, its breaking input
+  naming, rollback plan and publication checklist.
+- [Release notes 0.4.0](docs/release/RELEASE-0.4.0.md) — the REST-only migration, rollback plan and
+  publication checklist.
 - [Changelog](CHANGELOG.md).
 
 ## License
