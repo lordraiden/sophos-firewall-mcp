@@ -143,6 +143,8 @@ Los handlers no deben construir URLs, headers ni payloads HTTP directamente. El 
 
 # 4. Alcance funcional: mapear primero, implementar solo lo justificado
 
+> **Nota (15 de noviembre de 2026):** el alcance v1 de la tabla siguiente fue ampliado por decisión del propietario (MAC con CRUD completo, country groups en lectura, escrituras de interfaz solo para VLAN, dominio de arquitectura de red, herramientas de auditoría #35 y enable/disable + clone en reglas de firewall). El alcance vigente está en [ADR-001 §10](../ADR-001-rest-client-strategy.md) y en [API-COVERAGE.md](../../API-COVERAGE.md) §4; esta tabla se conserva como decisión inicial y queda superada por las issues #24, #27, #29, #31 y #35.
+
 La referencia OpenAPI incluye muchos más módulos que las herramientas XML originales. La primera versión no tiene que exponer todo el catálogo. La Fase 0 debe inventariarlo por completo y seleccionar un alcance inicial coherente con las funciones actuales y las necesidades reales de administración.
 
 | Dominio | Cobertura a investigar | Decisión inicial |
