@@ -67,11 +67,11 @@ Para habilitar la API no basta con disponer de una API Key:
 
 1. Activar REST API access en Administration → API access.
 2. Añadir la IP, rango o red de origen a Allowed IP hosts.
-3. Comprobar Administration → Device access: la zona desde la que se conecta el administrador debe tener habilitado HTTPS (Web Admin Console) en Local service ACL o una excepción específica y restringida para esa IP/red. Esta condición es independiente de Allowed IP hosts.
-4. Crear un administrador dedicado con los permisos mínimos necesarios.
-5. Generar la API Key con ese administrador.
+3. Comprobar Administration → Device access: habilitar el servicio HTTPS (Web Admin Console) para la zona de origen del administrador. Sophos recomienda no habilitar la consola administrativa en interfaces WAN. Este control de acceso por zona es independiente de Allowed IP hosts. No tratar una regla/exception de Local service ACL como sustituto de Device access; investigar esas ACL por separado solo si el firewall local tiene una política de tráfico adicional que lo requiera.
+4. Crear un administrador dedicado con un perfil de permisos mínimos por funcionalidad.
+5. Generar una API Key exclusiva para esa automatización/servidor.
 
-Las API Keys heredan los permisos del perfil de administrador que las genera. Los perfiles permiten permisos `None`, `Read-only` y `Read-write` por configuración/función, de modo que el mínimo privilegio debe definirse a nivel de perfil y no limitarse a crear un administrador separado. Sophos documenta un máximo de 10 claves por administrador y 1.024 por appliance; la allowlist admite hasta 64 entradas. Las claves caducan al año y el secreto solo se muestra al generarlo. La rotación/revocación debe tratarse como una tarea administrativa manual; no asumir un endpoint de renovación. [R03] [R04] [R21] [R22]
+Las API Keys heredan los permisos del perfil de administrador que las genera. Los perfiles permiten `None`, `Read-only` y `Read-write` por configuración/función, de modo que el mínimo privilegio debe definirse en el perfil, no solo creando una cuenta separada. Sophos documenta un máximo de 10 claves por administrador y 1.024 por appliance; la allowlist admite hasta 64 entradas. Las claves caducan al año y el secreto solo se muestra al generarlo. Todos los administradores pueden ver la lista de claves; cada administrador puede crear/eliminar las propias y el administrador predeterminado puede eliminar las claves de cualquier administrador. No compartir claves entre administradores/automatizaciones. La rotación/revocación es una tarea administrativa manual; no asumir un endpoint de renovación. [R03] [R04] [R21] [R22] [R27]
 
 ## Firmware y limitaciones
 
@@ -261,6 +261,7 @@ Configuración recomendada:
 | SOPHOS_VERIFY_SSL | Verificación TLS; segura por defecto |
 | SOPHOS_CA_BUNDLE | CA privada opcional |
 | SOPHOS_TIMEOUT | Timeout configurable |
+| SOPHOS_READ_ONLY_MODE | Opcional; cuando true, no registrar herramientas de mutación |
 
 No definir SOPHOS_USERNAME, SOPHOS_PASSWORD ni SOPHOS_API_VERSION. Usar 4444 como default inicial porque aparece en la variable `servers.firewallHost` del YAML (172.16.16.16:4444) y coincide con el puerto admin HTTPS predeterminado de SFOS 23; permitir override obligatorio para instalaciones que hayan cambiado el puerto. No sustituir el puerto por un default codificado cuando el usuario ya lo configura.
 
@@ -356,7 +357,7 @@ Eliminar FastEmbed y las herramientas meta route_tools/call_routed_tool en la pr
 - Un administrador dedicado por automatización/servidor y permisos mínimos; no usar admin por conveniencia.
 - Documentar expiración de un año y rotación/revocación manual de la clave.
 - Respetar API Access allowlist y Device Access del firewall.
-- Usar permisos `None`/`Read-only`/`Read-write` por módulo en el perfil de administrador de Sophos cuando estén disponibles; no asumir que la granularidad de permisos del servidor MCP reemplaza las ACL del appliance.
+- Usar permisos `None`/`Read-only`/`Read-write` por módulo en el perfil de administrador de Sophos cuando estén disponibles; no asumir que la granularidad de permisos del servidor MCP reemplaza las ACL del appliance. Todos los administradores pueden ver el inventario de API Keys; el administrador predeterminado puede eliminar claves de otros administradores, por lo que la operación debe documentar el impacto de revocación y la rotación de claves usadas por integraciones.
 - Evaluar un modo de servidor `SOPHOS_READ_ONLY_MODE=true` que no registre herramientas de mutación como defensa adicional para despliegues de consulta. Este modo no sustituye el perfil read-only de Sophos ni debe usarse como única barrera.
 - No ofrecer raw REST, arbitrary path ni operaciones que permitan saltarse schemas de herramientas.
 - En operaciones de escritura, validar referencias antes de mutar y devolver los IDs reales.
