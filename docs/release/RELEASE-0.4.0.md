@@ -81,6 +81,9 @@ to a documented `operationId`; the mapping and every exclusion are recorded in
 - **Least privilege**: use a dedicated administrator with only the needed per-feature permissions; the
   API allowlist accepts at most 64 entries; keys are shown once, limited to 10 per administrator and
   1,024 per appliance, valid for one year, and rotated/revoked manually.
+- **Dependencies**: CI runs `pip-audit` against the locked runtime resolution (`uv export --locked
+  --no-dev`). The 0.4.0 lock bumps `certifi`, `cryptography` and `pyjwt` past their known advisories and
+  reports no known vulnerabilities.
 
 ### 1.5 Accepted regressions
 

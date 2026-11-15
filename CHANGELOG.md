@@ -77,6 +77,15 @@ outputs are new, so every existing client configuration and every saved tool cal
   model download, the `router` extra, the MCP resources and prompts, and the stale
   `requirements.txt` / `requirements-dev.txt` duplication.
 
+### Fixed
+
+- **Known dependency advisories in the locked runtime resolution.** `pip-audit` against
+  `uv export --locked --no-dev` reported 19 advisories in three transitive packages (via
+  `mcp`/`httpx`): `certifi` 2026.7.22 (PYSEC-2026-4320), `cryptography` 49.0.0 (PYSEC-2026-3552) and
+  `pyjwt` 2.13.0 (PYSEC-2026-4140…4152, 4183, GHSA-pxh4-856f-4h89). They are bumped to
+  `certifi` 2026.10.23, `cryptography` 50.0.2 and `pyjwt` 2.15.1; the audit now reports no known
+  vulnerabilities. No `pyproject.toml` constraint blocked the fix.
+
 ### Accepted regressions
 
 The REST contract does not expose these capabilities, so they are not migrated and no placeholder
