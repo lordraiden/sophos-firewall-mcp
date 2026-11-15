@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Annotated, Generic, TypeVar
 
-from pydantic import AfterValidator, BaseModel, ConfigDict
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 __all__ = [
     "ListPage",
@@ -41,15 +41,41 @@ class Pages(BaseModel):
     common fields, while ``total`` and ``items`` appear only when ``pageTotal=true`` (live
     observation, 2026-11-15). Every field is optional so an operation that omits one is not
     rejected; unknown fields are ignored rather than echoed.
+
+    ``total`` and ``items`` are easy to confuse, so each field carries a description that
+    reaches the published ``outputSchema``: ``total`` counts PAGES and ``items`` counts
+    ITEMS. A collection of 119 objects read with ``pageSize=10`` reports
+    ``{"current": 1, "size": 10, "maxSize": 100, "total": 12, "items": 119}``.
     """
 
     model_config = ConfigDict(extra="ignore")
 
-    current: int | None = None
-    size: int | None = None
-    maxSize: int | None = None  # noqa: N815 - the wire name is camelCase
-    total: int | None = None
-    items: int | None = None
+    current: int | None = Field(
+        default=None,
+        description="The current page number, 1-based.",
+    )
+    size: int | None = Field(
+        default=None,
+        description="The page size: the number of items one page may hold.",
+    )
+    maxSize: int | None = Field(  # noqa: N815 - the wire name is camelCase
+        default=None,
+        description="The maximum page size the appliance accepts for this operation.",
+    )
+    total: int | None = Field(
+        default=None,
+        description=(
+            "The number of PAGES in the collection, not the number of items: with "
+            "pageSize=10 and 119 objects, total is 12. Present only when pageTotal=true."
+        ),
+    )
+    items: int | None = Field(
+        default=None,
+        description=(
+            "The number of ITEMS in the whole collection, not the number of pages: with "
+            "pageSize=10 and 119 objects, items is 119. Present only when pageTotal=true."
+        ),
+    )
 
 
 ItemT = TypeVar("ItemT")

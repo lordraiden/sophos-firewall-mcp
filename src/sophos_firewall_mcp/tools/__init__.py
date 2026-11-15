@@ -64,6 +64,12 @@ replaces that model with a closed, sanitized subclass, so an unknown argument is
 instead of silently dropped and the model only sees the field path and the rule. The
 replacement reaches the registered tool through the SDK's private registry; see the seam
 note above :func:`_registered_tool` for the pinned version and the exact attributes.
+
+The same registration step documents the ``request`` wrapper: the SDK's single-argument
+convention is unusual for MCP, where flat arguments are the norm, and the domain
+descriptions only describe the inner fields. :func:`register_tool` appends one sentence to
+the description of every tool whose published input schema declares the wrapper, so the
+convention is explained once instead of in every domain module.
 """
 
 from __future__ import annotations
@@ -152,6 +158,17 @@ _ARGUMENT_RULES: dict[str, str] = {
     "string_too_short": "must be at least {min_length} characters long",
     "string_too_long": "must be at most {max_length} characters long",
 }
+
+#: Sentence appended to the description of every tool whose input schema declares the
+#: ``request`` wrapper. The wrapper is the SDK's single-argument convention and is unusual
+#: for MCP, where flat arguments are the norm, so a model that follows a description such
+#: as "Inputs: optional ip_family" calls the tool with flat arguments and is rejected with
+#: a bare "request is required". Explaining it once, centrally, keeps every domain
+#: description free of boilerplate and cannot drift from the published schema.
+_REQUEST_WRAPPER_NOTE = (
+    "Arguments are passed inside a `request` object, for example "
+    '`{"request": {"page": 1}}`, not at the top level.'
+)
 
 ToolHandlerT = TypeVar("ToolHandlerT", bound=Callable[..., Any])
 """A registered tool function: a typed ``async def`` with an optional ``Context``."""
@@ -269,6 +286,11 @@ def register_tool(
     sanitized, so a misspelled argument is reported instead of silently ignored and the
     model never sees the internal model name or a pydantic URL.
 
+    A tool that takes arguments also gets one sentence appended to its published
+    description explaining the ``request`` wrapper (see :data:`_REQUEST_WRAPPER_NOTE`).
+    The caller's ``description`` is not modified in place and no domain has to repeat the
+    sentence.
+
     Raises:
         ValueError: The metadata is invalid or the annotations contradict the kind.
     """
@@ -290,7 +312,8 @@ def register_tool(
             description=description,
             annotations=resolved_annotations,
         )
-        _close_argument_model(server, name)
+        tool = _close_argument_model(server, name)
+        _document_request_wrapper(tool)
         return fn
 
     return decorator
@@ -406,7 +429,7 @@ def _registered_tool(server: MCPServer[AppContext], name: str) -> Tool | None:
     return cast(Tool | None, manager.get_tool(name))
 
 
-def _close_argument_model(server: MCPServer[AppContext], name: str) -> None:
+def _close_argument_model(server: MCPServer[AppContext], name: str) -> Tool | None:
     """Replace a registered tool's argument model with the closed, sanitized subclass.
 
     The SDK derives one argument model per tool from the handler signature and validates
@@ -419,13 +442,34 @@ def _close_argument_model(server: MCPServer[AppContext], name: str) -> None:
     private tool manager (:func:`_registered_tool`, the single accessor for that seam).
     The access is deliberate and pinned: the argument-validation tests fail if a future
     SDK stops exposing the model there.
+
+    Returns:
+        The registered tool, so the caller can apply the remaining description-level
+        documentation without reading the seam twice.
     """
     tool = _registered_tool(server, name)
     if tool is None:  # pragma: no cover - add_tool registered it immediately above
-        return
+        return None
     tool.fn_metadata.arg_model = _sanitized_argument_model(tool.fn_metadata.arg_model)
     # The published schema must say what the runtime now enforces.
     tool.parameters = {**tool.parameters, "additionalProperties": False}
+    return tool
+
+
+def _document_request_wrapper(tool: Tool | None) -> None:
+    """Explain the ``request`` wrapper in the description of a tool that takes arguments.
+
+    The sentence is added centrally, from the published input schema, so no domain
+    description repeats it and it cannot drift from the schema: a tool whose schema
+    declares a ``request`` property gets the note, and a no-argument tool (whose schema
+    has no properties) is left alone. The wrapper itself is unchanged -- it is the SDK's
+    single-argument convention, not something this project can flatten.
+    """
+    if tool is None:  # pragma: no cover - add_tool registered it immediately above
+        return
+    if "request" not in tool.parameters.get("properties", {}):
+        return
+    tool.description = f"{tool.description} {_REQUEST_WRAPPER_NOTE}"
 
 
 def _sanitized_argument_model(model: type[ModelT]) -> type[ModelT]:

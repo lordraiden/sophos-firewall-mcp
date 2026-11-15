@@ -40,6 +40,7 @@ from sophos_firewall_mcp.errors import (
     SophosTransportError,
     SophosValidationError,
 )
+from sophos_firewall_mcp.models.common import ListPage, ObjectRef
 from sophos_firewall_mcp.server import (
     INSTRUCTIONS,
     SERVER_NAME,
@@ -47,6 +48,7 @@ from sophos_firewall_mcp.server import (
     create_server_from_env,
 )
 from sophos_firewall_mcp.tools import (
+    _REQUEST_WRAPPER_NOTE,
     DomainAdapter,
     ToolKind,
     _registered_tool,
@@ -191,6 +193,21 @@ def register_error_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         _SLOW_STARTED.set()
         await asyncio.Event().wait()
         return EmptyOutput(value="never")
+
+
+def register_pages_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
+    """One read-only tool whose output carries the shared ``Pages`` metadata."""
+
+    @register_tool(
+        server,
+        read_only=read_only,
+        kind=ToolKind.READ,
+        name="sophos_synthetic_page",
+        title="Return one page",
+        description="Returns one page of object references for the output-schema tests.",
+    )
+    async def page(request: EchoInput) -> ListPage[ObjectRef]:
+        return ListPage[ObjectRef](items=[ObjectRef(name=request.name)])
 
 
 # -- Helpers ---------------------------------------------------------------------------
@@ -460,6 +477,23 @@ async def test_output_schema_is_object_rooted_and_typed():
     assert schema is not None
     assert schema["type"] == "object"
     assert set(schema["required"]) == {"name", "read_only", "client_id", "context_id"}
+
+
+async def test_published_output_schema_documents_the_pages_semantics():
+    """L1: the ``Pages`` field descriptions must reach the published outputSchema."""
+    server = create_server(make_settings(), domains=[register_pages_tools])
+    tool = (await tools_by_name(server))["sophos_synthetic_page"]
+
+    schema = tool.output_schema
+    assert schema is not None
+    pages = schema["$defs"]["Pages"]["properties"]
+
+    assert "current page" in pages["current"]["description"]
+    assert "page size" in pages["size"]["description"]
+    assert "maximum page size" in pages["maxSize"]["description"]
+    # The trap the finding records: ``total`` is pages, ``items`` is items.
+    assert "number of PAGES" in pages["total"]["description"]
+    assert "number of ITEMS" in pages["items"]["description"]
 
 
 def test_register_tool_rejects_invalid_metadata():
@@ -850,6 +884,61 @@ async def test_published_input_schema_rejects_unknown_arguments():
 
     echo = next(tool for tool in tools if tool.name == "sophos_synthetic_echo")
     assert echo.input_schema["additionalProperties"] is False
+
+
+# -- The ``request`` wrapper (M10) -----------------------------------------------------
+#
+# The wrapper is the SDK's single-argument convention and is unusual for MCP, where flat
+# arguments are the norm. ``register_tool`` appends one sentence to the description of
+# every tool whose published input schema declares it, so no domain has to repeat it.
+
+
+async def test_tool_description_explains_the_request_wrapper():
+    """M10: a tool that takes arguments says how to pass them."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+    tools = await tools_by_name(server)
+
+    description = tools["sophos_synthetic_echo"].description
+
+    # The domain description is kept and the sentence is appended, not substituted.
+    assert description.startswith("Read-only synthetic tool")
+    assert description.endswith(
+        "Arguments are passed inside a `request` object, for example "
+        '`{"request": {"page": 1}}`, not at the top level.'
+    )
+    # The wrapper itself is unchanged: it is still the single required argument.
+    assert tools["sophos_synthetic_echo"].input_schema["required"] == ["request"]
+
+
+async def test_no_argument_tool_description_does_not_mention_the_request_wrapper():
+    """M10: a tool with no arguments has no wrapper to explain."""
+    server = create_server(make_settings(), domains=[register_error_tools])
+    tools = await tools_by_name(server)
+
+    description = tools["sophos_test_tool_error"].description
+
+    assert description == "Raises an anticipated ToolError for the error-semantics tests."
+    assert _REQUEST_WRAPPER_NOTE not in description
+
+
+async def test_every_tool_that_takes_arguments_documents_the_request_wrapper():
+    """M10: the sentence is applied centrally, so no domain module can forget it."""
+    server = create_server(make_settings())
+    tools = await tools_by_name(server)
+
+    with_arguments = [
+        tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
+    ]
+    without_arguments = [
+        tool for tool in tools.values() if "request" not in tool.input_schema.get("properties", {})
+    ]
+
+    assert with_arguments, "the default domains must register tools that take arguments"
+    assert without_arguments, "the default domains must register no-argument tools"
+    for tool in with_arguments:
+        assert tool.description.endswith(_REQUEST_WRAPPER_NOTE), tool.name
+    for tool in without_arguments:
+        assert _REQUEST_WRAPPER_NOTE not in tool.description, tool.name
 
 
 # -- Private SDK seam (L4) -------------------------------------------------------------

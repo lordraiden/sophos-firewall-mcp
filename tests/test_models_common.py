@@ -40,6 +40,40 @@ def test_pages_fields_are_optional():
     assert pages.maxSize is None
 
 
+def test_pages_fields_document_their_semantics():
+    """L1: ``total`` counts pages and ``items`` counts items, and the model says so."""
+    fields = Pages.model_fields
+
+    assert "current page" in fields["current"].description
+    assert "page size" in fields["size"].description
+    assert "maximum page size" in fields["maxSize"].description
+    # The trap: ``total`` is the page count and ``items`` is the item count.
+    assert "number of PAGES" in fields["total"].description
+    assert "not the number of items" in fields["total"].description
+    assert "number of ITEMS" in fields["items"].description
+    assert "not the number of pages" in fields["items"].description
+
+
+def test_pages_descriptions_reach_the_published_json_schema():
+    """L1: the descriptions must be in the schema a client publishes, not just the model."""
+    properties = Pages.model_json_schema()["properties"]
+
+    assert set(properties) == {"current", "size", "maxSize", "total", "items"}
+    for name, schema in properties.items():
+        assert schema.get("description"), f"{name} must be documented in the schema"
+    assert "PAGES" in properties["total"]["description"]
+    assert "ITEMS" in properties["items"]["description"]
+
+
+def test_list_page_output_schema_carries_the_pages_descriptions():
+    """L1: ``Pages`` is nested in ``ListPage``, so the descriptions must survive nesting."""
+    pages = ListPage[ObjectRef].model_json_schema()["$defs"]["Pages"]["properties"]
+
+    assert "PAGES" in pages["total"]["description"]
+    assert "ITEMS" in pages["items"]["description"]
+    assert "page size" in pages["size"]["description"]
+
+
 def test_list_page_validates_items_and_keeps_pages():
     page = ListPage[ObjectRef].model_validate(
         {"items": [{"name": "LAN"}, {"name": "WAN", "extra": 1}], "pages": {"current": 1}}
