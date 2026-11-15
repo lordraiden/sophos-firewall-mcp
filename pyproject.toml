@@ -66,6 +66,8 @@ include = ["sophos_firewall_mcp*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Explicit so pytest-asyncio does not emit its deprecation warning on every run.
+asyncio_default_fixture_loop_scope = "function"
 pythonpath = ["src"]
 testpaths = ["tests"]
 markers = [

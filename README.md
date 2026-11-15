@@ -7,6 +7,13 @@
 
 An asynchronous [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for Sophos Firewall (SFOS), enabling AI assistants (such as Antigravity IDE, Claude Desktop, VS Code, and Cursor) to manage, audit, and troubleshoot Sophos Firewall network security infrastructure.
 
+> **Migration status (phase 1, REST).** The server is being rebuilt against the Sophos Firewall
+> Configuration REST API; the XML transport has been removed. The user-facing setup sections below
+> still describe the former XML server and are rewritten in #32. For the current configuration see
+> [`.env.example`](.env.example): `SOPHOS_HOST`, `SOPHOS_PORT`, exactly one of `SOPHOS_API_KEY` /
+> `SOPHOS_API_KEY_FILE`, `SOPHOS_VERIFY_SSL` (default `true`), `SOPHOS_CA_BUNDLE`, `SOPHOS_TIMEOUT`
+> and `SOPHOS_READ_ONLY_MODE`. See the [redesign documentation](docs/architecture/sophos-rest-api-redesign/README.md).
+
 ---
 
 ## 🌟 Key Features
@@ -239,13 +246,10 @@ When enabled:
 
 ## 🧪 Testing & Quality Assurance
 
-Run the comprehensive test suite, linting, mypy type checks, and TDQS audit:
+Run the comprehensive test suite, linting and mypy type checks:
 
 ```bash
-# Evaluate Tool Definition Quality Score (TDQS)
-uv run python scripts/check_tdqs.py
-
-# Run pytest unit test suite (39 tests)
+# Run pytest unit test suite
 uv run pytest -v
 
 # Code style and syntax linting

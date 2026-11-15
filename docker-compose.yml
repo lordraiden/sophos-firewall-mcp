@@ -8,12 +8,12 @@ services:
     environment:
       - SOPHOS_HOST=${SOPHOS_HOST:-192.168.1.1}
       - SOPHOS_PORT=${SOPHOS_PORT:-4444}
-      - SOPHOS_USERNAME=${SOPHOS_USERNAME:-admin}
-      - SOPHOS_PASSWORD=${SOPHOS_PASSWORD}
-      - SOPHOS_API_VERSION=${SOPHOS_API_VERSION:-2200.1}
-      - SOPHOS_VERIFY_SSL=${SOPHOS_VERIFY_SSL:-false}
+      # Exactly one of SOPHOS_API_KEY / SOPHOS_API_KEY_FILE is required.
+      - SOPHOS_API_KEY=${SOPHOS_API_KEY:-}
+      - SOPHOS_API_KEY_FILE=${SOPHOS_API_KEY_FILE:-}
+      - SOPHOS_VERIFY_SSL=${SOPHOS_VERIFY_SSL:-true}
+      - SOPHOS_CA_BUNDLE=${SOPHOS_CA_BUNDLE:-}
       - SOPHOS_TIMEOUT=${SOPHOS_TIMEOUT:-30}
-      - USE_ROUTER=${USE_ROUTER:-false}
+      - SOPHOS_READ_ONLY_MODE=${SOPHOS_READ_ONLY_MODE:-false}
     restart: unless-stopped
     stdin_open: true
-    tty: true
