@@ -255,7 +255,10 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "rules with their match and translation fields projected to object references, "
             "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
             "plus the page metadata. Use page/page_size to walk the rule base; one page per "
-            "call. name_contains and name_not_equals are mutually exclusive."
+            "call, and page_size defaults to 10. name_contains and name_not_equals are "
+            "mutually exclusive. Size: the lab appliance's 28-rule base is ~44 KB of JSON, "
+            "so keep page_size small. The MCP SDK returns the payload both as a text block "
+            "and as structuredContent; read one of them, not both."
         ),
     )
     async def nat_rule_list_ipv4(
@@ -372,7 +375,10 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "rules with their match and translation fields projected to object references, "
             "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
             "plus the page metadata. Use page/page_size to walk the rule base; one page per "
-            "call. name_contains and name_not_equals are mutually exclusive."
+            "call, and page_size defaults to 10. name_contains and name_not_equals are "
+            "mutually exclusive. Size: the lab appliance's 28-rule base is ~44 KB of JSON, "
+            "so keep page_size small. The MCP SDK returns the payload both as a text block "
+            "and as structuredContent; read one of them, not both."
         ),
     )
     async def nat_rule_list_ipv6(

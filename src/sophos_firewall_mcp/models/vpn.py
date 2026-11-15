@@ -209,16 +209,22 @@ class VpnPageInput(_Input):
     The bounds mirror the contract and the client-side validation: ``page >= 1`` and
     ``1 <= pageSize <= 100``. Only the operations whose contract declares
     ``page``/``pageSize``/``pageTotal`` accept this model.
+
+    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    context, and the caller raises it explicitly when it wants a bigger page.
     """
 
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(
-        default=50,
+        default=10,
         ge=1,
         le=100,
         validation_alias=AliasChoices("page_size", "pageSize"),
         serialization_alias="pageSize",
-        description="Page size, 1-100.",
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; raise it "
+            "explicitly for a bigger page."
+        ),
     )
     page_total: bool = Field(
         default=False,

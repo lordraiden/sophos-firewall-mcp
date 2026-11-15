@@ -2101,3 +2101,33 @@ async def test_audit_tool_descriptions_state_their_limits() -> None:
     for name in AUDIT_TOOLS:
         assert tools[name].title
         assert tools[name].description
+
+
+async def test_audit_description_states_the_two_finding_shapes(router: Any) -> None:
+    """L3: object-scoped findings carry the object, not the rule, and the description says so."""
+    tools = await tool_map()
+    description = tools["audit_firewall_rules"].description
+    assert "rule-scoped finding" in description
+    assert "object- or NAT-scoped finding" in description
+    assert "leaves the rule fields null" in description
+
+    # The published shape matches the description: an unused-object finding has no rule.
+    install(
+        router,
+        {
+            RULES_V4: page([firewall_rule(name="r1")]),
+            ADDR_V4: page([ipv4_address(name="orphan")]),
+            SERVICES: page([]),
+        },
+    )
+
+    result = await call_tool(
+        "audit_firewall_rules", {"checks": ["unused-object"], "ip_family": "ipv4"}
+    )
+
+    finding = result.structured_content["findings"][0]
+    assert finding["check"] == "unused-object"
+    assert finding["evidence"]["rule_name"] is None
+    assert finding["evidence"]["rule_id"] is None
+    assert finding["evidence"]["position"] is None
+    assert finding["evidence"]["object_name"] == "orphan"

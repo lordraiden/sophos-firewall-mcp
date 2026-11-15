@@ -46,6 +46,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     model_validator,
 )
 
@@ -57,6 +58,7 @@ from sophos_firewall_mcp.models.common import (
     validate_object_name,
     validate_object_name_or_id,
 )
+from sophos_firewall_mcp.models.objects import serialize_epoch_sentinel
 
 __all__ = [
     "AnySelection",
@@ -227,9 +229,20 @@ class _ClosedModel(BaseModel):
 
 
 class _WireModel(BaseModel):
-    """Base for appliance payload projections: unknown members are ignored, never echoed."""
+    """Base for appliance payload projections: unknown members are ignored, never echoed.
+
+    The epoch "never" sentinel is published as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
+    """
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
 
 def _require_anchor(position: RulePosition, reference_item: ObjectReference | None) -> None:
@@ -950,15 +963,23 @@ class ListFirewallRulesInput(_ClosedModel):
     ``name_contains`` and ``name_not_equals`` are mutually exclusive in the contract, so at
     most one may be supplied. Pagination is one explicit page per call; the adapter never
     walks the collection automatically.
+
+    ``page_size`` defaults to 10 (M11): a firewall rule is a large object (the lab
+    appliance's 48-rule base is ~70 KB of JSON), so a default call must stay small and the
+    caller raises the page size explicitly when it wants a bigger page.
     """
 
     page: int = Field(default=1, ge=1)
     page_size: int = Field(
-        default=50,
+        default=10,
         ge=1,
         le=100,
         validation_alias=AliasChoices("page_size", "pageSize"),
         serialization_alias="pageSize",
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; a firewall "
+            "rule is a large object, so raise it deliberately."
+        ),
     )
     page_total: bool = Field(
         default=False,

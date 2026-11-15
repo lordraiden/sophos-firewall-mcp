@@ -221,7 +221,7 @@ async def test_list_ipv6_contract(router: Any) -> None:
     result = await call(make_server(), "firewall_rule_list_ipv6", {"page": 3, "pageTotal": True})
 
     assert result.is_error is False
-    assert query_of(route) == {"page": "3", "pageSize": "50", "pageTotal": "true"}
+    assert query_of(route) == {"page": "3", "pageSize": "10", "pageTotal": "true"}
     output = result.structured_content
     assert output is not None
     assert output["items"][0]["ipFamily"] == "ipv6"
@@ -240,7 +240,7 @@ async def test_list_applies_name_not_equals_filter(router: Any) -> None:
     assert query_of(route) == {
         "nameNotEquals": "blocked",
         "page": "1",
-        "pageSize": "50",
+        "pageSize": "10",
         "pageTotal": "false",
     }
 
@@ -1459,3 +1459,31 @@ def test_nested_input_models_publish_snake_case_and_serialize_to_the_wire_names(
 
     # The camelCase spelling is still accepted on input, so the alias is a choice.
     assert CreateFirewallRuleIpv4Input(**MINIMAL_CREATE).position == "bottom"
+
+
+# -- Phase-5 polish: default page size, output size and the duplicated payload ----------
+
+
+def test_list_input_defaults_to_ten() -> None:
+    """M11: a firewall rule is large, so the default page must stay small."""
+    parsed = ListFirewallRulesInput()
+
+    assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+    description = ListFirewallRulesInput.model_json_schema()["properties"]["page_size"][
+        "description"
+    ]
+    assert "Defaults to 10" in description
+    # The bounds are unchanged: this is a default, not a schema break.
+    assert ListFirewallRulesInput(page_size=100).page_size == 100
+
+
+async def test_list_descriptions_state_the_page_size_and_the_duplicated_payload() -> None:
+    """M11/L7: the size of a full page and the SDK's double payload are documented."""
+    tools = {tool.name: tool for tool in await make_server().list_tools()}
+
+    for name in ("firewall_rule_list_ipv4", "firewall_rule_list_ipv6"):
+        description = tools[name].description
+        assert "page_size defaults to 10" in description, name
+        assert "~70 KB" in description, name
+        assert "structuredContent" in description, name
+        assert "read one of them, not both" in description, name

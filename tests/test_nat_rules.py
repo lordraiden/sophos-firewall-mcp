@@ -326,7 +326,7 @@ async def test_list_ipv6_sends_default_pagination(router: Any):
     assert result.is_error is False
     request = route.calls.last.request
     assert request.url.params["page"] == "1"
-    assert request.url.params["pageSize"] == "50"
+    assert request.url.params["pageSize"] == "10"
     assert request.url.params["pageTotal"] == "false"
     assert result.structured_content["pages"] is None
     assert result.structured_content["items"][0]["name"] == "outbound-masq-v6"
@@ -943,7 +943,7 @@ def test_id_or_name_accepts_names_and_uuids_but_not_path_escapes():
 
 def test_list_input_validates_pagination_and_filters():
     defaults = NatRuleListInput()
-    assert (defaults.page, defaults.page_size, defaults.page_total) == (1, 50, False)
+    assert (defaults.page, defaults.page_size, defaults.page_total) == (1, 10, False)
 
     with pytest.raises(ValidationError):
         NatRuleListInput(page=0)
@@ -1307,3 +1307,29 @@ def test_project_nat_rule_page_does_not_invent_pages():
 def test_output_models_are_object_rooted():
     assert NatRuleOutput.model_json_schema()["type"] == "object"
     assert NatRuleDeleteInput.model_json_schema()["type"] == "object"
+
+
+# -- Phase-5 polish: default page size, output size and the duplicated payload ----------
+
+
+def test_list_input_defaults_to_ten() -> None:
+    """M11: a NAT rule is large, so the default page must stay small."""
+    parsed = NatRuleListInput()
+
+    assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+    description = NatRuleListInput.model_json_schema()["properties"]["page_size"]["description"]
+    assert "Defaults to 10" in description
+    # The bounds are unchanged: this is a default, not a schema break.
+    assert NatRuleListInput(page_size=100).page_size == 100
+
+
+async def test_list_descriptions_state_the_page_size_and_the_duplicated_payload() -> None:
+    """M11/L7: the size of a full page and the SDK's double payload are documented."""
+    tools = await tools_by_name()
+
+    for name in ("nat_rule_list_ipv4", "nat_rule_list_ipv6"):
+        description = tools[name].description
+        assert "page_size defaults to 10" in description, name
+        assert "~44 KB" in description, name
+        assert "structuredContent" in description, name
+        assert "read one of them, not both" in description, name

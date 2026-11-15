@@ -45,9 +45,17 @@ import re
 from datetime import datetime
 from typing import Annotated, Any, Literal, Mapping
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    model_validator,
+)
 
 from sophos_firewall_mcp.models.common import ListPage, ObjectRef, validate_object_name
+from sophos_firewall_mcp.models.objects import serialize_epoch_sentinel
 
 __all__ = [
     "HealthCheckProtocol",
@@ -489,13 +497,23 @@ class NatRuleListInput(BaseModel):
 
     One page per call. ``nameContains`` and ``nameNotEquals`` are documented as mutually
     exclusive, so at most one may be set.
+
+    ``page_size`` defaults to 10 (M11): a NAT rule is a large object (the lab appliance's
+    28-rule base is ~44 KB of JSON), so a default call must stay small and the caller raises
+    the page size explicitly when it wants a bigger page.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(
-        default=50, ge=1, le=100, description="Page size; the appliance rejects values above 100."
+        default=10,
+        ge=1,
+        le=100,
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; a NAT rule is "
+            "a large object, so raise it deliberately. The appliance rejects values above 100."
+        ),
     )
     page_total: bool = Field(
         default=False,
@@ -908,8 +926,17 @@ class NatRuleOutput(BaseModel):
     This is the explicit, bounded projection the tools publish: the field names are the
     appliance's wire names, object references keep the ``{"name": …}`` shape, and no raw
     Sophos payload is returned. ``kind`` is derived from the populated translation (M13) and
-    ``position`` is derived by the list tools (M12).
+    ``position`` is derived by the list tools (M12). The epoch "never" sentinel is
+    published as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
     """
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
     id: str = Field(description="UUID of the NAT rule.")
     name: str

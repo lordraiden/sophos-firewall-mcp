@@ -38,10 +38,12 @@ from pydantic import (
     ConfigDict,
     Field,
     SecretStr,
+    field_serializer,
     model_validator,
 )
 
 from sophos_firewall_mcp.models.common import ListPage, validate_object_name
+from sophos_firewall_mcp.models.objects import serialize_epoch_sentinel
 
 __all__ = [
     "LIVE_USER_CLIENT_TYPES",
@@ -195,6 +197,9 @@ class _NameFilterPageInput(BaseModel):
 
     Shared by ``getUsers`` and ``getNetworkUsers``; the two operations have the same query
     contract but expose different resources, so each keeps its own public subclass.
+
+    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    context, and the caller raises it explicitly when it wants a bigger page.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -205,10 +210,13 @@ class _NameFilterPageInput(BaseModel):
         description="1-based page number. The contract declares a minimum of 1.",
     )
     page_size: int = Field(
-        default=50,
+        default=10,
         ge=1,
         le=100,
-        description="Page size; the contract declares a maximum of 100.",
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; raise it "
+            "explicitly for a bigger page. The contract declares a maximum of 100."
+        ),
     )
     page_total: bool = Field(
         default=False,
@@ -551,8 +559,17 @@ class UserSummaryOutput(BaseModel):
 
     This is the contract's *basic summary*, not a network-user detail: it has no policies
     and no VPN access. The field names are the appliance's wire names (camelCase), like
-    every other output projection in this server.
+    every other output projection in this server. The epoch "never" sentinel is published
+    as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
     """
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
     id: str = Field(description="Unique identifier (UUID).")
     name: str
@@ -608,7 +625,18 @@ class NetworkUserVpnAccessOutput(BaseModel):
 
 
 class NetworkUserOutput(BaseModel):
-    """One network-user account, without any credential material."""
+    """One network-user account, without any credential material.
+
+    The epoch "never" sentinel is published as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
+    """
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
     id: str = Field(description="Unique identifier (UUID).")
     name: str = Field(description="Unique login name.")

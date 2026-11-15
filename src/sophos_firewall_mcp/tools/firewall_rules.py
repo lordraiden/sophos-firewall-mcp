@@ -433,10 +433,14 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "List one page of IPv4 firewall rules (getAllFirewallRulesIpv4). Returns at "
             "most pageSize rules plus the appliance's pages metadata; it never walks the "
-            "collection automatically. Filter by name with nameContains or nameNotEquals "
-            "(mutually exclusive). Each rule carries its 1-based evaluation position, "
-            "derived from the page offset and its index in the returned page. WAF rules "
-            "are out of scope: they are omitted and counted in wafRulesSkipped. Read-only."
+            "collection automatically. page_size defaults to 10. Filter by name with "
+            "nameContains or nameNotEquals (mutually exclusive). Each rule carries its "
+            "1-based evaluation position, derived from the page offset and its index in the "
+            "returned page. WAF rules are out of scope: they are omitted and counted in "
+            "wafRulesSkipped. Size: the lab appliance's 48-rule base is ~70 KB of JSON, so "
+            "keep page_size small and page through the collection. The MCP SDK returns the "
+            "payload both as a text block and as structuredContent; read one of them, not "
+            "both. Read-only."
         ),
     )
     async def firewall_rule_list_ipv4(
@@ -453,9 +457,13 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "List one page of IPv6 firewall rules (getAllFirewallRulesIpv6). Returns at "
             "most pageSize rules plus the appliance's pages metadata; it never walks the "
-            "collection automatically. Filter by name with nameContains or nameNotEquals "
-            "(mutually exclusive). Each rule carries its 1-based evaluation position, "
-            "derived from the page offset and its index in the returned page. Read-only."
+            "collection automatically. page_size defaults to 10. Filter by name with "
+            "nameContains or nameNotEquals (mutually exclusive). Each rule carries its "
+            "1-based evaluation position, derived from the page offset and its index in the "
+            "returned page. Size: the lab appliance's 48-rule base is ~70 KB of JSON, so "
+            "keep page_size small and page through the collection. The MCP SDK returns the "
+            "payload both as a text block and as structuredContent; read one of them, not "
+            "both. Read-only."
         ),
     )
     async def firewall_rule_list_ipv6(

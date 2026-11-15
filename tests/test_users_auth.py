@@ -235,7 +235,7 @@ def test_page_input_defaults_match_the_contract():
     for model in (UserListInput, NetworkUserListInput):
         parsed = model()
 
-        assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 50, False)
+        assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
         assert parsed.name_contains is None
         assert parsed.name_not_equals is None
 
@@ -673,7 +673,7 @@ async def test_user_list_omits_optional_query_parameters(router: Any):
     await call(make_server(), "user_list", {})
 
     params = dict(route.calls.last.request.url.params)
-    assert params == {"page": "1", "pageSize": "50", "pageTotal": "false"}
+    assert params == {"page": "1", "pageSize": "10", "pageTotal": "false"}
     assert not ({"limit", "offset", "cursor", "nameContains", "nameNotEquals"} & set(params))
 
 

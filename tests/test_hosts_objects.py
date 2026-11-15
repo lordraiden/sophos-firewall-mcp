@@ -591,7 +591,7 @@ async def test_list_supports_name_not_equals_and_defaults(router: Any):
     assert result.is_error is False
     assert dict(route.calls.last.request.url.params) == {
         "page": "1",
-        "pageSize": "50",
+        "pageSize": "10",
         "pageTotal": "false",
         "nameNotEquals": "web",
     }
@@ -1303,3 +1303,52 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
     assert TypeAdapter(MacAddressCreate).validate_python(
         {"name": "printer", "macAddress": "00:11:22:33:44:55"}
     ) == MacAddressCreateSingle(name="printer", mac_address="00:11:22:33:44:55")
+
+
+# -- Phase-5 polish: default page size and the epoch sentinel ---------------------------
+
+
+def test_list_query_defaults_to_ten() -> None:
+    """M11: every object list tool shares the small default page size."""
+    parsed = object_models.ListQuery()
+
+    assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+    description = object_models.ListQuery.model_json_schema()["properties"]["page_size"][
+        "description"
+    ]
+    assert "Defaults to 10" in description
+    # The bounds are unchanged: this is a default, not a schema break.
+    assert object_models.ListQuery(page_size=100).page_size == 100
+
+
+def test_epoch_sentinel_is_published_as_null() -> None:
+    """L6: a built-in object's epoch timestamp is published as null, and only it."""
+    built_in = Ipv4AddressIp.model_validate(
+        {
+            "name": "##ALL_RW",
+            "type": "ipv4Address",
+            "ipv4Address": "0.0.0.0",
+            "createdAt": "1970-01-01T00:00:00Z",
+            "updatedAt": "1970-01-01T00:00:00Z",
+        }
+    )
+
+    published = built_in.model_dump(mode="json", by_alias=True)
+    assert published["createdAt"] is None
+    assert published["updatedAt"] is None
+    # The parsed value is still there for server-side logic (the audit's built-in check).
+    assert built_in.created_at is not None
+
+    # A real timestamp is preserved, and only the exact sentinel is mapped.
+    real = Ipv4AddressIp.model_validate(
+        {
+            "name": "web",
+            "type": "ipv4Address",
+            "ipv4Address": "203.0.113.10",
+            "createdAt": "2026-11-15T10:00:00Z",
+            "updatedAt": "1970-01-01T00:00:01Z",
+        }
+    )
+    published = real.model_dump(mode="json", by_alias=True)
+    assert published["createdAt"] == "2026-11-15T10:00:00Z"
+    assert published["updatedAt"] == "1970-01-01T00:00:01Z"
