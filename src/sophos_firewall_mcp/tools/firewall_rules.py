@@ -36,6 +36,9 @@ Safety decisions encoded here:
 * WAF rules are out of v1 scope. ``create`` only accepts ``ruleType: firewall``; ``get``
   and ``clone`` reject a WAF target; ``list`` omits WAF rules and reports how many it
   skipped instead of hiding them.
+* The contract returns no evaluation ``position`` on a rule object (M12). The list tools
+  derive it from the page offset and the item's index in the returned page; a single-object
+  read or write reports ``position: null`` rather than inventing a value.
 * PATCH sends only the fields the caller set (``exclude_unset=True``) with the contract's
   ``application/json`` content type; an explicit ``null`` on an optional member is a JSON
   Merge Patch removal. Nothing is retried: the shared client never retries writes.
@@ -167,6 +170,21 @@ def _require_firewall_rule(rule: RuleT | None) -> RuleT:
     return rule
 
 
+def _rule_position(request: ListFirewallRulesInput, index: int) -> int:
+    """Derive the 1-based evaluation position of the item at *index* in the returned page.
+
+    The contract returns no ``position`` on a rule object (M12), so the list tools derive
+    it from the page offset and the item's index in the page the appliance returned:
+    ``(page - 1) * page_size + index + 1``. ``index`` counts every item in the page,
+    including the WAF rules the projection omits, so a position can skip a number when a
+    WAF rule precedes a firewall rule; the skipped rules are reported in
+    ``wafRulesSkipped``. The value is exact for an unfiltered page; with
+    ``name_contains``/``name_not_equals`` the appliance returns a filtered page, so the
+    position is the one within the filtered sequence rather than the full rule base.
+    """
+    return (request.page - 1) * request.page_size + index + 1
+
+
 def _clone_body(
     source: Mapping[str, Any],
     request: CloneFirewallRuleInput,
@@ -229,14 +247,16 @@ class FirewallRuleAdapter(DomainAdapter):
 
         items: list[RuleT] = []
         skipped = 0
-        for raw in payload["items"]:
+        for index, raw in enumerate(payload["items"]):
             if not isinstance(raw, Mapping):
                 raise ToolError("the appliance returned a malformed firewall-rule item")
             projected = parse(raw)
             if projected is None:
                 skipped += 1
             else:
-                items.append(projected)
+                items.append(
+                    projected.model_copy(update={"position": _rule_position(request, index)})
+                )
 
         raw_pages = payload.get("pages")
         pages = Pages.model_validate(raw_pages) if raw_pages is not None else None
@@ -414,8 +434,9 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "List one page of IPv4 firewall rules (getAllFirewallRulesIpv4). Returns at "
             "most pageSize rules plus the appliance's pages metadata; it never walks the "
             "collection automatically. Filter by name with nameContains or nameNotEquals "
-            "(mutually exclusive). WAF rules are out of scope: they are omitted and "
-            "counted in wafRulesSkipped. Read-only."
+            "(mutually exclusive). Each rule carries its 1-based evaluation position, "
+            "derived from the page offset and its index in the returned page. WAF rules "
+            "are out of scope: they are omitted and counted in wafRulesSkipped. Read-only."
         ),
     )
     async def firewall_rule_list_ipv4(
@@ -433,7 +454,8 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "List one page of IPv6 firewall rules (getAllFirewallRulesIpv6). Returns at "
             "most pageSize rules plus the appliance's pages metadata; it never walks the "
             "collection automatically. Filter by name with nameContains or nameNotEquals "
-            "(mutually exclusive). Read-only."
+            "(mutually exclusive). Each rule carries its 1-based evaluation position, "
+            "derived from the page offset and its index in the returned page. Read-only."
         ),
     )
     async def firewall_rule_list_ipv6(
@@ -450,7 +472,9 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "Read one IPv4 firewall rule by id or name (getFirewallRuleIpv4). Returns the "
             "applied enabled state, the action, the logging flag, the schedule and the "
-            "match criteria. WAF rules are out of scope and are rejected. Read-only."
+            "match criteria. position is null: the contract does not return the evaluation "
+            "position on a single-object read, so use firewall_rule_list_ipv4 to obtain it. "
+            "WAF rules are out of scope and are rejected. Read-only."
         ),
     )
     async def firewall_rule_get_ipv4(
@@ -467,7 +491,9 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "Read one IPv6 firewall rule by id or name (getFirewallRuleIpv6). Returns the "
             "applied enabled state, the action, the logging flag, the schedule and the "
-            "match criteria. Read-only."
+            "match criteria. position is null: the contract does not return the evaluation "
+            "position on a single-object read, so use firewall_rule_list_ipv6 to obtain it. "
+            "Read-only."
         ),
     )
     async def firewall_rule_get_ipv6(

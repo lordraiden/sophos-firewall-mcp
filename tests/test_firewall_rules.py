@@ -264,6 +264,58 @@ async def test_list_rejects_a_page_size_above_the_live_limit(router: Any) -> Non
     assert router.calls == []
 
 
+async def test_list_ipv4_reports_the_evaluation_position_from_the_page_offset(router: Any) -> None:
+    router.get(IPV4_COLLECTION).mock(
+        return_value=httpx.Response(200, json=page([ipv4_rule(), ipv4_rule(name="second-rule")]))
+    )
+
+    result = await call(make_server(), "firewall_rule_list_ipv4", {"page": 2, "pageSize": 10})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    # Page 2 of a 10-rule page starts at position 11; the index inside the page is 0-based.
+    assert [item["position"] for item in output["items"]] == [11, 12]
+
+
+async def test_list_ipv6_reports_the_evaluation_position_from_the_page_offset(router: Any) -> None:
+    router.get(IPV6_COLLECTION).mock(
+        return_value=httpx.Response(200, json=page([ipv6_rule(), ipv6_rule(name="second-rule-v6")]))
+    )
+
+    result = await call(make_server(), "firewall_rule_list_ipv6", {"page": 1, "pageSize": 50})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    assert [item["position"] for item in output["items"]] == [1, 2]
+
+
+async def test_list_position_counts_a_skipped_waf_rule(router: Any) -> None:
+    router.get(IPV4_COLLECTION).mock(
+        return_value=httpx.Response(
+            200,
+            json=page(
+                [
+                    ipv4_rule(name="waf-rule", ruleType="waf", wafRule={"name": "waf"}),
+                    ipv4_rule(),
+                ]
+            ),
+        )
+    )
+
+    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    # The WAF rule occupies the first slot of the returned page but is not projected, so
+    # the firewall rule keeps the position the appliance's list order gives it.
+    assert [item["name"] for item in output["items"]] == ["allow-lan-to-wan"]
+    assert [item["position"] for item in output["items"]] == [2]
+    assert output["wafRulesSkipped"] == 1
+
+
 async def test_list_ipv4_skips_waf_rules_and_reports_the_count(router: Any) -> None:
     router.get(IPV4_COLLECTION).mock(
         return_value=httpx.Response(
@@ -365,6 +417,20 @@ async def test_get_accepts_a_uuid_identifier(router: Any) -> None:
 
     assert result.is_error is False
     assert str(route.calls.last.request.url) == f"{BASE}/firewall/rules/ipv4/{UUID}"
+
+
+async def test_get_reports_a_null_position(router: Any) -> None:
+    router.get(IPV4_ITEM).mock(return_value=httpx.Response(200, json=ipv4_rule()))
+
+    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": "allow-lan-to-wan"})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    # The contract does not return the evaluation position on a single-object read, so the
+    # field is present and null rather than absent or invented.
+    assert "position" in output
+    assert output["position"] is None
 
 
 async def test_get_rejects_a_waf_rule(router: Any) -> None:
@@ -996,12 +1062,14 @@ async def test_output_schemas_are_object_rooted_and_typed() -> None:
         assert output["type"] == "object"
         assert "name" in output["required"]
         assert "ipFamily" in output["properties"]
+        assert "position" in output["properties"]
 
     listing = tools["firewall_rule_list_ipv4"].output_schema
     assert listing is not None
     assert listing["type"] == "object"
     assert "items" in listing["properties"]
     assert "wafRulesSkipped" in listing["properties"]
+    assert "position" in listing["$defs"]["FirewallRuleIpv4Output"]["properties"]
 
 
 # -- Model contract --------------------------------------------------------------------
@@ -1172,6 +1240,11 @@ def test_output_enabled_is_none_only_when_the_appliance_omits_it() -> None:
     payload.pop("enabled")
 
     assert FirewallRuleIpv4Output.model_validate(payload).enabled is None
+
+
+def test_output_position_is_null_unless_the_list_derives_it() -> None:
+    assert FirewallRuleIpv4Output.model_validate(ipv4_rule()).position is None
+    assert FirewallRuleIpv6Output.model_validate(ipv6_rule()).position is None
 
 
 def test_list_output_preserves_the_pages_metadata() -> None:

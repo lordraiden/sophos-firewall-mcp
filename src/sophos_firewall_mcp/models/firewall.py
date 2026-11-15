@@ -23,6 +23,10 @@ Contract decisions encoded here:
   enabled by relying on the schema default.
 * ``position`` is required on create and identifies the insertion point; ``after`` and
   ``before`` need a ``referenceItem`` anchor.
+* The contract returns no evaluation ``position`` on a rule object (M12). The output
+  projection carries one anyway: the list tools derive it from the page offset and the
+  item's index in the returned page, and a single-object read or write reports ``null``
+  instead of inventing a value.
 * ``move`` identifies the rule by **name** only (the operation says "must be identified by
   name"), unlike the ``idOrName`` path parameters of get/update/delete.
 * PATCH bodies are partial: the update models default every field to ``None`` and the
@@ -1108,11 +1112,27 @@ class FirewallRuleOutputBase(_WireModel):
     ``enabled`` state, the action and logging flags, the schedule and the match criteria.
     ``enabled`` is ``None`` only when the appliance omitted the field it declares
     required; the normal path always returns the applied state.
+
+    ``position`` is the rule's 1-based evaluation position in the rule base (M12). The
+    contract does not return it on a single-object read or write, so ``get``, ``create``,
+    ``update``, ``set_enabled`` and ``clone`` report ``null``; only the list tools can
+    derive it, from the page offset and the item's index in the returned page. It is
+    therefore never invented for a single object: ``null`` means "not derivable here",
+    not "first rule".
     """
 
     id: str | None = None
     name: str
     ruleType: Literal["firewall"] = "firewall"
+    position: int | None = Field(
+        default=None,
+        ge=1,
+        description=(
+            "1-based evaluation position in the rule base. The list tools derive it from "
+            "the page offset and the item's index in the returned page; a single-object "
+            "read or write returns null because the contract does not return it."
+        ),
+    )
     enabled: bool | None = None
     description: str | None = None
     action: FirewallAction | None = None
