@@ -78,6 +78,7 @@ from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.models.audit import (
     ALL_CHECKS,
     MAX_RULES_REPORTED,
+    MAX_TEXT,
     AddressFamily,
     AuditCheck,
     AuditFinding,
@@ -354,6 +355,15 @@ class _ResolvedEndpoint:
 
 
 @dataclass
+class _IndeterminateRule:
+    """One rule that matches every resolvable criterion but cannot be decided."""
+
+    rule: RuleOutput
+    position: int
+    unresolved_fields: list[str]
+
+
+@dataclass
 class _RuleOutcome:
     """The result of evaluating one family's rule base against a flow."""
 
@@ -361,9 +371,7 @@ class _RuleOutcome:
     decisive: RuleEvaluation | None = None
     verdict: _OutcomeVerdict = "no-matching-rule"
     examined: int = 0
-    indeterminate_rule: RuleOutput | None = None
-    indeterminate_position: int | None = None
-    unresolved_fields: list[str] = field(default_factory=list)
+    indeterminate: list[_IndeterminateRule] = field(default_factory=list)
     truncated: bool = False
 
 
@@ -396,6 +404,19 @@ def _is_built_in(name: str, *timestamps: datetime | None) -> bool:
     auto-generated interface objects with ``#`` (``#Port2``); it also stamps built-in objects
     with the Unix epoch as a "never" sentinel. An operator cannot remove any of them, so
     reporting them as removable is noise.
+
+    This is a heuristic, not a contract field: the REST projection exposes no ``builtIn``
+    flag. It was confirmed against the live appliance (``10.10.10.1``) on 2026-11-15 with a
+    read-only ``service_list`` call (``SOPHOS_READ_ONLY_MODE=true``, 93 services on one
+    page): every service carried ``createdAt == updatedAt == 1970-01-01T00:00:00Z``,
+    including the built-in ``AH``, ``AOL``, ``BGP``, ``DHCP``, ``DNS``, ``FTP``, ``HTTP``,
+    ``HTTPS``, ``ICMP``, ``IMAP``, ``LDAP``, ``NTP``, ``POP3``, ``PPTP``, ``SMTP``, ``SNMP``,
+    ``SSH``, ``TELNET`` and ``TFTP`` entries, so the epoch rule does exclude them. The same
+    run also showed the limit of the heuristic: the appliance does not populate service
+    timestamps at all, so operator-created services (``DOCKHAND_MCP``,
+    ``HomeAssistant (8123)``, …) carry the epoch too and are excluded as well. The exclusion
+    is therefore a noise filter, not a proof that an object is built-in; the ``unused-object``
+    note states this explicitly and reports how many objects it skipped.
     """
     if name.startswith("#"):
         return True
@@ -1286,9 +1307,13 @@ class AuditAdapter(DomainAdapter):
                 "group membership is a reference even when the group itself is unused."
             )
             notes.append(
-                "unused-object excludes built-in and auto-generated objects (names starting "
-                "with '#', or carrying the appliance's epoch timestamp) because an operator "
-                "cannot remove them."
+                "unused-object excludes built-in and auto-generated objects by heuristic: a "
+                "name starting with '#', or the appliance's epoch timestamp "
+                "(1970-01-01T00:00:00Z) used as a 'never' sentinel. The REST projection "
+                "exposes no built-in flag, and the appliance stamps every service with the "
+                "epoch, so a user-created service is excluded too; "
+                f"{sum(1 for entry in objects if entry.built_in)} object(s) were excluded this "
+                "way and are not findings."
             )
             if request.ip_family is not None:
                 notes.append(
@@ -1404,7 +1429,17 @@ class AuditAdapter(DomainAdapter):
                 family = destination.family or "ipv4"
                 gateways[family] = await self._gateways(family, budget)
                 routes[family] = await self._routes(family, budget)
-                routing = _routing_for(destination, gateways[family], routes[family])
+                routing_truncated = any(
+                    label in budget.truncated_collections
+                    for label in (f"gateways-{family}", f"routes-{family}")
+                )
+                routing = _routing_for(
+                    destination,
+                    gateways[family],
+                    routes[family],
+                    truncated=routing_truncated,
+                    item_limit=budget.max_items_per_collection,
+                )
                 route_zone = _zone_of_interface(interfaces, routing.interface)
                 if route_zone is not None:
                     destination.zones.add(route_zone.casefold())
@@ -1412,6 +1447,12 @@ class AuditAdapter(DomainAdapter):
                     missing.append(
                         "no configured static unicast route matches the destination and no WAN "
                         "gateway is configured; dynamic routing is not evaluated"
+                    )
+                elif routing.truncated:
+                    missing.append(
+                        "the gateway and static-route scan was truncated after "
+                        f"{budget.max_items_per_collection} items, so the routing decision is "
+                        "not verified: a route beyond the scanned portion may change it"
                     )
 
         if not source.zones and source.ip is not None and not source.local:
@@ -1463,13 +1504,9 @@ class AuditAdapter(DomainAdapter):
             verdict = outcome.verdict
             if verdict == "truncated":
                 verdict = "not-verifiable"
-            if outcome.indeterminate_rule is not None:
-                missing.append(
-                    f"rule '{outcome.indeterminate_rule.name}' at position "
-                    f"{outcome.indeterminate_position} matches the zones but its "
-                    f"{', '.join(outcome.unresolved_fields)} reference objects whose "
-                    "membership this analysis does not resolve"
-                )
+            evidence = _indeterminate_evidence(outcome)
+            if evidence is not None:
+                missing.append(evidence)
             if outcome.truncated:
                 missing.append(
                     f"the rule base scan was truncated after {outcome.examined} rules; a "
@@ -1491,14 +1528,9 @@ class AuditAdapter(DomainAdapter):
                     "IPv6 rule bases do not agree; set ip_family to analyse one of them"
                 )
             for family in families:
-                indeterminate = outcomes[family].indeterminate_rule
-                if indeterminate is not None:
-                    missing.append(
-                        f"rule '{indeterminate.name}' at position "
-                        f"{outcomes[family].indeterminate_position} matches the zones but its "
-                        f"{', '.join(outcomes[family].unresolved_fields)} reference objects "
-                        "whose membership this analysis does not resolve"
-                    )
+                evidence = _indeterminate_evidence(outcomes[family], family)
+                if evidence is not None:
+                    missing.append(evidence)
                 if outcomes[family].truncated:
                     missing.append(
                         f"the {family} rule base scan was truncated after "
@@ -2228,15 +2260,29 @@ def _routing_for(
     destination: _ResolvedEndpoint,
     gateways: list[GatewayIpv4 | GatewayIpv6],
     routes: list[UnicastRouteIpv4 | UnicastRouteIpv6],
+    *,
+    truncated: bool = False,
+    item_limit: int | None = None,
 ) -> RoutingDecision:
     """Select the best configured route for a non-local destination.
 
     A static unicast route wins when one matches. Otherwise the configured WAN gateway is
     the appliance's default route: the contract exposes no live routing table, so the
     active/backup role and dynamic routing are not evaluated.
+
+    When the gateway or route scan was truncated, the decision is marked ``truncated`` and a
+    ``no-route`` conclusion is downgraded to ``not-verified``: a route beyond the scanned
+    portion could change the answer, and a confident wrong ``no-route`` is exactly what this
+    analysis must not produce.
     """
     if destination.ip is None:
         return RoutingDecision(decision="not-verified", note="the destination is not an IP address")
+    cut = (
+        f"the gateway and static-route scan was truncated after {item_limit} items, so a route "
+        "beyond the scanned portion may change this decision"
+        if truncated
+        else None
+    )
     address = ipaddress.ip_address(destination.ip)
     family: IpFamily = destination.family or ("ipv4" if address.version == 4 else "ipv6")
     best_route: UnicastRouteIpv4 | UnicastRouteIpv6 | None = None
@@ -2252,17 +2298,31 @@ def _routing_for(
         wan = _wan_gateway(gateways)
         if wan is not None:
             gateway_ip = getattr(wan, "ipv4Address", None) or getattr(wan, "ipv6Address", None)
+            note = (
+                "no configured static unicast route matches the destination, so the "
+                "configured WAN gateway is used as the default route; the contract exposes "
+                "no live routing table, so the active/backup role and dynamic routing are "
+                "not evaluated"
+            )
             return RoutingDecision(
                 decision="default-route",
                 destination=destination.ip,
                 gateway=wan.name,
                 gateway_ip=gateway_ip,
                 interface=wan.interface.name if wan.interface is not None else None,
+                truncated=truncated,
+                note=f"{note}; {cut}" if cut is not None else note,
+            )
+        if cut is not None:
+            return RoutingDecision(
+                decision="not-verified",
+                destination=destination.ip,
+                truncated=True,
                 note=(
-                    "no configured static unicast route matches the destination, so the "
-                    "configured WAN gateway is used as the default route; the contract exposes "
-                    "no live routing table, so the active/backup role and dynamic routing are "
-                    "not evaluated"
+                    "no configured static unicast route matches the destination and no WAN "
+                    "gateway was found in the scanned portion; the gateway and static-route "
+                    f"scan was truncated after {item_limit} items, so no-route cannot be "
+                    "concluded"
                 ),
             )
         return RoutingDecision(
@@ -2279,6 +2339,10 @@ def _routing_for(
         else best_route.gatewayIpv6
     )
     interface = best_route.interface.name if best_route.interface is not None else None
+    note = (
+        "selected from the configured static unicast routes; the contract exposes no live "
+        "routing table"
+    )
     return RoutingDecision(
         decision="default-route" if best_prefix == 0 else "static-route",
         destination=destination.ip,
@@ -2286,10 +2350,8 @@ def _routing_for(
         gateway=_gateway_name(gateways, gateway_ip),
         gateway_ip=gateway_ip,
         interface=interface,
-        note=(
-            "selected from the configured static unicast routes; the contract exposes no live "
-            "routing table"
-        ),
+        truncated=truncated,
+        note=f"{note}; {cut}" if cut is not None else note,
     )
 
 
@@ -2301,13 +2363,25 @@ def _evaluate_rules(
     destination: _ResolvedEndpoint,
     max_rules: int,
 ) -> _RuleOutcome:
-    """Evaluate one family's rule base in order and stop at the first decisive rule."""
+    """Evaluate one family's rule base in order and stop at the first decisive rule.
+
+    Every rule that matches all resolvable criteria but carries an unresolved criterion is
+    collected as a structured candidate, not only the first one: the scan continues so the
+    operator sees every rule that may match the flow. Once an earlier rule is indeterminate a
+    later fully-resolved rule is still reported, but not as decisive, because the earlier rule
+    may preempt it.
+    """
     matched: list[RuleEvaluation] = []
+    indeterminate: list[_IndeterminateRule] = []
     examined = 0
     for position, rule in enumerate(family_rules, start=1):
         if examined >= max_rules:
             return _RuleOutcome(
-                matched=matched, verdict="truncated", examined=examined, truncated=True
+                matched=matched,
+                verdict="not-verifiable" if indeterminate else "truncated",
+                examined=examined,
+                indeterminate=indeterminate,
+                truncated=True,
             )
         examined += 1
         criteria = (
@@ -2346,14 +2420,8 @@ def _evaluate_rules(
                     ),
                 )
             )
-            return _RuleOutcome(
-                matched=matched,
-                verdict="not-verifiable",
-                examined=examined,
-                indeterminate_rule=rule,
-                indeterminate_position=position,
-                unresolved_fields=unresolved,
-            )
+            indeterminate.append(_IndeterminateRule(rule, position, unresolved))
+            continue
         if rule.enabled is None:
             matched.append(
                 RuleEvaluation(
@@ -2374,14 +2442,9 @@ def _evaluate_rules(
                     ),
                 )
             )
-            return _RuleOutcome(
-                matched=matched,
-                verdict="not-verifiable",
-                examined=examined,
-                indeterminate_rule=rule,
-                indeterminate_position=position,
-                unresolved_fields=["enabled"],
-            )
+            indeterminate.append(_IndeterminateRule(rule, position, ["enabled"]))
+            continue
+        preempted = bool(indeterminate)
         evaluation = RuleEvaluation(
             name=rule.name,
             id=rule.id,
@@ -2389,20 +2452,63 @@ def _evaluate_rules(
             ip_family=family,
             enabled=rule.enabled,
             action=rule.action,
-            decisive=rule.enabled,
-            applied=rule.enabled,
+            decisive=rule.enabled and not preempted,
+            applied=rule.enabled and not preempted,
             matched_fields=matched_fields,
             log_traffic=rule.logTraffic,
-            note=None if rule.enabled else "disabled: matches the criteria but is not evaluated",
+            note=(
+                "disabled: matches the criteria but is not evaluated"
+                if not rule.enabled
+                else (
+                    "matches the flow, but an earlier rule is indeterminate and may preempt it"
+                    if preempted
+                    else None
+                )
+            ),
         )
         matched.append(evaluation)
-        if not rule.enabled:
+        if not rule.enabled or preempted:
             continue
         verdict = "allowed" if rule.action == "accept" else "denied"
         return _RuleOutcome(
             matched=matched, decisive=evaluation, verdict=verdict, examined=examined
         )
-    return _RuleOutcome(matched=matched, verdict="no-matching-rule", examined=examined)
+    return _RuleOutcome(
+        matched=matched,
+        verdict="not-verifiable" if indeterminate else "no-matching-rule",
+        examined=examined,
+        indeterminate=indeterminate,
+    )
+
+
+def _indeterminate_evidence(outcome: _RuleOutcome, family: IpFamily | None = None) -> str | None:
+    """One bounded missing-evidence line naming every indeterminate rule of one family.
+
+    The structured candidates are already in ``matched``; this line explains why the verdict
+    is not verifiable. It is bounded to ``MAX_TEXT`` because it can become the verdict reason,
+    so a large rule base cannot produce an over-long string.
+    """
+    if not outcome.indeterminate:
+        return None
+    scope = f"the {family} rule base has " if family is not None else ""
+    header = (
+        f"{scope}{len(outcome.indeterminate)} rule(s) match every resolvable criterion but "
+        "carry a criterion this analysis cannot resolve, so the verdict is not verifiable: "
+    )
+    described: list[str] = []
+    for index, item in enumerate(outcome.indeterminate):
+        piece = (
+            f"'{item.rule.name}' at position {item.position} "
+            f"({', '.join(item.unresolved_fields)})"
+        )
+        remainder = len(outcome.indeterminate) - index - 1
+        tail = f" and {remainder} more" if remainder > 0 else ""
+        if len(header) + len(", ".join([*described, piece])) + len(tail) > MAX_TEXT:
+            break
+        described.append(piece)
+    remainder = len(outcome.indeterminate) - len(described)
+    more = f" and {remainder} more" if remainder > 0 else ""
+    return f"{header}{', '.join(described)}{more}"
 
 
 def _evaluate_nat(
@@ -2575,6 +2681,16 @@ def _explain_output(
                 )
             )
 
+    reported_rules = matched[:MAX_RULES_REPORTED]
+    if len(matched) > MAX_RULES_REPORTED:
+        # Every indeterminate rule is collected now, so the reported list can exceed the
+        # output bound; say so instead of dropping the remainder silently.
+        truncated = True
+        notes.append(
+            f"only the first {MAX_RULES_REPORTED} matching rules are reported; "
+            f"{len(matched) - MAX_RULES_REPORTED} more matched the criteria"
+        )
+
     return ExplainConnectivityOutput(
         verdict=verdict,  # type: ignore[arg-type]
         verdict_reason=verdict_reason,
@@ -2584,7 +2700,7 @@ def _explain_output(
         ip_families=list(families) if families else ["ipv4"],
         zones=zone_models,
         interfaces=interface_models,
-        firewall_rules=matched[:MAX_RULES_REPORTED],
+        firewall_rules=reported_rules,
         decisive_rule=decisive,
         nat_rules=nat,
         routing=routing,

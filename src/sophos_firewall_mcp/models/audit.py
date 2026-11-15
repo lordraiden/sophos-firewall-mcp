@@ -530,6 +530,13 @@ class RoutingDecision(_Output):
     interface: str | None = Field(
         default=None, max_length=58, description="Matched egress interface."
     )
+    truncated: bool = Field(
+        default=False,
+        description=(
+            "True when the gateway or static-route scan was truncated, so a route that would "
+            "change this decision may exist beyond the scanned portion."
+        ),
+    )
     note: str | None = Field(default=None, max_length=MAX_TEXT)
 
 

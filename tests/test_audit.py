@@ -685,6 +685,46 @@ async def test_unused_object_excludes_built_in_objects(router: Any) -> None:
     assert any("built-in" in note for note in output["notes"])
 
 
+async def test_unused_object_note_states_the_built_in_heuristic(router: Any) -> None:
+    # L7: the exclusion is a heuristic, not a contract flag. The note must say so, name the
+    # epoch sentinel and report how many objects it skipped. The live run of 2026-11-15 showed
+    # the appliance stamps every service with the epoch, so a user-created service is excluded
+    # too; the note has to admit that instead of implying the object is built-in.
+    install(
+        router,
+        {
+            RULES_V4: page([firewall_rule(name="r1")]),
+            ADDR_V4: page([ipv4_address(name="##ALL_RW")]),
+            SERVICES: page(
+                [
+                    dict(
+                        service("AH"),
+                        createdAt="1970-01-01T00:00:00Z",
+                        updatedAt="1970-01-01T00:00:00Z",
+                    ),
+                    dict(
+                        service("DOCKHAND_MCP"),
+                        createdAt="1970-01-01T00:00:00Z",
+                        updatedAt="1970-01-01T00:00:00Z",
+                    ),
+                ]
+            ),
+        },
+    )
+
+    result = await call_tool(
+        "audit_firewall_rules", {"checks": ["unused-object"], "ip_family": "ipv4"}
+    )
+
+    output = result.structured_content
+    assert output["findings"] == []
+    note = next(item for item in output["notes"] if "built-in" in item)
+    assert "heuristic" in note
+    assert "1970-01-01T00:00:00Z" in note
+    assert "every service" in note
+    assert "3 object(s) were excluded" in note
+
+
 async def test_unused_object_is_not_verifiable_when_the_rule_scan_is_truncated(
     router: Any,
 ) -> None:
@@ -1356,6 +1396,94 @@ async def test_explain_connectivity_reports_the_candidate_rule_when_not_verifiab
     ]
 
 
+async def test_explain_connectivity_reports_every_indeterminate_rule(router: Any) -> None:
+    # L6: every indeterminate rule is a structured candidate, not only the first one, and a
+    # later fully-resolved rule is reported but not decisive because an earlier rule may
+    # preempt it.
+    first = firewall_rule(
+        name="allow-object-a",
+        sourceZones={"zones": [{"name": "LAN"}]},
+        destinationZones={"zones": [{"name": "WAN"}]},
+        sourceNetworks={"ipv4Addresses": [{"name": "LAN-NET"}]},
+    )
+    second = firewall_rule(
+        name="allow-object-b",
+        sourceZones={"zones": [{"name": "LAN"}]},
+        destinationZones={"zones": [{"name": "WAN"}]},
+        destinationNetworks={"ipv4Addresses": [{"name": "WAN-NET"}]},
+    )
+    later = firewall_rule(
+        name="allow-web",
+        sourceZones={"zones": [{"name": "LAN"}]},
+        destinationZones={"zones": [{"name": "WAN"}]},
+        servicesOrGroups={"services": [{"name": "HTTP"}]},
+    )
+    install(router, connectivity_collections(rules=[first, second, later]))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "198.51.100.9"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    assert output["verdict"] == "not-verifiable"
+    assert output["decisive_rule"] is None
+    candidates = output["firewall_rules"]
+    assert [candidate["name"] for candidate in candidates] == [
+        "allow-object-a",
+        "allow-object-b",
+        "allow-web",
+    ]
+    assert [candidate["position"] for candidate in candidates] == [1, 2, 3]
+    assert candidates[0]["unresolved_fields"] == ["sourceNetworks"]
+    assert candidates[1]["unresolved_fields"] == ["destinationNetworks"]
+    assert candidates[2]["decisive"] is False
+    assert candidates[2]["applied"] is False
+    assert "preempt" in candidates[2]["note"]
+    evidence = [item for item in output["missing_evidence"] if "allow-object" in item]
+    assert len(evidence) == 1
+    assert "allow-object-a" in evidence[0]
+    assert "allow-object-b" in evidence[0]
+    assert "2 rule(s)" in evidence[0]
+
+
+async def test_explain_connectivity_bounds_the_indeterminate_evidence(router: Any) -> None:
+    # L6: the evidence line names every candidate but stays within the model's text bound, so a
+    # large rule base cannot produce an over-long verdict reason.
+    rules = [
+        firewall_rule(
+            name=f"allow-object-{index:02d}",
+            sourceZones={"zones": [{"name": "LAN"}]},
+            destinationZones={"zones": [{"name": "WAN"}]},
+            sourceNetworks={"ipv4Addresses": [{"name": f"LAN-NET-{index}"}]},
+        )
+        for index in range(12)
+    ]
+    install(router, connectivity_collections(rules=rules))
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "198.51.100.9"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    assert output["verdict"] == "not-verifiable"
+    assert len(output["firewall_rules"]) == 12
+    evidence = next(item for item in output["missing_evidence"] if "rule(s)" in item)
+    assert len(evidence) <= 400
+    assert "12 rule(s)" in evidence
+    assert "more" in evidence
+    assert len(output["verdict_reason"]) <= 400
+
+
 async def test_explain_connectivity_is_not_verifiable_for_an_fqdn(router: Any) -> None:
     install(router, connectivity_collections(rules=[ALLOW_RULE]))
 
@@ -1477,6 +1605,86 @@ async def test_explain_connectivity_reports_no_route(router: Any) -> None:
     output = result.structured_content
     assert output["routing"]["decision"] == "no-route"
     assert any("route" in item for item in output["missing_evidence"])
+
+
+async def test_explain_connectivity_does_not_conclude_no_route_from_a_truncated_scan(
+    router: Any,
+) -> None:
+    # L8: a truncated gateway/route scan must not produce a confident no-route.
+    collections = connectivity_collections(rules=[ALLOW_RULE], routes=[], gateways=[])
+    collections[GATEWAYS_V4] = page([], total=1000)
+    install(router, collections)
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "198.51.100.9"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    routing = output["routing"]
+    assert routing["decision"] == "not-verified"
+    assert routing["truncated"] is True
+    assert "truncated" in routing["note"]
+    assert "no-route cannot be concluded" in routing["note"]
+    assert any("truncated" in item for item in output["missing_evidence"])
+    assert output["truncated"] is True
+
+
+async def test_explain_connectivity_marks_a_truncated_route_scan(router: Any) -> None:
+    # L8: a matching route is still reported, but the decision is marked truncated because a
+    # more specific route may exist beyond the scanned portion.
+    collections = connectivity_collections(
+        rules=[ALLOW_RULE], routes=[route("web-route", "198.51.100.0", 24)]
+    )
+    collections[ROUTES_V4] = page([route("web-route", "198.51.100.0", 24)], total=1000)
+    install(router, collections)
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "198.51.100.9"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    routing = output["routing"]
+    assert routing["decision"] == "static-route"
+    assert routing["route_name"] == "web-route"
+    assert routing["truncated"] is True
+    assert "truncated" in routing["note"]
+    assert any("truncated" in item for item in output["missing_evidence"])
+
+
+async def test_explain_connectivity_marks_a_truncated_default_route(router: Any) -> None:
+    # L8: the WAN default route is still reported, but the truncation is recorded because a
+    # static route beyond the scanned portion could take precedence.
+    collections = connectivity_collections(rules=[ALLOW_RULE], routes=[], gateways=[gateway()])
+    collections[GATEWAYS_V4] = page([gateway()], total=1000)
+    install(router, collections)
+
+    result = await call_tool(
+        "explain_connectivity",
+        {
+            "source": {"ip": "10.0.0.5"},
+            "destination": {"ip": "8.8.8.8"},
+            "service": {"name": "HTTP"},
+        },
+    )
+
+    output = result.structured_content
+    routing = output["routing"]
+    assert routing["decision"] == "default-route"
+    assert routing["gateway"] == "wan-gateway"
+    assert routing["truncated"] is True
+    assert "truncated" in routing["note"]
+    assert len(routing["note"]) <= 400
+    assert any("truncated" in item for item in output["missing_evidence"])
 
 
 async def test_explain_connectivity_uses_the_wan_gateway_as_the_default_route(
