@@ -15,6 +15,7 @@
 **Auditoría independiente:** ver [INDEPENDENT_REVIEW_REPORT.md](./INDEPENDENT_REVIEW_REPORT.md) (15 de noviembre de 2026). Este plan incorpora las correcciones respaldadas por evidencia de esa revisión; las afirmaciones que dependen del firmware o del appliance siguen marcadas como pendientes de verificación.
 **Validación en vivo:** smoke test de solo lectura contra el appliance real el 15 de noviembre de 2026; evidencia en [docs/live-evidence/api-smoke-2026-11-15.md](../live-evidence/api-smoke-2026-11-15.md).
 **Acceso al laboratorio:** endpoint, API key de solo lectura y variables de entorno en [LAB-ACCESS.md](./LAB-ACCESS.md).
+**Ejecución (fase 1):** decisión de cliente REST en [ADR-001-rest-client-strategy.md](../ADR-001-rest-client-strategy.md) e inventario por operación en [API-COVERAGE.md](../../API-COVERAGE.md).
 
 > La documentación oficial online también muestra OpenAPI 3.0 y versión 1.0.0, y reproduce literalmente en su Introduction el texto de `info.description` de este YAML (base URL, Bearer, formatos de nombre y semántica PATCH). Aun así, el contrato que se implementa es el fichero versionado y la versión de SFOS objetivo; la página online puede actualizarse por separado.
 
@@ -142,6 +143,8 @@ Los handlers no deben construir URLs, headers ni payloads HTTP directamente. El 
 
 # 4. Alcance funcional: mapear primero, implementar solo lo justificado
 
+> **Nota (15 de noviembre de 2026):** el alcance v1 de la tabla siguiente fue ampliado por decisión del propietario (MAC con CRUD completo, country groups en lectura, escrituras de interfaz solo para VLAN, dominio de arquitectura de red, herramientas de auditoría #35 y enable/disable + clone en reglas de firewall). El alcance vigente está en [ADR-001 §10](../ADR-001-rest-client-strategy.md) y en [API-COVERAGE.md](../../API-COVERAGE.md) §4; esta tabla se conserva como decisión inicial y queda superada por las issues #24, #27, #29, #31 y #35.
+
 La referencia OpenAPI incluye muchos más módulos que las herramientas XML originales. La primera versión no tiene que exponer todo el catálogo. La Fase 0 debe inventariarlo por completo y seleccionar un alcance inicial coherente con las funciones actuales y las necesidades reales de administración.
 
 | Dominio | Cobertura a investigar | Decisión inicial |
@@ -210,7 +213,7 @@ La primera versión debe:
 
 No ofrecer “VPN management” genérico. El YAML incluye perfiles IPsec y failover groups; conexiones IPsec site-to-site policy-based y route-based para IPv4; estado live de conexiones IPv4; ajustes de remote-access IPsec; políticas SSL VPN de acceso remoto; políticas clientless, bookmark groups/bookmarks y SSL VPN global settings. No asumir que todas las modalidades tienen CRUD completo ni que IPsec site-to-site IPv6 está disponible: el inventario actual contiene operaciones de conexión IPv4. La lista oficial de funciones no soportadas (por ejemplo IPsec routes, GRE, L2TP, PPTP y SSL VPN site-to-site client/server) se debe interpretar según la feature exacta, sin confundir el término 'IPsec routes' con los endpoints 'route-based connection'. [R04] [R11]
 
-El YAML contiene CRUD para `/network/interfaces/network-interfaces` (list, create, get, patch, delete), pero el primer release MCP empieza con list/get por el impacto que una mutación puede tener sobre la conectividad de administración. La advertencia de conectividad no está en el API Reference: procede de la ayuda de administración, que indica que, tras actualizar o eliminar interfaces, las conexiones de red pueden quedar temporalmente inaccesibles. Las operaciones de escritura deben permanecer documentadas como diferidas hasta que exista una prueba segura en el firewall de laboratorio. [R34]
+El YAML contiene CRUD para `/network/interfaces/network-interfaces` (list, create, get, patch, delete), pero el primer release MCP empieza con list/get por el impacto que una mutación puede tener sobre la conectividad de administración. La advertencia de conectividad no está en el API Reference: procede de la ayuda de administración, que indica que, tras actualizar o eliminar interfaces, las conexiones de red pueden quedar temporalmente inaccesibles. Las operaciones de escritura deben permanecer documentadas como diferidas hasta que exista una prueba segura en el firewall de laboratorio. [R34] **Actualizado (15 nov 2026):** el alcance v1 vigente permite create/update/delete **solo para interfaces `type: vlan`**, con lectura previa del tipo mediante `getNetworkInterface`; physical, bridge, LAG y XFRM siguen en solo lectura (ADR-001 §10).
 
 Para estado read-only de red hay dos endpoints concretos en el YAML: `GET /network/dns/protection/status` (`getDnsProtectionStatus`) y `GET /network/cellular-wan/modem-status` (`getCellularWanStatus`). Son estados específicos de DNS Protection y del módem WAN celular, no un health score general del firewall. La función Firewall Health Check del Web Admin UI es una comprobación de cumplimiento de políticas (CIS y configuraciones recomendadas, con estados compliant/noncompliant y override manual), no un estado de salud general ni un endpoint REST del OpenAPI actual. No crear una herramienta Firewall Health Check. Tampoco prometer modelo, número de serie, firmware o uptime si no existe una operación que devuelva esos datos: `GET /administration/system-settings` solo devuelve `hostname`, `loginDisclaimer` y `updatedAt`. [R24]
 
@@ -403,9 +406,9 @@ Eliminar FastEmbed y las herramientas meta route_tools/call_routed_tool en la pr
 - Solo declarar idempotencia cuando el contrato y la operación real lo garanticen; el verbo HTTP por sí solo no basta.
 - Las anotaciones no sustituyen las aprobaciones/confirmaciones que tenga configuradas el host agente.
 
-# 9. Organización de los trabajos: nueve issues
+# 9. Organización de los trabajos: diez issues
 
-La ejecución se divide en 3 grupos, con un entregable verificable por issue.
+La ejecución se divide en 3 grupos, con un entregable verificable por issue. La décima issue es [#35 — rule audit, connectivity explanation and object usage](https://github.com/lordraiden/sophos-firewall-mcp/issues/35), añadida al ampliar el alcance v1 el 15 de noviembre de 2026.
 
 ## M1 — REST Foundation
 
@@ -561,4 +564,4 @@ La revisión independiente se documenta en [INDEPENDENT_REVIEW_REPORT.md](./INDE
 
 - **Corregido:** la descripción de Device access vs Local service ACL (el acceso desde WAN solo se documenta mediante la regla de excepción, que forma parte de Device access); la atadura de versión del portal de API (no declara versión SFOS); la naturaleza del Firewall Health Check (cumplimiento de políticas, no salud general); `message` obligatorio (1–600) en la desconexión de live sessions; la lista de no soportadas (no exhaustiva e internamente inconsistente); la versión mínima de openapi-python-client (0.30.0, no 0.29.1); la matriz de Python (3.11–3.14); el alcance de `subscriptions=False` (solo clientes 2026-07-28); la semántica de `openWorldHint` (dominio de interacción, decidir por herramienta); la regla de raíz de objeto (convención de interoperabilidad, no requisito de 2026-07-28); el estado de Roots/Sampling/Logging (deprecados, no eliminados, con `ping`/`logging/setLevel`/`roots/list_changed` sí eliminados).
 - **Añadido:** evidencia del propio `info.description` del YAML para PATCH, base URL, Bearer y formatos de nombre; las cuatro excepciones PATCH documentadas; los recuentos verificados (32 esquemas, 76 refs, 83 GET paginados, 260 operaciones name-or-id, 6 UUID-only, 17 sin tipar); la advertencia de que los `format` de nombre no son asertivos; el detalle de que `getSystemSettings` solo devuelve `hostname`, `loginDisclaimer` y `updatedAt`; la nota de que la advertencia de conectividad de interfaces está en la ayuda de administración, no en el API Reference.
-- **Sin cambios:** REST-only, sin XML, sin raw REST, stdio inicial, mínimo privilegio Sophos, PATCH JSON Merge Patch por defecto, no reintentar escrituras ambiguas, TLS verificado por defecto, y el reparto de nueve issues.
+- **Sin cambios:** REST-only, sin XML, sin raw REST, stdio inicial, mínimo privilegio Sophos, PATCH JSON Merge Patch por defecto, no reintentar escrituras ambiguas, TLS verificado por defecto, y el reparto de diez issues (#24–#32 y #35).

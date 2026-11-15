@@ -4,19 +4,21 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 
 ## Documentos
 
-- [Plan técnico revisado (MCP output schemas, permisos Sophos y límites de resultados)](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y nueve issues.
+- [Plan técnico revisado (MCP output schemas, permisos Sophos y límites de resultados)](./PLAN.md): arquitectura, contrato API, seguridad, decisiones MCP actuales, cobertura funcional, pruebas y diez issues.
 - [Referencias](./REFERENCES.md): URLs del YAML del repositorio, documentación oficial Sophos, operaciones endpoints, RFC y SDK MCP.
 - [Acceso al laboratorio](./LAB-ACCESS.md): endpoint del appliance, API key de solo lectura, variables de entorno y advertencias. Credencial en claro por decisión del propietario; solo laboratorio.
 - [Informe de auditoría independiente](./INDEPENDENT_REVIEW_REPORT.md): revisión de 15 de noviembre de 2026 con baseline verificado, tabla de conformidad MCP/Sophos, hallazgos, cambios realizados en el plan y las issues, y evidencia pendiente del appliance.
+- [ADR-001 — REST client and model-generation strategy](../ADR-001-rest-client-strategy.md): decisión de cliente REST (HTTPX + Pydantic manual) con la POC acotada que la respalda, el baseline del contrato medido desde el fichero y la instrucción normativa para #25.
+- [API coverage](../../API-COVERAGE.md): inventario generado de las 700 operaciones con decisiones curadas por dominio, excepciones PATCH, paginación, identificadores y protocolo de verificación en vivo.
 - [Prompt de revisión independiente](./INDEPENDENT_REVIEW_PROMPT.md): auditoría exhaustiva de la planificación y las issues frente al contrato Sophos, la especificación MCP y el SDK Python oficial.
 - [Prompts de ejecución](./execution/README.md): maestro, fases 1–3 y protocolo de revisión para ejecutar el plan con subagentes y Agent Teams de DSH.
 
 ## Estado
 
 - **Diseño:** auditado el 15 de noviembre de 2026. El YAML local está parseado y verificado: OpenAPI 3.0.0, info.version 1.0.0, 384 paths, 700 operaciones con operationId único, 32 esquemas de componente, 76 `$ref` locales (0 externos), 134 PATCH con `application/json` y ninguna con `application/merge-patch+json`. Ver [INDEPENDENT_REVIEW_REPORT.md](./INDEPENDENT_REVIEW_REPORT.md) para el baseline completo y las correcciones aplicadas.
-- **Implementación:** no completada.
-- **Issues:** nueve issues abiertas (#24–#32), agrupadas con [M1], [M2] y [M3]. Las nueve fueron corregidas el 15 de noviembre de 2026 a partir de la auditoría (estado, dependencias, criterios de aceptación y hechos del contrato).
-- **Siguiente paso:** completar [#24 — OpenAPI audit and API coverage](https://github.com/lordraiden/sophos-firewall-mcp/issues/24), empezando por validar el YAML local y su correspondencia con SFOS objetivo.
+- **Implementación:** fase 1 (fundación REST) completada en la rama `migration/phase-1-foundation`: cliente REST tipado, fundación MCP (lifespan, `AppContext`, registro modular, modo read-only), [ADR-001](../ADR-001-rest-client-strategy.md) y [matriz de cobertura](../../API-COVERAGE.md). Revisión independiente **APPROVE** ([informe](./PHASE-1-REVIEW.md)) y aprobada por el propietario; se integra mediante el PR [#36](https://github.com/lordraiden/sophos-firewall-mcp/pull/36).
+- **Issues:** diez issues abiertas (#24–#32 y #35), agrupadas con [M1], [M2] y [M3]. Las nueve originales fueron corregidas el 15 de noviembre de 2026 a partir de la auditoría, y el alcance v1 se amplió por decisión del propietario (ver ADR-001 §10).
+- **Siguiente paso:** fase 2 (#27–#31 y #35) sobre la fundación publicada; no iniciada.
 
 La especificación OpenAPI versionada es el contrato inicial. La documentación oficial Sophos añade requisitos de permisos de perfil, allowlist y Device Access; el portal y la documentación del firmware son referencias de contraste, no sustituyen el YAML concreto ni las pruebas de operación real. En MCP, las anotaciones son hints, no controles de acceso, y los resultados deben ser DTOs tipados, acotados y compatibles.
 
@@ -31,7 +33,8 @@ La especificación OpenAPI versionada es el contrato inicial. La documentación 
 | M2 | [#28 — NAT rules](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) | Reglas NAT IPv4/IPv6. |
 | M2 | [#29 — Network addresses and services](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) | Direcciones, grupos, servicios y referencias. |
 | M2 | [#30 — Network users and live sessions](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) | Usuarios de red, paginación, sesiones y desconexión. |
-| M2 | [#31 — VPN, interfaces and read-only status](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN, interfaces y diagnósticos read-only seleccionados. |
+| M2 | [#31 — VPN, network architecture and read-only status](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) | VPN en solo lectura, arquitectura de red (interfaces, zonas, rutas, DHCP, DNS, vecinos; escrituras solo VLAN) y diagnósticos read-only. |
+| M2 | [#35 — Rule audit, connectivity explanation and object usage](https://github.com/lordraiden/sophos-firewall-mcp/issues/35) | Auditoría de reglas, explicación de conectividad y uso de objetos: herramientas composite, read-only, sin operaciones nuevas. |
 | M3 | [#32 — Hardening and release](https://github.com/lordraiden/sophos-firewall-mcp/issues/32) | Seguridad, validación, despliegue y preparación de release. |
 
 ## Dependencias

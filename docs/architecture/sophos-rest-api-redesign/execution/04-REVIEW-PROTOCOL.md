@@ -9,16 +9,22 @@ You are an independent principal reviewer. You did not write the code you are re
 ## Inputs
 
 1. The phase PR (full diff, description, and evidence).
-2. Issues #24–#32 (full body) and [`PLAN.md`](../PLAN.md).
+2. Issues #24–#32 and #35 (full body), including the **owner scope revision of 15 November 2026**
+   (the comment on #24 and the scope updates at the top of #27, #29 and #31), and [`PLAN.md`](../PLAN.md).
+   Where PLAN.md and the issues disagree, the issues win for the first release; report the conflict.
 3. [`INDEPENDENT_REVIEW_REPORT.md`](../INDEPENDENT_REVIEW_REPORT.md) and [`REFERENCES.md`](../REFERENCES.md).
-4. `firewall_config_openapi.yaml` (parsed, not by eye) and `API-COVERAGE.md`.
-5. The test suite and the workflows.
+4. [`ADR-001-rest-client-strategy.md`](../ADR-001-rest-client-strategy.md) — it defines the client decision
+   **and** the first-release scope (§10), so it is an input, not just background.
+5. `firewall_config_openapi.yaml` (parsed, not by eye), `API-COVERAGE.md` and
+   `scripts/coverage_curated.yaml` (the curated decisions the generated document merges).
+6. The test suite and the workflows; the previous phase review report, if one exists.
 
 ## Method
 
 1. **Read the full diff** (`git diff <base>...<head>`), not just the PR summary.
 2. **Run** the suite and linters; do not trust the author's report.
-3. **Check every tool** against its operationId, schema, status codes, and media type in the YAML.
+3. **Check every tool** — including every **composite** tool — against its operationId(s), schema,
+   status codes and media type in the YAML.
 4. **Actively look for** the failures in the checklist below.
 5. **Classify** each finding by severity and cite file:line and evidence.
 6. **Issue a verdict**: approve / changes required.
@@ -29,9 +35,20 @@ If the PR is large, you may use `workflow` to review per domain in parallel (`pi
 
 ### Contract and scope
 
-- [ ] Every tool maps to a real, audited operationId; no invented endpoints.
-- [ ] Only v1-scope operations are exposed; excluded ones are documented and not registered.
-- [ ] IPv4/IPv6, WAF, VPN, interfaces, and live-users follow the plan's decisions.
+- [ ] Every tool maps to a real, audited operationId **or** is a declared composite tool whose
+      underlying operationIds are audited and present in `tool_map`; no invented endpoints.
+- [ ] The v1 surface matches the revised scope: **145 operations / 152 MCP tools across 11 domains**
+      (ADR-001 §10, API-COVERAGE §4). Excluded operations are documented and not registered.
+- [ ] Domain decisions are honoured: IPv4/IPv6 per family; WAF (`ruleType: waf`) excluded; VPN and
+      SSL VPN read-only (20 operationIds); **interfaces read-only except VLAN writes**; live-users as
+      scoped; **network architecture read-only**; **MAC CRUD**; **country groups read-only**;
+      **audit tools read-only**; **firewall enable/disable (PATCH `enabled`) and clone (get+create)**;
+      bulk delete excluded everywhere.
+- [ ] VLAN-only writes are enforced: `createNetworkInterface`/`updateNetworkInterface`/
+      `deleteNetworkInterface` are exposed only for `type: vlan`, and no tool can mutate a physical,
+      bridge, LAG or XFRM interface.
+- [ ] Composite tools declare `kind` (`read`/`mutation`) and the four firewall composites are
+      mutations; they are not registered when `SOPHOS_READ_ONLY_MODE=true`.
 - [ ] PATCH: `application/json`, merge patch, no invented `application/merge-patch+json`.
 - [ ] Pagination only where the contract declares it; no invented cursors.
 - [ ] `enabled`/`position`/`ruleType` and move-by-name are correctly modeled for firewall.
@@ -46,7 +63,7 @@ If the PR is large, you may use `workflow` to review per domain in parallel (`pi
 - [ ] No model-controlled URL/path/headers.
 - [ ] Sanitized errors; no raw remote bodies.
 - [ ] No secrets in images, CI, artifacts, or screenshots.
-- [ ] `SOPHOS_READ_ONLY_MODE` does not register mutations and is tested.
+- [ ] `SOPHOS_READ_ONLY_MODE` does not register mutations **or mutation composites**, and is tested.
 
 ### MCP
 
@@ -61,7 +78,10 @@ If the PR is large, you may use `workflow` to review per domain in parallel (`pi
 
 ### Tests
 
-- [ ] Every tool has contract tests (method, path, query, headers, body, status).
+- [ ] Every tool, including every composite tool, has contract tests (method, path, query, headers,
+      body, status).
+- [ ] The coverage matrix is tested: full parse, every operation exactly once, deterministic
+      regeneration, SHA gate, and the composite `kind` classification.
 - [ ] Tests prove behavior, not implementation.
 - [ ] Mocks are not presented as firmware compatibility.
 - [ ] Live tests are opt-in, read-only, recorded or deferred with a reason.
@@ -74,6 +94,8 @@ If the PR is large, you may use `workflow` to review per domain in parallel (`pi
 - [ ] No changes outside scope; no hand-edited generated files.
 - [ ] Commits with explicit paths; no `add -A`; no branch switching by teammates.
 - [ ] `API-COVERAGE.md` regenerable and without drift.
+- [ ] ADR-001 §10, `API-COVERAGE.md` §4 and `scripts/coverage_curated.yaml` agree on the scope
+      counts (145 operations / 152 tools / 11 domains).
 - [ ] Documentation updated and consistent with the code.
 - [ ] No critical `TODO`s without an issue.
 
