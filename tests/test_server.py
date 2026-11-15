@@ -752,9 +752,13 @@ async def test_stdio_transport_works_with_the_official_client():
             assert client.protocol_version == "2026-07-28"
             result = await client.list_tools()
 
-    # No domain tools exist in phase 1, and a stray stdout write would have broken the
-    # protocol framing before this assertion was reached.
-    assert result.tools == []
+    # Phase 2 registers the domain families through DEFAULT_DOMAINS. Reaching this
+    # assertion at all proves the protocol framing survived: a stray stdout write would
+    # have broken it before the tool list arrived.
+    names = {tool.name for tool in result.tools}
+    assert names, "the server must advertise the phase-2 domain tools over stdio"
+    assert "firewall_rule_list_ipv4" in names
+    assert "network_status_dns_protection" in names
 
 
 def test_stdio_keeps_stdout_clean_when_configuration_is_invalid():

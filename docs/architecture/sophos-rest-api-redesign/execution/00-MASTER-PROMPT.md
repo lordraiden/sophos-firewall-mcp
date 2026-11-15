@@ -33,7 +33,7 @@ If a document and an issue contradict each other, **the plan wins** and you repo
 - **Base URL:** `https://<host>:<port>/api/firewall-config/v1`; Bearer API key.
 - **Lab:** `10.10.10.1:443`, **read-only** key, self-signed TLS. See `LAB-ACCESS.md`.
 - **State:** audit done; implementation **not started**; issues #24–#32 open and corrected.
-- **Phases:** 1) foundation (#24–#26), 2) domain (#27–#31), 3) hardening/release (#32). Do not mix phases.
+- **Phases:** 1) foundation (#24–#26), 2) domain (#27–#31 and #35), 3) hardening/release (#32). Do not mix phases.
 
 ## 4. Non-negotiable invariants
 
@@ -53,7 +53,7 @@ If a document and an issue contradict each other, **the plan wins** and you repo
 ### 5.1 Create the team
 
 - Create each teammate with `subagent` (new context, self-contained task) or `subagent_fork` (inherits this conversation; use it only for review/continuation, not independent work).
-- Names: lowercase, hyphens, ≤32 characters (`contract`, `client`, `foundation`, `firewall`, `nat`, `objects`, `users`, `vpn`, `reviewer`, `hardening`, `release`).
+- Names: lowercase, hyphens, ≤32 characters (`contract`, `client`, `foundation`, `firewall`, `nat`, `objects`, `users`, `network`, `audit`, `reviewer`, `hardening`, `release`).
 - Each teammate's prompt must be **self-contained**: paths, issue, acceptance criteria, commands, limits, and what **not** to touch. Do not assume it sees your conversation.
 - If a teammate needs a different model, check `list_subagent_models` and pass `provider`/`model`/`reasoning_effort`; otherwise inherit the parent's. Use higher reasoning for contract/ADR and review; default for the rest.
 - **Do not create one subagent per file.** Group by issue or domain. Typical team: 3–5 members.
