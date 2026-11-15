@@ -229,11 +229,14 @@ The catalog is static for the process lifetime, so:
   context window.
 - **Use read-only mode** (`SOPHOS_READ_ONLY_MODE=true`) to publish 98 tools instead of 152 when the
   deployment only inspects.
-- The server publishes **no MCP resources and no prompts**, so the tool catalog is the only channel it
-  offers.
+- The server publishes **4 resources** (`sophos://api/surface`, `sophos://coverage`,
+  `sophos://read-only-policy`, `sophos://conventions`) and **3 prompts** (`audit_firewall`,
+  `explain_flow`, `find_unused_objects`), so a client can read the contract and the conventions
+  without loading the tool catalog.
 
-The payload is dominated by the output schemas (598 KB), of which ~75 KB is auto-generated property
-`title` keys; the 40 IPv4/IPv6 tool pairs account for 308 KB between them.
+The payload is dominated by the output schemas (471 KB after the 0.7.0 trim, which removed 2,783
+auto-generated property `title` keys and compacted 1,646 nullable unions); the 40 IPv4/IPv6 tool pairs
+account for 308 KB between them.
 
 ## Configuration
 
@@ -248,6 +251,7 @@ The server reads exactly these eight environment variables. There are no XML-era
 | `SOPHOS_VERIFY_SSL` | no | `true` | TLS certificate verification. Set `false` only for a lab appliance with a self-signed certificate; prefer `SOPHOS_CA_BUNDLE`. |
 | `SOPHOS_CA_BUNDLE` | no | — | PEM CA bundle used to verify a private or self-signed appliance certificate. |
 | `SOPHOS_TIMEOUT` | no | `30` | Request timeout in seconds (connect, read, write and pool). |
+| `SOPHOS_MAX_CONCURRENCY` | no | `4` | Maximum concurrent HTTP requests to the appliance (1–64). |
 | `SOPHOS_READ_ONLY_MODE` | no | `false` | When `true`, mutation tools are not registered at all. |
 
 Exactly one of `SOPHOS_API_KEY` / `SOPHOS_API_KEY_FILE` must be set; setting both is a startup error. The
