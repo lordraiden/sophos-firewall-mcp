@@ -40,12 +40,13 @@ no tool argument ever reaches the request path unvalidated.
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
@@ -56,6 +57,8 @@ from sophos_firewall_mcp.tools.system import register_status_tools
 from sophos_firewall_mcp.tools.vpn import register_vpn_tools
 
 __all__ = ["register_network_tools"]
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 # -- API paths (module constants: no tool argument ever reaches a path) -----------------
 
@@ -110,6 +113,28 @@ def _require_object(payload: Any, path: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ToolError(f"the appliance returned a non-object body for GET {path}")
     return payload
+
+
+def _schema_error(exc: ValidationError, path: str) -> ToolError:
+    """Build the sanitized error for a response that does not match its output model.
+
+    Only the field location is echoed: the rejected input may contain appliance data, and
+    the raw payload must never reach the model.
+    """
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ())) or "body"
+    return ToolError(
+        f"the appliance returned a response for {path} that does not match the documented "
+        f"schema ({location})"
+    )
+
+
+def _project(payload: Any, model: type[ModelT], path: str) -> ModelT:
+    """Validate one appliance payload into its bounded model, with a sanitized error."""
+    try:
+        return model.model_validate(payload)
+    except ValidationError as exc:
+        raise _schema_error(exc, path) from exc
 
 
 def _refuse_non_vlan(payload: dict[str, Any], id_or_name: str) -> None:
@@ -299,7 +324,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.NetworkInterface]:
         payload = await NetworkAdapter.from_context(ctx).page(INTERFACES_PATH, request)
-        return ListPage[models.NetworkInterface].model_validate(payload)
+        return _project(payload, ListPage[models.NetworkInterface], INTERFACES_PATH)
 
     @register_tool(
         server,
@@ -317,7 +342,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.InterfaceRefInput, ctx: Context[AppContext]
     ) -> models.NetworkInterface:
         payload = await NetworkAdapter.from_context(ctx).object(INTERFACES_PATH, request.id_or_name)
-        return models.NetworkInterface.model_validate(payload)
+        return _project(payload, models.NetworkInterface, INTERFACES_PATH)
 
     @register_tool(
         server,
@@ -338,7 +363,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.NetworkInterfaceCreateVlanInput, ctx: Context[AppContext]
     ) -> models.NetworkInterface:
         payload = await NetworkAdapter.from_context(ctx).create_vlan(request)
-        return models.NetworkInterface.model_validate(payload)
+        return _project(payload, models.NetworkInterface, INTERFACES_PATH)
 
     @register_tool(
         server,
@@ -359,7 +384,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.NetworkInterfaceUpdateVlanInput, ctx: Context[AppContext]
     ) -> models.NetworkInterface:
         payload = await NetworkAdapter.from_context(ctx).update_vlan(request)
-        return models.NetworkInterface.model_validate(payload)
+        return _project(payload, models.NetworkInterface, INTERFACES_PATH)
 
     @register_tool(
         server,
@@ -372,9 +397,10 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "unless its type is 'vlan'; because deleteNetworkInterface has no request body, "
             "that pre-read is the only enforcement of the VLAN-only rule. Destructive: the "
             "interface and its configuration are removed, and a non-2xx response is reported "
-            "as an error rather than retried."
+            "as an error rather than retried. Idempotent: repeating the delete has no further "
+            "effect, and an already-absent interface reports not found."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_interface_delete_vlan(
         request: models.NetworkInterfaceDeleteVlanInput, ctx: Context[AppContext]
@@ -399,7 +425,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.Zone]:
         payload = await NetworkAdapter.from_context(ctx).page(ZONES_PATH, request)
-        return ListPage[models.Zone].model_validate(payload)
+        return _project(payload, ListPage[models.Zone], ZONES_PATH)
 
     @register_tool(
         server,
@@ -411,7 +437,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     )
     async def zone_get(request: models.ZoneRefInput, ctx: Context[AppContext]) -> models.Zone:
         payload = await NetworkAdapter.from_context(ctx).object(ZONES_PATH, request.id_or_name)
-        return models.Zone.model_validate(payload)
+        return _project(payload, models.Zone, ZONES_PATH)
 
     # -- IPv4 gateways -----------------------------------------------------------------
 
@@ -431,7 +457,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.GatewayIpv4]:
         payload = await NetworkAdapter.from_context(ctx).page(GATEWAYS_IPV4_PATH, request)
-        return ListPage[models.GatewayIpv4].model_validate(payload)
+        return _project(payload, ListPage[models.GatewayIpv4], GATEWAYS_IPV4_PATH)
 
     @register_tool(
         server,
@@ -449,7 +475,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.WanGatewayIpv4]:
         payload = await NetworkAdapter.from_context(ctx).page(_WAN_GATEWAYS_IPV4, request)
-        return ListPage[models.WanGatewayIpv4].model_validate(payload)
+        return _project(payload, ListPage[models.WanGatewayIpv4], _WAN_GATEWAYS_IPV4)
 
     @register_tool(
         server,
@@ -465,7 +491,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _WAN_GATEWAYS_IPV4, request.id_or_name
         )
-        return models.WanGatewayIpv4.model_validate(payload)
+        return _project(payload, models.WanGatewayIpv4, _WAN_GATEWAYS_IPV4)
 
     @register_tool(
         server,
@@ -483,7 +509,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.CustomGatewayIpv4]:
         payload = await NetworkAdapter.from_context(ctx).page(_CUSTOM_GATEWAYS_IPV4, request)
-        return ListPage[models.CustomGatewayIpv4].model_validate(payload)
+        return _project(payload, ListPage[models.CustomGatewayIpv4], _CUSTOM_GATEWAYS_IPV4)
 
     @register_tool(
         server,
@@ -499,7 +525,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _CUSTOM_GATEWAYS_IPV4, request.id_or_name
         )
-        return models.CustomGatewayIpv4.model_validate(payload)
+        return _project(payload, models.CustomGatewayIpv4, _CUSTOM_GATEWAYS_IPV4)
 
     # -- IPv6 gateways -----------------------------------------------------------------
 
@@ -519,7 +545,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.GatewayIpv6]:
         payload = await NetworkAdapter.from_context(ctx).page(GATEWAYS_IPV6_PATH, request)
-        return ListPage[models.GatewayIpv6].model_validate(payload)
+        return _project(payload, ListPage[models.GatewayIpv6], GATEWAYS_IPV6_PATH)
 
     @register_tool(
         server,
@@ -537,7 +563,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.WanGatewayIpv6]:
         payload = await NetworkAdapter.from_context(ctx).page(_WAN_GATEWAYS_IPV6, request)
-        return ListPage[models.WanGatewayIpv6].model_validate(payload)
+        return _project(payload, ListPage[models.WanGatewayIpv6], _WAN_GATEWAYS_IPV6)
 
     @register_tool(
         server,
@@ -553,7 +579,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _WAN_GATEWAYS_IPV6, request.id_or_name
         )
-        return models.WanGatewayIpv6.model_validate(payload)
+        return _project(payload, models.WanGatewayIpv6, _WAN_GATEWAYS_IPV6)
 
     @register_tool(
         server,
@@ -571,7 +597,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.CustomGatewayIpv6]:
         payload = await NetworkAdapter.from_context(ctx).page(_CUSTOM_GATEWAYS_IPV6, request)
-        return ListPage[models.CustomGatewayIpv6].model_validate(payload)
+        return _project(payload, ListPage[models.CustomGatewayIpv6], _CUSTOM_GATEWAYS_IPV6)
 
     @register_tool(
         server,
@@ -587,7 +613,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _CUSTOM_GATEWAYS_IPV6, request.id_or_name
         )
-        return models.CustomGatewayIpv6.model_validate(payload)
+        return _project(payload, models.CustomGatewayIpv6, _CUSTOM_GATEWAYS_IPV6)
 
     # -- Static unicast routes ---------------------------------------------------------
 
@@ -607,7 +633,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.PageInput, ctx: Context[AppContext]
     ) -> ListPage[models.UnicastRouteIpv4]:
         payload = await NetworkAdapter.from_context(ctx).page(UNICAST_ROUTES_IPV4_PATH, request)
-        return ListPage[models.UnicastRouteIpv4].model_validate(payload)
+        return _project(payload, ListPage[models.UnicastRouteIpv4], UNICAST_ROUTES_IPV4_PATH)
 
     @register_tool(
         server,
@@ -623,7 +649,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             UNICAST_ROUTES_IPV4_PATH, request.id_or_name
         )
-        return models.UnicastRouteIpv4.model_validate(payload)
+        return _project(payload, models.UnicastRouteIpv4, UNICAST_ROUTES_IPV4_PATH)
 
     @register_tool(
         server,
@@ -641,7 +667,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.PageInput, ctx: Context[AppContext]
     ) -> ListPage[models.UnicastRouteIpv6]:
         payload = await NetworkAdapter.from_context(ctx).page(UNICAST_ROUTES_IPV6_PATH, request)
-        return ListPage[models.UnicastRouteIpv6].model_validate(payload)
+        return _project(payload, ListPage[models.UnicastRouteIpv6], UNICAST_ROUTES_IPV6_PATH)
 
     @register_tool(
         server,
@@ -657,7 +683,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             UNICAST_ROUTES_IPV6_PATH, request.id_or_name
         )
-        return models.UnicastRouteIpv6.model_validate(payload)
+        return _project(payload, models.UnicastRouteIpv6, UNICAST_ROUTES_IPV6_PATH)
 
     # -- SD-WAN routes -----------------------------------------------------------------
 
@@ -678,7 +704,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SdwanRoute]:
         payload = await NetworkAdapter.from_context(ctx).page(_SDWAN_ROUTES_IPV4, request)
-        return ListPage[models.SdwanRoute].model_validate(payload)
+        return _project(payload, ListPage[models.SdwanRoute], _SDWAN_ROUTES_IPV4)
 
     @register_tool(
         server,
@@ -694,7 +720,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _SDWAN_ROUTES_IPV4, request.id_or_name
         )
-        return models.SdwanRoute.model_validate(payload)
+        return _project(payload, models.SdwanRoute, _SDWAN_ROUTES_IPV4)
 
     @register_tool(
         server,
@@ -712,7 +738,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SdwanRoute]:
         payload = await NetworkAdapter.from_context(ctx).page(_SDWAN_ROUTES_IPV6, request)
-        return ListPage[models.SdwanRoute].model_validate(payload)
+        return _project(payload, ListPage[models.SdwanRoute], _SDWAN_ROUTES_IPV6)
 
     @register_tool(
         server,
@@ -728,7 +754,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _SDWAN_ROUTES_IPV6, request.id_or_name
         )
-        return models.SdwanRoute.model_validate(payload)
+        return _project(payload, models.SdwanRoute, _SDWAN_ROUTES_IPV6)
 
     # -- DHCP servers ------------------------------------------------------------------
 
@@ -746,9 +772,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     )
     async def dhcp_server_list_ipv4(
         request: models.FilterInput, ctx: Context[AppContext]
-    ) -> ListPage[models.DhcpServerIpv4]:
+    ) -> models.UnpaginatedList[models.DhcpServerIpv4]:
         payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_SERVERS_IPV4, request)
-        return ListPage[models.DhcpServerIpv4].model_validate(payload)
+        return _project(payload, models.UnpaginatedList[models.DhcpServerIpv4], _DHCP_SERVERS_IPV4)
 
     @register_tool(
         server,
@@ -764,7 +790,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _DHCP_SERVERS_IPV4, request.id_or_name
         )
-        return models.DhcpServerIpv4.model_validate(payload)
+        return _project(payload, models.DhcpServerIpv4, _DHCP_SERVERS_IPV4)
 
     @register_tool(
         server,
@@ -780,9 +806,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     )
     async def dhcp_server_list_ipv6(
         request: models.FilterInput, ctx: Context[AppContext]
-    ) -> ListPage[models.DhcpServerIpv6]:
+    ) -> models.UnpaginatedList[models.DhcpServerIpv6]:
         payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_SERVERS_IPV6, request)
-        return ListPage[models.DhcpServerIpv6].model_validate(payload)
+        return _project(payload, models.UnpaginatedList[models.DhcpServerIpv6], _DHCP_SERVERS_IPV6)
 
     @register_tool(
         server,
@@ -798,7 +824,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _DHCP_SERVERS_IPV6, request.id_or_name
         )
-        return models.DhcpServerIpv6.model_validate(payload)
+        return _project(payload, models.DhcpServerIpv6, _DHCP_SERVERS_IPV6)
 
     # -- DHCP leases -------------------------------------------------------------------
 
@@ -819,7 +845,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         ctx: Context[AppContext],
     ) -> models.KeysetPage[models.DhcpLeaseIpv4]:
         payload = await NetworkAdapter.from_context(ctx).keyset(_DHCP_LEASES_IPV4)
-        return models.KeysetPage[models.DhcpLeaseIpv4].model_validate(payload)
+        return _project(payload, models.KeysetPage[models.DhcpLeaseIpv4], _DHCP_LEASES_IPV4)
 
     @register_tool(
         server,
@@ -838,7 +864,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         ctx: Context[AppContext],
     ) -> models.KeysetPage[models.DhcpLeaseIpv6]:
         payload = await NetworkAdapter.from_context(ctx).keyset(_DHCP_LEASES_IPV6)
-        return models.KeysetPage[models.DhcpLeaseIpv6].model_validate(payload)
+        return _project(payload, models.KeysetPage[models.DhcpLeaseIpv6], _DHCP_LEASES_IPV6)
 
     # -- DHCP relays -------------------------------------------------------------------
 
@@ -855,9 +881,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     )
     async def dhcp_relay_list_ipv4(
         request: models.FilterInput, ctx: Context[AppContext]
-    ) -> ListPage[models.DhcpRelayIpv4]:
+    ) -> models.UnpaginatedList[models.DhcpRelayIpv4]:
         payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_RELAYS_IPV4, request)
-        return ListPage[models.DhcpRelayIpv4].model_validate(payload)
+        return _project(payload, models.UnpaginatedList[models.DhcpRelayIpv4], _DHCP_RELAYS_IPV4)
 
     @register_tool(
         server,
@@ -874,7 +900,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.DhcpRelayRefInput, ctx: Context[AppContext]
     ) -> models.DhcpRelayIpv4:
         payload = await NetworkAdapter.from_context(ctx).object(_DHCP_RELAYS_IPV4, request.id)
-        return models.DhcpRelayIpv4.model_validate(payload)
+        return _project(payload, models.DhcpRelayIpv4, _DHCP_RELAYS_IPV4)
 
     @register_tool(
         server,
@@ -889,9 +915,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     )
     async def dhcp_relay_list_ipv6(
         request: models.FilterInput, ctx: Context[AppContext]
-    ) -> ListPage[models.DhcpRelayIpv6]:
+    ) -> models.UnpaginatedList[models.DhcpRelayIpv6]:
         payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_RELAYS_IPV6, request)
-        return ListPage[models.DhcpRelayIpv6].model_validate(payload)
+        return _project(payload, models.UnpaginatedList[models.DhcpRelayIpv6], _DHCP_RELAYS_IPV6)
 
     @register_tool(
         server,
@@ -908,7 +934,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.DhcpRelayRefInput, ctx: Context[AppContext]
     ) -> models.DhcpRelayIpv6:
         payload = await NetworkAdapter.from_context(ctx).object(_DHCP_RELAYS_IPV6, request.id)
-        return models.DhcpRelayIpv6.model_validate(payload)
+        return _project(payload, models.DhcpRelayIpv6, _DHCP_RELAYS_IPV6)
 
     # -- DNS ---------------------------------------------------------------------------
 
@@ -926,7 +952,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     )
     async def dns_settings_get(ctx: Context[AppContext]) -> models.DnsSettings:
         payload = await NetworkAdapter.from_context(ctx).single(_DNS_SETTINGS)
-        return models.DnsSettings.model_validate(payload)
+        return _project(payload, models.DnsSettings, _DNS_SETTINGS)
 
     @register_tool(
         server,
@@ -944,7 +970,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.DnsHostEntry]:
         payload = await NetworkAdapter.from_context(ctx).page(_DNS_HOST_ENTRIES, request)
-        return ListPage[models.DnsHostEntry].model_validate(payload)
+        return _project(payload, ListPage[models.DnsHostEntry], _DNS_HOST_ENTRIES)
 
     @register_tool(
         server,
@@ -960,7 +986,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _DNS_HOST_ENTRIES, request.id_or_name
         )
-        return models.DnsHostEntry.model_validate(payload)
+        return _project(payload, models.DnsHostEntry, _DNS_HOST_ENTRIES)
 
     @register_tool(
         server,
@@ -977,7 +1003,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.DnsRequestRoute]:
         payload = await NetworkAdapter.from_context(ctx).page(_DNS_REQUEST_ROUTES, request)
-        return ListPage[models.DnsRequestRoute].model_validate(payload)
+        return _project(payload, ListPage[models.DnsRequestRoute], _DNS_REQUEST_ROUTES)
 
     @register_tool(
         server,
@@ -993,7 +1019,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _DNS_REQUEST_ROUTES, request.id_or_name
         )
-        return models.DnsRequestRoute.model_validate(payload)
+        return _project(payload, models.DnsRequestRoute, _DNS_REQUEST_ROUTES)
 
     # -- Static neighbors --------------------------------------------------------------
 
@@ -1013,7 +1039,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.StaticNeighborIpv4]:
         payload = await NetworkAdapter.from_context(ctx).page(_STATIC_NEIGHBORS_IPV4, request)
-        return ListPage[models.StaticNeighborIpv4].model_validate(payload)
+        return _project(payload, ListPage[models.StaticNeighborIpv4], _STATIC_NEIGHBORS_IPV4)
 
     @register_tool(
         server,
@@ -1029,7 +1055,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _STATIC_NEIGHBORS_IPV4, request.id_or_name
         )
-        return models.StaticNeighborIpv4.model_validate(payload)
+        return _project(payload, models.StaticNeighborIpv4, _STATIC_NEIGHBORS_IPV4)
 
     @register_tool(
         server,
@@ -1046,7 +1072,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.StaticNeighborIpv6]:
         payload = await NetworkAdapter.from_context(ctx).page(_STATIC_NEIGHBORS_IPV6, request)
-        return ListPage[models.StaticNeighborIpv6].model_validate(payload)
+        return _project(payload, ListPage[models.StaticNeighborIpv6], _STATIC_NEIGHBORS_IPV6)
 
     @register_tool(
         server,
@@ -1062,7 +1088,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(
             _STATIC_NEIGHBORS_IPV6, request.id_or_name
         )
-        return models.StaticNeighborIpv6.model_validate(payload)
+        return _project(payload, models.StaticNeighborIpv6, _STATIC_NEIGHBORS_IPV6)
 
     # -- The other two read-only surfaces of issue #31 ---------------------------------
 

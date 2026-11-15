@@ -21,6 +21,7 @@ from sophos_firewall_mcp.models.vpn import (
     IpsecLiveConnection,
     IpsecProfile,
     SslVpnBookmark,
+    VpnFilteredPageInput,
     VpnProfileRefInput,
 )
 from sophos_firewall_mcp.server import create_server
@@ -359,6 +360,21 @@ async def test_authorization_failure_is_a_sanitized_tool_error(router: Any) -> N
     assert KEY not in text
 
 
+async def test_a_malformed_profile_payload_is_a_sanitized_tool_error(router: Any) -> None:
+    """A 200 body that does not match the output model becomes a sanitized ToolError."""
+    router.get(f"{BASE}/ipsec-vpn/profiles/prof1").mock(
+        return_value=httpx.Response(200, json={"id": "u-1", "name": 123})
+    )
+
+    result = await call_tool("ipsec_profile_get", {"request": {"idOrName": "prof1"}})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "does not match the documented schema" in text
+    assert "123" not in text
+    assert KEY not in text
+
+
 # -- Model tests -----------------------------------------------------------------------
 
 
@@ -457,6 +473,13 @@ def test_failover_group_list_input_merges_filter_and_sort() -> None:
 
     assert request.name_filters() == {"nameContains": "vpn"}
     assert request.extra_filters() == {"filter": "active", "sort": "name"}
+
+
+def test_vpn_name_filters_are_mutually_exclusive() -> None:
+    """The contract declares ``nameContains`` and ``nameNotEquals`` mutually exclusive."""
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        VpnFilteredPageInput(nameContains="vpn", nameNotEquals="legacy")
+    assert VpnFilteredPageInput(nameContains="vpn").name_filters() == {"nameContains": "vpn"}
 
 
 def test_vpn_ref_input_accepts_a_uuid_and_rejects_a_comma() -> None:

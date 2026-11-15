@@ -50,6 +50,7 @@ __all__ = [
     "CustomGatewayIpv6",
     "DhcpAddressPoolIpv4",
     "DhcpAddressPoolIpv6",
+    "DhcpBootNextServer",
     "DhcpClientReservationIpv4",
     "DhcpClientReservationIpv6",
     "DhcpLeaseIpv4",
@@ -107,6 +108,7 @@ __all__ = [
     "StaticNeighborIpv6",
     "UnicastRouteIpv4",
     "UnicastRouteIpv6",
+    "UnpaginatedList",
     "VlanIpv4Create",
     "VlanIpv4Update",
     "VlanIpv6Create",
@@ -251,6 +253,15 @@ class FilteredPageInput(PageInput):
         description="Exclude the object with exactly this name.",
     )
 
+    @model_validator(mode="after")
+    def _at_most_one_name_filter(self) -> Self:
+        """Reject both name filters: the contract declares them mutually exclusive."""
+        if self.name_contains is not None and self.name_not_equals is not None:
+            raise ValueError(
+                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+            )
+        return self
+
     def name_filters(self) -> dict[str, str]:
         """The declared name filters, omitting the ones the caller did not set."""
         filters: dict[str, str] = {}
@@ -278,6 +289,15 @@ class FilterInput(_Input):
         max_length=255,
         description="Exclude the object with exactly this name.",
     )
+
+    @model_validator(mode="after")
+    def _at_most_one_name_filter(self) -> Self:
+        """Reject both name filters: the contract declares them mutually exclusive."""
+        if self.name_contains is not None and self.name_not_equals is not None:
+            raise ValueError(
+                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+            )
+        return self
 
     def name_filters(self) -> dict[str, str]:
         """The declared name filters, omitting the ones the caller did not set."""
@@ -951,6 +971,17 @@ class DhcpOption(_Output):
     value: str | None = None
 
 
+class DhcpBootNextServer(_Output):
+    """The ``bootNextServer`` member of an IPv4 DHCP server.
+
+    The contract declares a ``oneOf`` of ``{ipv4Address}`` and ``{fqdn}``; both members are
+    optional here so either variant projects without rejecting the response.
+    """
+
+    ipv4Address: str | None = None
+    fqdn: str | None = None
+
+
 class DhcpServerIpv4(_Output):
     """One IPv4 DHCP server (configuration, not live leases)."""
 
@@ -972,6 +1003,7 @@ class DhcpServerIpv4(_Output):
     primaryWins: str | None = None
     secondaryWins: str | None = None
     bootFile: str | None = None
+    bootNextServer: DhcpBootNextServer | None = None
     dhcpOptions: list[DhcpOption] = Field(default_factory=list)
     createdAt: datetime | None = None
     updatedAt: datetime | None = None
@@ -1043,6 +1075,19 @@ class KeysetPage(BaseModel, Generic[ItemT]):
 
     items: list[ItemT]
     pages: KeysetPages | None = None
+
+
+class UnpaginatedList(BaseModel, Generic[ItemT]):
+    """A collection the contract returns without ``pages`` metadata.
+
+    ``getAllDhcpRelayIpv4``/``Ipv6`` and ``listDhcpServersIpv4``/``Ipv6`` declare only
+    ``items`` in their 200 response, so their projection must not render a ``pages``
+    member the contract does not define.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    items: list[ItemT]
 
 
 class DhcpRelayIpv4(_Output):

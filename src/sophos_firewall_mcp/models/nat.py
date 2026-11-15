@@ -537,6 +537,17 @@ class NatRuleDeleteInput(BaseModel):
 # -- Inputs: create --------------------------------------------------------------------
 
 
+def _require_anchor(
+    position: NatRulePosition | None, reference_item: NatRuleNameRef | None
+) -> None:
+    """Reject ``after``/``before`` without an anchor; ``top``/``bottom`` need none."""
+    if position in ("after", "before") and reference_item is None:
+        raise ValueError(
+            "position 'after' or 'before' requires referenceItem; use 'top' or 'bottom' "
+            "to position without an anchor"
+        )
+
+
 class _NatRuleCreateBase(BaseModel):
     """Fields shared by the IPv4 and IPv6 create bodies.
 
@@ -590,6 +601,12 @@ class _NatRuleCreateBase(BaseModel):
     health_check: NatRuleHealthCheckInput | None = Field(
         default=None, serialization_alias="healthCheck", description="Health-check settings."
     )
+
+    @model_validator(mode="after")
+    def _check_position(self) -> "_NatRuleCreateBase":
+        """Reject an anchored position without its anchor before any request is sent."""
+        _require_anchor(self.position, self.reference_item)
+        return self
 
 
 class NatRuleCreateIpv4Input(_NatRuleCreateBase):
@@ -784,6 +801,12 @@ class NatRuleMoveInput(BaseModel):
         serialization_alias="referenceItem",
         description="Anchor rule for the after/before positions.",
     )
+
+    @model_validator(mode="after")
+    def _check_position(self) -> "NatRuleMoveInput":
+        """Reject an anchored position without its anchor before any request is sent."""
+        _require_anchor(self.position, self.reference_item)
+        return self
 
 
 # -- Outputs: bounded projections ------------------------------------------------------

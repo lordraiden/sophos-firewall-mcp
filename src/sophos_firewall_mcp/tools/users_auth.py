@@ -26,11 +26,13 @@ request body only, is never logged, and no output model has a credential field.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, TypeVar
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
@@ -63,6 +65,8 @@ from sophos_firewall_mcp.tools import (
 )
 
 __all__ = ["register_users_tools"]
+
+OutputT = TypeVar("OutputT")
 
 #: ``getUsers`` -- the paginated general authentication-user list.
 USERS_PATH = "/authentication/users"
@@ -106,6 +110,28 @@ def _require_object(payload: Any, *, method: str, path: str) -> dict[str, Any]:
             path=path,
         )
     return payload
+
+
+def _schema_error(exc: ValidationError, path: str) -> ToolError:
+    """Build the sanitized error for a response that does not match its output model.
+
+    Only the field location is echoed: the rejected input may contain appliance data
+    (including a network-user record), and the raw payload must never reach the model.
+    """
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ())) or "body"
+    return ToolError(
+        f"the appliance returned a response for {path} that does not match the documented "
+        f"schema ({location})"
+    )
+
+
+def _project(payload: Any, project: Callable[[Any], OutputT], path: str) -> OutputT:
+    """Project one appliance payload, with a sanitized error when it does not match."""
+    try:
+        return project(payload)
+    except ValidationError as exc:
+        raise _schema_error(exc, path) from exc
 
 
 def _create_body(request: NetworkUserCreateInput) -> dict[str, Any]:
@@ -159,7 +185,7 @@ class UsersAdapter(DomainAdapter):
                 page_total=request.page_total,
                 params=_name_filter_params(request),
             )
-            return project_user_page(payload)
+            return _project(payload, project_user_page, USERS_PATH)
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
 
@@ -175,7 +201,7 @@ class UsersAdapter(DomainAdapter):
                 page_total=request.page_total,
                 params=_name_filter_params(request),
             )
-            return project_network_user_page(payload)
+            return _project(payload, project_network_user_page, NETWORK_USERS_PATH)
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
 
@@ -184,7 +210,11 @@ class UsersAdapter(DomainAdapter):
         path = _network_user_path(request.id_or_name)
         try:
             payload = await self.client.get(path)
-            return project_network_user(_require_object(payload, method="GET", path=path))
+            return _project(
+                _require_object(payload, method="GET", path=path),
+                project_network_user,
+                NETWORK_USERS_PATH,
+            )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
 
@@ -192,8 +222,10 @@ class UsersAdapter(DomainAdapter):
         """``createNetworkUser``: create one network user."""
         try:
             payload = await self.client.post(NETWORK_USERS_PATH, json=_create_body(request))
-            return project_network_user(
-                _require_object(payload, method="POST", path=NETWORK_USERS_PATH)
+            return _project(
+                _require_object(payload, method="POST", path=NETWORK_USERS_PATH),
+                project_network_user,
+                NETWORK_USERS_PATH,
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
@@ -203,7 +235,11 @@ class UsersAdapter(DomainAdapter):
         path = _network_user_path(request.id_or_name)
         try:
             payload = await self.client.patch(path, json=_update_body(request))
-            return project_network_user(_require_object(payload, method="PATCH", path=path))
+            return _project(
+                _require_object(payload, method="PATCH", path=path),
+                project_network_user,
+                NETWORK_USERS_PATH,
+            )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
 
@@ -220,8 +256,10 @@ class UsersAdapter(DomainAdapter):
         """``getLiveUsers``: the ``{items, pages}`` live-session body, no request pagination."""
         try:
             payload = await self.client.get(LIVE_USERS_PATH)
-            return project_live_user_page(
-                _require_object(payload, method="GET", path=LIVE_USERS_PATH)
+            return _project(
+                _require_object(payload, method="GET", path=LIVE_USERS_PATH),
+                project_live_user_page,
+                LIVE_USERS_PATH,
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
@@ -233,9 +271,10 @@ class UsersAdapter(DomainAdapter):
         body = request.model_dump(by_alias=True, exclude_unset=True, mode="json")
         try:
             payload = await self.client.post(LIVE_USERS_DISCONNECT_PATH, json=body)
-            return project_disconnect_live_user(
+            return _project(
                 _require_object(payload, method="POST", path=LIVE_USERS_DISCONNECT_PATH),
-                request.live_user_id,
+                lambda wire: project_disconnect_live_user(wire, request.live_user_id),
+                LIVE_USERS_DISCONNECT_PATH,
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
@@ -361,12 +400,12 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         title="Delete network user",
         description=(
             "Delete a network-user account (`deleteNetworkUser`) by name or UUID. Destructive: "
-            "the account is removed from the appliance. Not repeatable: a second call reports "
-            "not found, and if the name has been reused in the meantime a retry would target "
-            "the new account, so re-read before retrying. Returns `deleted` and the identifier "
-            "the delete was issued for."
+            "the account is removed from the appliance. Idempotent: repeating the delete has no "
+            "further effect and a second call reports not found. If the name has been reused in "
+            "the meantime, re-read before retrying: the retry would target the new account. "
+            "Returns `deleted` and the identifier the delete was issued for."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_user_delete(
         request: NetworkUserDeleteInput, ctx: Context[AppContext]

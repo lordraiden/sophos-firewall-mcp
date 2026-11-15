@@ -14,21 +14,28 @@ lifespan-created ``AppContext``.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
 import pytest
 import respx
+import yaml
 from mcp import Client
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.models.network import (
     DhcpRelayRefInput,
+    DhcpServerIpv4,
     DnsSettings,
+    FilterInput,
+    FilteredPageInput,
     KeysetPage,
     NetworkInterfaceCreateVlanInput,
     NetworkInterfaceUpdateVlanInput,
     SdwanRoute,
+    UnicastRouteIpv4,
+    UnicastRouteIpv6,
     VlanIpv4Create,
     ZoneRefInput,
 )
@@ -41,6 +48,7 @@ BASE = f"https://{HOST}:4444/api/firewall-config/v1"
 API_PREFIX = "/api/firewall-config/v1"
 
 INTERFACES = "/network/interfaces/network-interfaces"
+SPEC_PATH = Path(__file__).resolve().parents[1] / "firewall_config_openapi.yaml"
 
 RELAY_UUID = "6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f"
 
@@ -660,6 +668,21 @@ async def test_a_non_object_response_is_reported_as_a_tool_error(router: Any) ->
     assert "non-object body" in result.content[0].text
 
 
+async def test_a_malformed_interface_payload_is_a_sanitized_tool_error(router: Any) -> None:
+    """A 200 body that does not match the output model becomes a sanitized ToolError."""
+    router.get(f"{BASE}{INTERFACES}/Port 1").mock(
+        return_value=httpx.Response(200, json={"id": "u-1", "name": "Port 1", "type": 123})
+    )
+
+    result = await call_tool("network_interface_get", {"request": {"idOrName": "Port 1"}})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "does not match the documented schema" in text
+    assert "123" not in text
+    assert KEY not in text
+
+
 async def test_a_dhcp_relay_name_is_rejected_before_any_request(router: Any) -> None:
     route = router.get(f"{BASE}/network/dhcp/relays/ipv4/relay1").mock(
         return_value=httpx.Response(200, json={})
@@ -723,7 +746,7 @@ async def test_vlan_writes_declare_their_risk_and_idempotence() -> None:
     assert update.idempotent_hint is True
     assert delete.read_only_hint is False
     assert delete.destructive_hint is True
-    assert delete.idempotent_hint is False
+    assert delete.idempotent_hint is True
 
 
 async def test_every_tool_has_an_actionable_description() -> None:
@@ -880,3 +903,78 @@ def test_dhcp_relay_input_requires_a_uuid() -> None:
     assert DhcpRelayRefInput(id=RELAY_UUID).id == RELAY_UUID
     with pytest.raises(ValueError):
         DhcpRelayRefInput(id="relay1")
+
+
+def test_network_name_filters_are_mutually_exclusive() -> None:
+    """The contract declares ``nameContains`` and ``nameNotEquals`` mutually exclusive."""
+    for model in (FilteredPageInput, FilterInput):
+        with pytest.raises(ValueError, match="mutually exclusive"):
+            model(nameContains="lan", nameNotEquals="wan")
+        assert model(nameContains="lan").name_filters() == {"nameContains": "lan"}
+        assert model(nameNotEquals="wan").name_filters() == {"nameNotEquals": "wan"}
+
+
+def test_dhcp_server_projection_keeps_boot_next_server() -> None:
+    """``bootNextServer`` is declared by the contract and must not be dropped."""
+    server = DhcpServerIpv4.model_validate(
+        {
+            "id": "u-1",
+            "name": "dhcp-lan",
+            "enabled": True,
+            "bootFile": "pxelinux.0",
+            "bootNextServer": {"ipv4Address": "10.0.10.5"},
+        }
+    )
+
+    assert server.bootFile == "pxelinux.0"
+    assert server.bootNextServer is not None
+    assert server.bootNextServer.ipv4Address == "10.0.10.5"
+    assert server.bootNextServer.fqdn is None
+
+    fqdn = DhcpServerIpv4.model_validate({"bootNextServer": {"fqdn": "boot.example.com"}})
+    assert fqdn.bootNextServer is not None
+    assert fqdn.bootNextServer.fqdn == "boot.example.com"
+
+
+def _response_properties(operation_id: str) -> set[str]:
+    """The merged 200-response property names of one operation, parsed from the contract."""
+    document = yaml.safe_load(SPEC_PATH.read_text())
+    for path_item in document["paths"].values():
+        for operation in path_item.values():
+            if not isinstance(operation, dict) or operation.get("operationId") != operation_id:
+                continue
+            schema = operation["responses"]["200"]["content"]["application/json"]["schema"]
+            properties = dict(schema.get("properties") or {})
+            for member in schema.get("allOf") or []:
+                properties.update(member.get("properties") or {})
+            return set(properties)
+    raise AssertionError(f"{operation_id} not found in the contract")
+
+
+def test_unicast_route_models_match_the_parsed_contract() -> None:
+    """``name``/``interface`` are declared by the contract, so the models keep exactly it."""
+    assert set(UnicastRouteIpv4.model_fields) == _response_properties("getUnicastRouteIPv4")
+    assert set(UnicastRouteIpv6.model_fields) == _response_properties("getUnicastRouteIPv6")
+
+
+async def test_unpaginated_lists_render_only_items(router: Any) -> None:
+    """The four list operations declare no ``pages`` member, so none is rendered."""
+    router.get(f"{BASE}/network/dhcp/relays/ipv4").mock(
+        return_value=httpx.Response(200, json={"items": [{"id": RELAY_UUID, "name": "relay1"}]})
+    )
+
+    result = await call_tool("dhcp_relay_list_ipv4", {"request": {}})
+
+    assert result.is_error is False
+    assert set(result.structured_content) == {"items"}
+
+    tools = await tool_map()
+    for name in (
+        "dhcp_relay_list_ipv4",
+        "dhcp_relay_list_ipv6",
+        "dhcp_server_list_ipv4",
+        "dhcp_server_list_ipv6",
+    ):
+        schema = tools[name].output_schema
+        assert schema is not None
+        assert "pages" not in schema["properties"], name

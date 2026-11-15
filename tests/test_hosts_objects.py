@@ -794,6 +794,22 @@ async def test_validation_error_never_echoes_the_raw_body(router: Any):
     assert "raw appliance detail" not in result.content[0].text
 
 
+async def test_a_malformed_address_payload_is_a_sanitized_tool_error(router: Any):
+    """A 200 body that does not match the output model becomes a sanitized ToolError."""
+    router.get(f"{BASE}/network/addresses/ipv4/web").mock(
+        return_value=httpx.Response(200, json={**IPV4_ITEM, "ipv4Address": "not-an-ip"})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("address_get_ipv4", {"request": {"id_or_name": "web"}})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "does not match the documented schema" in text
+    assert "not-an-ip" not in text
+    assert KEY not in text
+
+
 # -- Model tests: families stay distinct -----------------------------------------------
 
 

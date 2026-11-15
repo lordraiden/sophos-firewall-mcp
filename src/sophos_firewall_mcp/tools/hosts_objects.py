@@ -25,8 +25,9 @@ from typing import Any, Callable, TypeVar
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
@@ -121,6 +122,28 @@ def _object_path(collection: str, id_or_name: str) -> str:
     return f"{collection}/{quote(id_or_name, safe='')}"
 
 
+def _schema_error(exc: ValidationError, path: str) -> ToolError:
+    """Build the sanitized error for a response that does not match its output model.
+
+    Only the field location is echoed: the rejected input may contain appliance data, and
+    the raw payload must never reach the model.
+    """
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ())) or "body"
+    return ToolError(
+        f"the appliance returned a response for {path} that does not match the documented "
+        f"schema ({location})"
+    )
+
+
+def _project(payload: Any, model: type[OutputT], path: str) -> OutputT:
+    """Validate one appliance payload into its bounded model, with a sanitized error."""
+    try:
+        return model.model_validate(payload)
+    except ValidationError as exc:
+        raise _schema_error(exc, path) from exc
+
+
 class ObjectsAdapter(DomainAdapter):
     """Project the address, group, MAC and country operations onto typed MCP DTOs."""
 
@@ -135,7 +158,7 @@ class ObjectsAdapter(DomainAdapter):
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return output.model_validate(payload)
+        return _project(payload, output, path)
 
     async def _get(self, path: str, id_or_name: str) -> Any:
         try:
@@ -171,19 +194,19 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_ipv4_address(self, request: ObjectIdentifierInput) -> Ipv4AddressResult:
         payload = await self._get(IPV4_ADDRESSES_PATH, request.id_or_name)
-        return Ipv4AddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, Ipv4AddressResult, IPV4_ADDRESSES_PATH)
 
     async def create_ipv4_address(self, request: Ipv4AddressCreate) -> Ipv4AddressResult:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(IPV4_ADDRESSES_PATH, body)
-        return Ipv4AddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, Ipv4AddressResult, IPV4_ADDRESSES_PATH)
 
     async def update_ipv4_address(self, request: Ipv4AddressUpdateInput) -> Ipv4AddressResult:
         body = request.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(IPV4_ADDRESSES_PATH, request.id_or_name, body)
-        return Ipv4AddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, Ipv4AddressResult, IPV4_ADDRESSES_PATH)
 
     async def delete_ipv4_address(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(IPV4_ADDRESSES_PATH, request.id_or_name)
@@ -195,19 +218,19 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_ipv6_address(self, request: ObjectIdentifierInput) -> Ipv6AddressResult:
         payload = await self._get(IPV6_ADDRESSES_PATH, request.id_or_name)
-        return Ipv6AddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, Ipv6AddressResult, IPV6_ADDRESSES_PATH)
 
     async def create_ipv6_address(self, request: Ipv6AddressCreate) -> Ipv6AddressResult:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(IPV6_ADDRESSES_PATH, body)
-        return Ipv6AddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, Ipv6AddressResult, IPV6_ADDRESSES_PATH)
 
     async def update_ipv6_address(self, request: Ipv6AddressUpdateInput) -> Ipv6AddressResult:
         body = request.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(IPV6_ADDRESSES_PATH, request.id_or_name, body)
-        return Ipv6AddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, Ipv6AddressResult, IPV6_ADDRESSES_PATH)
 
     async def delete_ipv6_address(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(IPV6_ADDRESSES_PATH, request.id_or_name)
@@ -219,19 +242,19 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_fqdn_address(self, request: ObjectIdentifierInput) -> FqdnAddress:
         payload = await self._get(FQDN_ADDRESSES_PATH, request.id_or_name)
-        return FqdnAddress.model_validate(payload)
+        return _project(payload, FqdnAddress, FQDN_ADDRESSES_PATH)
 
     async def create_fqdn_address(self, request: FqdnAddressCreate) -> FqdnAddress:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(FQDN_ADDRESSES_PATH, body)
-        return FqdnAddress.model_validate(payload)
+        return _project(payload, FqdnAddress, FQDN_ADDRESSES_PATH)
 
     async def update_fqdn_address(self, request: FqdnAddressUpdateInput) -> FqdnAddress:
         body = request.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(FQDN_ADDRESSES_PATH, request.id_or_name, body)
-        return FqdnAddress.model_validate(payload)
+        return _project(payload, FqdnAddress, FQDN_ADDRESSES_PATH)
 
     async def delete_fqdn_address(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(FQDN_ADDRESSES_PATH, request.id_or_name)
@@ -245,12 +268,12 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_ipv4_address_group(self, request: ObjectIdentifierInput) -> Ipv4AddressGroup:
         payload = await self._get(IPV4_GROUPS_PATH, request.id_or_name)
-        return Ipv4AddressGroup.model_validate(payload)
+        return _project(payload, Ipv4AddressGroup, IPV4_GROUPS_PATH)
 
     async def create_ipv4_address_group(self, request: Ipv4AddressGroupCreate) -> Ipv4AddressGroup:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(IPV4_GROUPS_PATH, body)
-        return Ipv4AddressGroup.model_validate(payload)
+        return _project(payload, Ipv4AddressGroup, IPV4_GROUPS_PATH)
 
     async def update_ipv4_address_group(
         self, request: Ipv4AddressGroupUpdateInput
@@ -259,7 +282,7 @@ class ObjectsAdapter(DomainAdapter):
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(IPV4_GROUPS_PATH, request.id_or_name, body)
-        return Ipv4AddressGroup.model_validate(payload)
+        return _project(payload, Ipv4AddressGroup, IPV4_GROUPS_PATH)
 
     async def delete_ipv4_address_group(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(IPV4_GROUPS_PATH, request.id_or_name)
@@ -273,12 +296,12 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_ipv6_address_group(self, request: ObjectIdentifierInput) -> Ipv6AddressGroup:
         payload = await self._get(IPV6_GROUPS_PATH, request.id_or_name)
-        return Ipv6AddressGroup.model_validate(payload)
+        return _project(payload, Ipv6AddressGroup, IPV6_GROUPS_PATH)
 
     async def create_ipv6_address_group(self, request: Ipv6AddressGroupCreate) -> Ipv6AddressGroup:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(IPV6_GROUPS_PATH, body)
-        return Ipv6AddressGroup.model_validate(payload)
+        return _project(payload, Ipv6AddressGroup, IPV6_GROUPS_PATH)
 
     async def update_ipv6_address_group(
         self, request: Ipv6AddressGroupUpdateInput
@@ -287,7 +310,7 @@ class ObjectsAdapter(DomainAdapter):
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(IPV6_GROUPS_PATH, request.id_or_name, body)
-        return Ipv6AddressGroup.model_validate(payload)
+        return _project(payload, Ipv6AddressGroup, IPV6_GROUPS_PATH)
 
     async def delete_ipv6_address_group(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(IPV6_GROUPS_PATH, request.id_or_name)
@@ -301,12 +324,12 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_fqdn_address_group(self, request: ObjectIdentifierInput) -> FqdnAddressGroup:
         payload = await self._get(FQDN_GROUPS_PATH, request.id_or_name)
-        return FqdnAddressGroup.model_validate(payload)
+        return _project(payload, FqdnAddressGroup, FQDN_GROUPS_PATH)
 
     async def create_fqdn_address_group(self, request: FqdnAddressGroupCreate) -> FqdnAddressGroup:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(FQDN_GROUPS_PATH, body)
-        return FqdnAddressGroup.model_validate(payload)
+        return _project(payload, FqdnAddressGroup, FQDN_GROUPS_PATH)
 
     async def update_fqdn_address_group(
         self, request: FqdnAddressGroupUpdateInput
@@ -315,7 +338,7 @@ class ObjectsAdapter(DomainAdapter):
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(FQDN_GROUPS_PATH, request.id_or_name, body)
-        return FqdnAddressGroup.model_validate(payload)
+        return _project(payload, FqdnAddressGroup, FQDN_GROUPS_PATH)
 
     async def delete_fqdn_address_group(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(FQDN_GROUPS_PATH, request.id_or_name)
@@ -327,19 +350,19 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_mac_address(self, request: ObjectIdentifierInput) -> MacAddressResult:
         payload = await self._get(MAC_ADDRESSES_PATH, request.id_or_name)
-        return MacAddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, MacAddressResult, MAC_ADDRESSES_PATH)
 
     async def create_mac_address(self, request: MacAddressCreate) -> MacAddressResult:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(MAC_ADDRESSES_PATH, body)
-        return MacAddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, MacAddressResult, MAC_ADDRESSES_PATH)
 
     async def update_mac_address(self, request: MacAddressUpdateInput) -> MacAddressResult:
         body = request.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(MAC_ADDRESSES_PATH, request.id_or_name, body)
-        return MacAddressResult.model_validate({"address": payload})
+        return _project({"address": payload}, MacAddressResult, MAC_ADDRESSES_PATH)
 
     async def delete_mac_address(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(MAC_ADDRESSES_PATH, request.id_or_name)
@@ -351,7 +374,7 @@ class ObjectsAdapter(DomainAdapter):
 
     async def get_country_group(self, request: ObjectIdentifierInput) -> CountryGroup:
         payload = await self._get(COUNTRY_GROUPS_PATH, request.id_or_name)
-        return CountryGroup.model_validate(payload)
+        return _project(payload, CountryGroup, COUNTRY_GROUPS_PATH)
 
 
 # -- Handlers --------------------------------------------------------------------------

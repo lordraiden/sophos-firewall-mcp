@@ -23,11 +23,12 @@ it, because the network module registers this module and a shared import would b
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, TypeVar
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
@@ -36,6 +37,8 @@ from sophos_firewall_mcp.models.common import ListPage
 from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
 
 __all__ = ["register_vpn_tools"]
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
 
 # -- API paths (module constants: no tool argument ever reaches a path) -----------------
 
@@ -63,6 +66,28 @@ def _require_object(payload: Any, path: str) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ToolError(f"the appliance returned a non-object body for GET {path}")
     return payload
+
+
+def _schema_error(exc: ValidationError, path: str) -> ToolError:
+    """Build the sanitized error for a response that does not match its output model.
+
+    Only the field location is echoed: the rejected input may contain appliance data, and
+    the raw payload must never reach the model.
+    """
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ())) or "body"
+    return ToolError(
+        f"the appliance returned a response for {path} that does not match the documented "
+        f"schema ({location})"
+    )
+
+
+def _project(payload: Any, model: type[ModelT], path: str) -> ModelT:
+    """Validate one appliance payload into its bounded model, with a sanitized error."""
+    try:
+        return model.model_validate(payload)
+    except ValidationError as exc:
+        raise _schema_error(exc, path) from exc
 
 
 class VpnAdapter(DomainAdapter):
@@ -163,7 +188,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.IpsecProfile]:
         payload = await VpnAdapter.from_context(ctx).page(_PROFILES, request)
-        return ListPage[models.IpsecProfile].model_validate(payload)
+        return _project(payload, ListPage[models.IpsecProfile], _PROFILES)
 
     @register_tool(
         server,
@@ -177,7 +202,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnProfileRefInput, ctx: Context[AppContext]
     ) -> models.IpsecProfile:
         payload = await VpnAdapter.from_context(ctx).object(_PROFILES, request.id_or_name)
-        return models.IpsecProfile.model_validate(payload)
+        return _project(payload, models.IpsecProfile, _PROFILES)
 
     # -- IPsec failover groups ---------------------------------------------------------
 
@@ -197,7 +222,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.FailoverGroupListInput, ctx: Context[AppContext]
     ) -> ListPage[models.IpsecFailoverGroup]:
         payload = await VpnAdapter.from_context(ctx).failover_group_page(_FAILOVER_GROUPS, request)
-        return ListPage[models.IpsecFailoverGroup].model_validate(payload)
+        return _project(payload, ListPage[models.IpsecFailoverGroup], _FAILOVER_GROUPS)
 
     @register_tool(
         server,
@@ -211,7 +236,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFailoverGroupRefInput, ctx: Context[AppContext]
     ) -> models.IpsecFailoverGroup:
         payload = await VpnAdapter.from_context(ctx).object(_FAILOVER_GROUPS, request.id_or_name)
-        return models.IpsecFailoverGroup.model_validate(payload)
+        return _project(payload, models.IpsecFailoverGroup, _FAILOVER_GROUPS)
 
     # -- IPsec site-to-site connections ------------------------------------------------
 
@@ -233,7 +258,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.IpsecConnection]:
         payload = await VpnAdapter.from_context(ctx).page(_CONNECTIONS_IPV4, request)
-        return ListPage[models.IpsecConnection].model_validate(payload)
+        return _project(payload, ListPage[models.IpsecConnection], _CONNECTIONS_IPV4)
 
     @register_tool(
         server,
@@ -250,7 +275,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.IpsecConnection]:
         payload = await VpnAdapter.from_context(ctx).page(_POLICY_BASED_IPV4, request)
-        return ListPage[models.IpsecConnection].model_validate(payload)
+        return _project(payload, ListPage[models.IpsecConnection], _POLICY_BASED_IPV4)
 
     @register_tool(
         server,
@@ -264,7 +289,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnPolicyBasedConnectionRefInput, ctx: Context[AppContext]
     ) -> models.IpsecConnection:
         payload = await VpnAdapter.from_context(ctx).object(_POLICY_BASED_IPV4, request.id_or_name)
-        return models.IpsecConnection.model_validate(payload)
+        return _project(payload, models.IpsecConnection, _POLICY_BASED_IPV4)
 
     @register_tool(
         server,
@@ -281,7 +306,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.IpsecRouteBasedConnection]:
         payload = await VpnAdapter.from_context(ctx).page(_ROUTE_BASED_IPV4, request)
-        return ListPage[models.IpsecRouteBasedConnection].model_validate(payload)
+        return _project(payload, ListPage[models.IpsecRouteBasedConnection], _ROUTE_BASED_IPV4)
 
     @register_tool(
         server,
@@ -295,7 +320,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnRouteBasedConnectionRefInput, ctx: Context[AppContext]
     ) -> models.IpsecRouteBasedConnection:
         payload = await VpnAdapter.from_context(ctx).object(_ROUTE_BASED_IPV4, request.id_or_name)
-        return models.IpsecRouteBasedConnection.model_validate(payload)
+        return _project(payload, models.IpsecRouteBasedConnection, _ROUTE_BASED_IPV4)
 
     @register_tool(
         server,
@@ -315,7 +340,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         ctx: Context[AppContext],
     ) -> ListPage[models.IpsecLiveConnection]:
         payload = await VpnAdapter.from_context(ctx).unpaginated(_LIVE_CONNECTIONS_IPV4)
-        return ListPage[models.IpsecLiveConnection].model_validate(payload)
+        return _project(payload, ListPage[models.IpsecLiveConnection], _LIVE_CONNECTIONS_IPV4)
 
     @register_tool(
         server,
@@ -334,7 +359,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         ctx: Context[AppContext],
     ) -> models.IpsecRemoteAccessSettings:
         payload = await VpnAdapter.from_context(ctx).single(_REMOTE_ACCESS_SETTINGS)
-        return models.IpsecRemoteAccessSettings.model_validate(payload)
+        return _project(payload, models.IpsecRemoteAccessSettings, _REMOTE_ACCESS_SETTINGS)
 
     # -- SSL VPN remote-access policies ------------------------------------------------
 
@@ -354,7 +379,9 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SslVpnRemoteAccessPolicy]:
         payload = await VpnAdapter.from_context(ctx).page(_SSL_REMOTE_ACCESS_POLICIES, request)
-        return ListPage[models.SslVpnRemoteAccessPolicy].model_validate(payload)
+        return _project(
+            payload, ListPage[models.SslVpnRemoteAccessPolicy], _SSL_REMOTE_ACCESS_POLICIES
+        )
 
     @register_tool(
         server,
@@ -370,7 +397,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         payload = await VpnAdapter.from_context(ctx).object(
             _SSL_REMOTE_ACCESS_POLICIES, request.id_or_name
         )
-        return models.SslVpnRemoteAccessPolicy.model_validate(payload)
+        return _project(payload, models.SslVpnRemoteAccessPolicy, _SSL_REMOTE_ACCESS_POLICIES)
 
     # -- SSL VPN clientless bookmarks --------------------------------------------------
 
@@ -389,7 +416,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SslVpnBookmarkGroup]:
         payload = await VpnAdapter.from_context(ctx).page(_BOOKMARK_GROUPS, request)
-        return ListPage[models.SslVpnBookmarkGroup].model_validate(payload)
+        return _project(payload, ListPage[models.SslVpnBookmarkGroup], _BOOKMARK_GROUPS)
 
     @register_tool(
         server,
@@ -403,7 +430,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnBookmarkGroupRefInput, ctx: Context[AppContext]
     ) -> models.SslVpnBookmarkGroup:
         payload = await VpnAdapter.from_context(ctx).object(_BOOKMARK_GROUPS, request.id_or_name)
-        return models.SslVpnBookmarkGroup.model_validate(payload)
+        return _project(payload, models.SslVpnBookmarkGroup, _BOOKMARK_GROUPS)
 
     @register_tool(
         server,
@@ -422,7 +449,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SslVpnBookmark]:
         payload = await VpnAdapter.from_context(ctx).page(_BOOKMARKS, request)
-        return ListPage[models.SslVpnBookmark].model_validate(payload)
+        return _project(payload, ListPage[models.SslVpnBookmark], _BOOKMARKS)
 
     @register_tool(
         server,
@@ -439,7 +466,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnBookmarkRefInput, ctx: Context[AppContext]
     ) -> models.SslVpnBookmark:
         payload = await VpnAdapter.from_context(ctx).object(_BOOKMARKS, request.id_or_name)
-        return models.SslVpnBookmark.model_validate(payload)
+        return _project(payload, models.SslVpnBookmark, _BOOKMARKS)
 
     # -- SSL VPN clientless policies and global settings -------------------------------
 
@@ -459,7 +486,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: models.VpnFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SslVpnClientlessPolicy]:
         payload = await VpnAdapter.from_context(ctx).page(_CLIENTLESS_POLICIES, request)
-        return ListPage[models.SslVpnClientlessPolicy].model_validate(payload)
+        return _project(payload, ListPage[models.SslVpnClientlessPolicy], _CLIENTLESS_POLICIES)
 
     @register_tool(
         server,
@@ -475,7 +502,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         payload = await VpnAdapter.from_context(ctx).object(
             _CLIENTLESS_POLICIES, request.id_or_name
         )
-        return models.SslVpnClientlessPolicy.model_validate(payload)
+        return _project(payload, models.SslVpnClientlessPolicy, _CLIENTLESS_POLICIES)
 
     @register_tool(
         server,
@@ -492,4 +519,4 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
     )
     async def sslvpn_global_settings_get(ctx: Context[AppContext]) -> models.SslVpnGlobalSettings:
         payload = await VpnAdapter.from_context(ctx).single(_SSL_GLOBAL_SETTINGS)
-        return models.SslVpnGlobalSettings.model_validate(payload)
+        return _project(payload, models.SslVpnGlobalSettings, _SSL_GLOBAL_SETTINGS)

@@ -240,6 +240,15 @@ class VpnFilteredPageInput(VpnPageInput):
         description="Exclude the object with exactly this name.",
     )
 
+    @model_validator(mode="after")
+    def _at_most_one_name_filter(self) -> "VpnFilteredPageInput":
+        """Reject both name filters: the contract declares them mutually exclusive."""
+        if self.name_contains is not None and self.name_not_equals is not None:
+            raise ValueError(
+                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+            )
+        return self
+
     def name_filters(self) -> dict[str, str]:
         """The declared name filters, omitting the ones the caller did not set."""
         filters: dict[str, str] = {}

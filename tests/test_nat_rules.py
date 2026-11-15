@@ -661,6 +661,22 @@ async def test_transport_errors_become_sanitized_tool_errors(
     assert KEY not in text
 
 
+async def test_list_rejects_a_malformed_rule_payload(router: Any):
+    """A 200 body that does not match the output model becomes a sanitized ToolError."""
+    malformed = {**IPV4_RULE, "enabled": "not-a-boolean"}
+    router.get(IPV4_URL).mock(
+        return_value=httpx.Response(200, json={"items": [malformed], "pages": None})
+    )
+
+    result = await call_tool("nat_rule_list_ipv4", {})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "does not match the documented schema" in text
+    assert "not-a-boolean" not in text
+    assert KEY not in text
+
+
 # -- Model contract: create ------------------------------------------------------------
 
 
@@ -872,10 +888,10 @@ def test_ipv6_translated_destination_requires_ipv6_address():
 
 def test_position_and_load_balancing_enums_are_closed():
     for position in ("top", "bottom", "after", "before"):
-        assert (
-            NatRuleMoveInput.model_validate({"name": "r1", "position": position}).position
-            == position
-        )
+        payload: dict[str, Any] = {"name": "r1", "position": position}
+        if position in ("after", "before"):
+            payload["reference_item"] = {"name": "anchor"}
+        assert NatRuleMoveInput.model_validate(payload).position == position
     with pytest.raises(ValidationError):
         NatRuleMoveInput.model_validate({"name": "r1", "position": "middle"})
 
@@ -980,6 +996,31 @@ def test_move_requires_a_name_and_a_position():
         NatRuleMoveInput.model_validate({"name": "r1"})
     with pytest.raises(ValidationError):
         NatRuleMoveInput.model_validate({"name": "r1", "position": "middle"})
+
+
+def test_anchored_positions_require_a_reference_item():
+    """``after``/``before`` without an anchor is rejected before any request is sent."""
+    for position in ("after", "before"):
+        with pytest.raises(ValidationError, match="requires referenceItem"):
+            NatRuleCreateIpv4Input.model_validate({**MINIMAL_CREATE, "position": position})
+        with pytest.raises(ValidationError, match="requires referenceItem"):
+            NatRuleMoveInput.model_validate({"name": "r1", "position": position})
+
+    anchored = NatRuleCreateIpv4Input.model_validate(
+        {**MINIMAL_CREATE, "position": "before", "reference_item": {"name": "anchor"}}
+    )
+    assert anchored.reference_item is not None
+    assert anchored.reference_item.name == "anchor"
+
+
+async def test_move_refuses_an_anchored_position_without_an_anchor(router: Any):
+    route = router.post(IPV4_MOVE_URL).mock(return_value=httpx.Response(200, json={}))
+
+    result = await call_tool("nat_rule_move_ipv4", {"name": "r1", "position": "after"})
+
+    assert result.is_error is True
+    assert "requires referenceItem" in result.content[0].text
+    assert route.call_count == 0
 
 
 # -- Output projection -----------------------------------------------------------------

@@ -524,6 +524,22 @@ async def test_validation_error_never_echoes_the_raw_body(router: Any):
     assert "raw appliance detail" not in result.content[0].text
 
 
+async def test_a_malformed_service_payload_is_a_sanitized_tool_error(router: Any):
+    """A 200 body that does not match the output model becomes a sanitized ToolError."""
+    router.get(f"{BASE}/network/services/web").mock(
+        return_value=httpx.Response(200, json={**SERVICE_ITEM, "type": "not-a-service-type"})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_get", {"request": {"id_or_name": "web"}})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "does not match the documented schema" in text
+    assert "not-a-service-type" not in text
+    assert KEY not in text
+
+
 # -- Model tests: services and groups stay distinct ------------------------------------
 
 

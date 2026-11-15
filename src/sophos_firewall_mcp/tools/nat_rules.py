@@ -39,11 +39,13 @@ declares no exception for these operations): the body is serialized with
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable, TypeVar
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
@@ -67,6 +69,8 @@ from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, to
 
 __all__ = ["register_nat_tools"]
 
+OutputT = TypeVar("OutputT")
+
 #: Collection path of the IPv4 NAT rule base (``getAllNatRulesIpv4``/``createNatRuleIpv4``).
 IPV4_RULES_PATH = "/nat/rules/ipv4"
 
@@ -83,6 +87,28 @@ IPV6_MOVE_PATH = "/nat/rules/ipv6/move"
 def _rule_path(collection_path: str, id_or_name: str) -> str:
     """Build the item path for one rule, percent-encoding the identifier as one segment."""
     return f"{collection_path}/{quote(id_or_name, safe='')}"
+
+
+def _schema_error(exc: ValidationError, path: str) -> ToolError:
+    """Build the sanitized error for a response that does not match its output model.
+
+    Only the field location is echoed: the rejected input may contain appliance data, and
+    the raw payload must never reach the model.
+    """
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ())) or "body"
+    return ToolError(
+        f"the appliance returned a response for {path} that does not match the documented "
+        f"schema ({location})"
+    )
+
+
+def _project(payload: Any, project: Callable[[Any], OutputT], path: str) -> OutputT:
+    """Project one appliance payload, with a sanitized error when it does not match."""
+    try:
+        return project(payload)
+    except ValidationError as exc:
+        raise _schema_error(exc, path) from exc
 
 
 class NatAdapter(DomainAdapter):
@@ -112,7 +138,7 @@ class NatAdapter(DomainAdapter):
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return project_nat_rule_page(payload)
+        return _project(payload, project_nat_rule_page, collection_path)
 
     async def get_rule(self, collection_path: str, id_or_name: str) -> NatRuleOutput:
         """Read one NAT rule by name or UUID (``getNatRule*ByIdOrName``)."""
@@ -120,7 +146,7 @@ class NatAdapter(DomainAdapter):
             payload = await self.client.get(_rule_path(collection_path, id_or_name))
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return project_nat_rule(payload)
+        return _project(payload, project_nat_rule, collection_path)
 
     async def create_rule(
         self,
@@ -139,7 +165,7 @@ class NatAdapter(DomainAdapter):
             payload = await self.client.post(collection_path, json=body)
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return project_nat_rule(payload)
+        return _project(payload, project_nat_rule, collection_path)
 
     async def update_rule(
         self,
@@ -158,7 +184,7 @@ class NatAdapter(DomainAdapter):
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return project_nat_rule(payload)
+        return _project(payload, project_nat_rule, collection_path)
 
     async def delete_rule(self, collection_path: str, id_or_name: str) -> NatRuleDeleteOutput:
         """Delete one NAT rule (``deleteNatRule*ByIdOrName``).

@@ -949,6 +949,21 @@ async def test_non_object_bodies_are_rejected_with_a_sanitized_error(router: Any
     assert "non-object body" not in result.content[0].text
 
 
+async def test_a_malformed_network_user_payload_is_a_sanitized_tool_error(router: Any):
+    """A 200 body that does not match the output model becomes a sanitized ToolError."""
+    router.get(f"{BASE}{NETWORK_USERS_PATH}/user-ops").mock(
+        return_value=httpx.Response(200, json={**NETWORK_USER_PAYLOAD, "active": "not-a-boolean"})
+    )
+
+    result = await call(make_server(), "network_user_get", {"id_or_name": "user-ops"})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "does not match the documented schema" in text
+    assert "not-a-boolean" not in text
+    assert KEY not in text
+
+
 # -- Credential redaction --------------------------------------------------------------
 
 
@@ -1061,7 +1076,7 @@ async def test_write_mode_registers_every_tool():
                 "title": "Delete network user",
                 "readOnlyHint": False,
                 "destructiveHint": True,
-                "idempotentHint": False,
+                "idempotentHint": True,
                 "openWorldHint": True,
             },
         ),

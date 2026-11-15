@@ -23,8 +23,9 @@ from typing import Any, Callable, TypeVar
 from urllib.parse import quote
 
 from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
@@ -69,6 +70,28 @@ def _object_path(collection: str, id_or_name: str) -> str:
     return f"{collection}/{quote(id_or_name, safe='')}"
 
 
+def _schema_error(exc: ValidationError, path: str) -> ToolError:
+    """Build the sanitized error for a response that does not match its output model.
+
+    Only the field location is echoed: the rejected input may contain appliance data, and
+    the raw payload must never reach the model.
+    """
+    first = exc.errors()[0]
+    location = ".".join(str(part) for part in first.get("loc", ())) or "body"
+    return ToolError(
+        f"the appliance returned a response for {path} that does not match the documented "
+        f"schema ({location})"
+    )
+
+
+def _project(payload: Any, model: type[OutputT], path: str) -> OutputT:
+    """Validate one appliance payload into its bounded model, with a sanitized error."""
+    try:
+        return model.model_validate(payload)
+    except ValidationError as exc:
+        raise _schema_error(exc, path) from exc
+
+
 class ServicesAdapter(DomainAdapter):
     """Project the service and service-group operations onto typed MCP DTOs."""
 
@@ -83,7 +106,7 @@ class ServicesAdapter(DomainAdapter):
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return output.model_validate(payload)
+        return _project(payload, output, path)
 
     async def _get(self, path: str, id_or_name: str) -> Any:
         try:
@@ -119,19 +142,19 @@ class ServicesAdapter(DomainAdapter):
 
     async def get_service(self, request: ObjectIdentifierInput) -> Service:
         payload = await self._get(SERVICES_PATH, request.id_or_name)
-        return Service.model_validate(payload)
+        return _project(payload, Service, SERVICES_PATH)
 
     async def create_service(self, request: ServiceCreate) -> Service:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(SERVICES_PATH, body)
-        return Service.model_validate(payload)
+        return _project(payload, Service, SERVICES_PATH)
 
     async def update_service(self, request: ServiceUpdateInput) -> Service:
         body = request.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(SERVICES_PATH, request.id_or_name, body)
-        return Service.model_validate(payload)
+        return _project(payload, Service, SERVICES_PATH)
 
     async def delete_service(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(SERVICES_PATH, request.id_or_name)
@@ -143,19 +166,19 @@ class ServicesAdapter(DomainAdapter):
 
     async def get_service_group(self, request: ObjectIdentifierInput) -> ServiceGroup:
         payload = await self._get(SERVICE_GROUPS_PATH, request.id_or_name)
-        return ServiceGroup.model_validate(payload)
+        return _project(payload, ServiceGroup, SERVICE_GROUPS_PATH)
 
     async def create_service_group(self, request: ServiceGroupCreate) -> ServiceGroup:
         body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
         payload = await self._create(SERVICE_GROUPS_PATH, body)
-        return ServiceGroup.model_validate(payload)
+        return _project(payload, ServiceGroup, SERVICE_GROUPS_PATH)
 
     async def update_service_group(self, request: ServiceGroupUpdateInput) -> ServiceGroup:
         body = request.model_dump(
             mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
         )
         payload = await self._update(SERVICE_GROUPS_PATH, request.id_or_name, body)
-        return ServiceGroup.model_validate(payload)
+        return _project(payload, ServiceGroup, SERVICE_GROUPS_PATH)
 
     async def delete_service_group(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(SERVICE_GROUPS_PATH, request.id_or_name)
