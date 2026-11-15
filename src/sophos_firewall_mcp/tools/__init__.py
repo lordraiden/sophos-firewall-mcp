@@ -79,6 +79,42 @@ unchanged; only the published ``inputSchema`` and the accepted argument shape ar
 tool whose request is a discriminated union publishes a root ``oneOf`` of the closed
 variants, because flattening a union into one object would lose the per-variant required
 fields.
+
+Destructive confirmation
+------------------------
+The four highest-blast-radius deletes -- ``firewall_rule_delete``, ``nat_rule_delete``,
+``network_user_delete`` and ``network_interface_delete_vlan`` -- ask the client to confirm
+before the appliance is touched, through :func:`confirm_destructive`. The question names
+the object and the rule base, and a declined or cancelled answer aborts the call with a
+:class:`~mcp.server.mcpserver.exceptions.ToolError` so nothing is deleted.
+
+The affordance is additive, never a new precondition. It is skipped -- and the delete
+proceeds exactly as before -- when the client cannot be asked:
+
+* the client declared no ``elicitation`` capability (``ctx.client_capabilities`` is
+  ``None`` or carries no ``form`` mode), which is the normal case for a non-interactive
+  client;
+* the transport has no back-channel for server-initiated requests
+  (``mcp.shared.exceptions.NoBackChannelError``). ``mcp`` 2.3.0 refuses a standalone
+  server-to-client request on the modern (``2026-07-28``) per-request path
+  (``mcp/server/runner.py:552-593``, ``_NoServerRequestsDispatchContext``); a client that
+  negotiated a handshake version (``2024-11-05`` .. ``2025-11-25``, the STDIO default)
+  does have one, so ``ctx.elicit`` works there. The modern path would need the
+  ``InputRequiredResult`` round trip that ``mcp`` 2.3.0 only wires for ``Resolve``
+  parameters (``mcp/server/mcpserver/resolve.py:10-30``, ``:96``), which would change
+  every handler signature; that is deliberately out of scope for this release.
+
+Open-world hint
+---------------
+``openWorldHint`` describes the tool's interaction domain, not how much its data can be
+trusted. This server talks to exactly one configured appliance and no tool accepts a URL,
+host or endpoint, so the domain of every tool that reads or writes that appliance's own
+configuration is closed: :data:`OPEN_WORLD_TOOLS` is the small, explicit set of tools whose
+result is produced by entities the appliance does not own and cannot enumerate -- DHCP
+client leases, live authenticated sessions, live IPsec peers, the cellular carrier's
+network registration and the vendor's DNS Protection verdict. Everything else publishes
+``openWorldHint: false``. A tool that starts reaching beyond the appliance must be added to
+that set; ``tests/test_tool_surface.py`` pins the mapping so the decision stays deliberate.
 """
 
 from __future__ import annotations
@@ -99,11 +135,17 @@ from typing import (
     get_origin,
 )
 
+from mcp.server.elicitation import (
+    AcceptedElicitation,
+    CancelledElicitation,
+    DeclinedElicitation,
+)
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.tools import Tool
+from mcp.shared.exceptions import NoBackChannelError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from pydantic.fields import FieldInfo
 
 from sophos_firewall_mcp.client import SophosRestClient
@@ -119,9 +161,11 @@ from sophos_firewall_mcp.errors import (
 )
 
 __all__ = [
+    "OPEN_WORLD_TOOLS",
     "DomainAdapter",
     "DomainRegistrar",
     "ToolKind",
+    "confirm_destructive",
     "register_tool",
     "tool_error",
 ]
@@ -196,6 +240,121 @@ ToolHandlerT = TypeVar("ToolHandlerT", bound=Callable[..., Any])
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 """A pydantic model class, used to keep the argument-model swap type-preserving."""
+
+#: The tools whose interaction domain is open, i.e. whose result is produced by entities
+#: the appliance does not own and cannot enumerate. Every other tool publishes
+#: ``openWorldHint: false``: it reads or writes the configuration and the operational
+#: state of the one configured appliance, which is a closed domain.
+#:
+#: The classification is by *what the result describes*, not by where the bytes come from
+#: (every tool reaches the appliance over the same REST client):
+#:
+#: ``dhcp_lease_list``
+#:     Live leases held by client devices on the network.
+#: ``live_user_list`` / ``live_user_disconnect``
+#:     Live sessions of authenticated users, and the act of terminating one.
+#: ``ipsec_live_connection_list_ipv4``
+#:     Established security associations with remote peers.
+#: ``network_status_cellular_wan``
+#:     The carrier's modem, SIM and network-registration state.
+#: ``network_status_dns_protection``
+#:     The vendor service's verdict on this firewall, not a value the appliance owns.
+#:
+#: The composites (``audit_firewall_rules``, ``find_object_usage``,
+#: ``explain_connectivity``) stay closed: they read only the appliance's own configuration,
+#: and ``explain_connectivity`` reports an FQDN as not verifiable instead of resolving it.
+OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
+    {
+        "dhcp_lease_list",
+        "ipsec_live_connection_list_ipv4",
+        "live_user_disconnect",
+        "live_user_list",
+        "network_status_cellular_wan",
+        "network_status_dns_protection",
+    }
+)
+"""The closed-by-default exception list for ``openWorldHint``; see the module docstring."""
+
+
+class _DestructiveConfirmation(BaseModel):
+    """The one question :func:`confirm_destructive` asks.
+
+    Elicitation schemas are restricted to primitive properties, so the answer is a single
+    boolean rather than a free-text acknowledgement.
+    """
+
+    confirm: bool = Field(
+        description=(
+            "Set true to perform the deletion; set false to abort without changing the "
+            "appliance."
+        )
+    )
+
+
+def _client_can_elicit(ctx: Context[AppContext]) -> bool:
+    """Whether the connected client declared the form-mode elicitation capability.
+
+    A client that declared nothing (``client_capabilities`` is ``None``) or declared no
+    ``elicitation`` capability cannot be asked, and the caller must keep its previous
+    behaviour rather than fail. The attribute is read defensively because a handler is
+    also called directly in tests with a stub context.
+    """
+    capabilities = getattr(ctx, "client_capabilities", None)
+    if capabilities is None:
+        return False
+    elicitation = getattr(capabilities, "elicitation", None)
+    if elicitation is None:
+        return False
+    return getattr(elicitation, "form", None) is not None
+
+
+async def confirm_destructive(
+    ctx: Context[AppContext],
+    *,
+    action: str,
+    target: str,
+) -> None:
+    """Ask the client to confirm a high-blast-radius destructive call.
+
+    Call this from a mutation handler before the adapter is invoked. It is a no-op when the
+    client cannot be asked (see the module docstring), so a non-interactive client keeps
+    working exactly as it did before the confirmation existed.
+
+    Args:
+        ctx: The SDK-injected context of the running tool.
+        action: What is about to happen, phrased as a verb and object, e.g.
+            ``"delete the firewall rule"``.
+        target: The object it happens to, including the rule base or family, e.g.
+            ``"'allow-lan-to-wan' from the ipv4 rule base"``.
+
+    Raises:
+        ToolError: The user declined or cancelled, or the client accepted without a usable
+            answer. Nothing has been sent to the appliance at that point.
+    """
+    if not _client_can_elicit(ctx):
+        return
+
+    message = f"Confirm: {action} {target}. This is irreversible and cannot be undone."
+    try:
+        result = await ctx.elicit(message, _DestructiveConfirmation)
+    except NoBackChannelError:
+        # The transport cannot carry a server-initiated request (the modern per-request
+        # path). Keep the previous behaviour instead of failing the delete.
+        return
+    except ValueError as exc:
+        # The client answered "accept" with no content or with content that does not match
+        # the schema. That is not a confirmation.
+        raise ToolError(
+            _sanitize(f"{action} was not confirmed: the client returned no usable answer")
+        ) from exc
+
+    if isinstance(result, AcceptedElicitation) and result.data.confirm:
+        return
+    if isinstance(result, DeclinedElicitation):
+        raise ToolError(f"{action} was declined by the user; nothing was changed")
+    if isinstance(result, CancelledElicitation):
+        raise ToolError(f"{action} was cancelled by the user; nothing was changed")
+    raise ToolError(f"{action} was not confirmed; nothing was changed")
 
 
 class ToolKind(Enum):
@@ -295,8 +454,9 @@ def register_tool(
             effects and limitations. Must be actionable on its own.
         annotations: Optional annotations. For a mutation tool ``destructive_hint`` and
             ``idempotent_hint`` are mandatory; for a read-only tool write hints are
-            rejected. ``title``, ``read_only_hint`` and ``open_world_hint`` are filled in
-            by this helper.
+            rejected. ``title`` and ``read_only_hint`` are filled in by this helper, and
+            ``open_world_hint`` defaults to the per-tool verdict in
+            :data:`OPEN_WORLD_TOOLS` unless the caller sets it explicitly.
 
     Returns:
         A decorator that registers the function and returns it unchanged, so the handler
@@ -315,7 +475,9 @@ def register_tool(
         ValueError: The metadata is invalid or the annotations contradict the kind.
     """
     _check_metadata(name=name, title=title, description=description)
-    resolved_annotations = _build_annotations(kind=kind, annotations=annotations, title=title)
+    resolved_annotations = _build_annotations(
+        kind=kind, annotations=annotations, title=title, name=name
+    )
 
     if kind is ToolKind.MUTATION and read_only:
         # Read-only deployment: the mutation handler is never added to the registry.
@@ -716,11 +878,17 @@ def _check_metadata(*, name: str, title: str, description: str) -> None:
 
 
 def _build_annotations(
-    *, kind: ToolKind, annotations: ToolAnnotations | None, title: str
+    *, kind: ToolKind, annotations: ToolAnnotations | None, title: str, name: str
 ) -> ToolAnnotations:
-    """Fill in the annotation policy for the tool kind and reject contradictions."""
+    """Fill in the annotation policy for the tool kind and reject contradictions.
+
+    ``openWorldHint`` is resolved per tool: an explicit value on ``annotations`` wins,
+    otherwise :data:`OPEN_WORLD_TOOLS` decides, and a tool that is not listed is closed.
+    """
     resolved = annotations if annotations is not None else ToolAnnotations()
-    open_world = True if resolved.open_world_hint is None else resolved.open_world_hint
+    open_world = (
+        name in OPEN_WORLD_TOOLS if resolved.open_world_hint is None else resolved.open_world_hint
+    )
 
     if kind is ToolKind.READ:
         if resolved.read_only_hint is False:

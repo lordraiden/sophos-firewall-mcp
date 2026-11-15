@@ -585,10 +585,11 @@ async def test_tool_annotations_use_the_wire_names_and_expected_values():
     read_wire = tools["sophos_synthetic_echo"].annotations.model_dump(
         by_alias=True, exclude_none=True
     )
+    # A synthetic tool is not in OPEN_WORLD_TOOLS, so the closed default applies.
     assert read_wire == {
         "title": "Echo a name",
         "readOnlyHint": True,
-        "openWorldHint": True,
+        "openWorldHint": False,
     }
 
     write_wire = tools["sophos_synthetic_mutate"].annotations.model_dump(
@@ -599,7 +600,7 @@ async def test_tool_annotations_use_the_wire_names_and_expected_values():
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
-        "openWorldHint": True,
+        "openWorldHint": False,
     }
 
 

@@ -229,7 +229,8 @@ async def test_read_tools_have_read_only_annotations():
         assert annotations["readOnlyHint"] is True
         assert "destructiveHint" not in annotations
         assert "idempotentHint" not in annotations
-        assert annotations["openWorldHint"] is True
+        # A NAT rule base is the appliance's own configuration: a closed interaction domain.
+        assert annotations["openWorldHint"] is False
 
 
 async def test_mutation_tools_declare_explicit_hints():
@@ -238,7 +239,7 @@ async def test_mutation_tools_declare_explicit_hints():
     for name in MUTATION_TOOLS:
         annotations = tools[name].annotations.model_dump(by_alias=True, exclude_none=True)
         assert annotations["readOnlyHint"] is False
-        assert annotations["openWorldHint"] is True
+        assert annotations["openWorldHint"] is False
         assert isinstance(annotations["destructiveHint"], bool)
         assert isinstance(annotations["idempotentHint"], bool)
 

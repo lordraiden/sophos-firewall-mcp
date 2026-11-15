@@ -43,6 +43,7 @@ from mcp.server.mcpserver import MCPServer
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.server import create_server
+from sophos_firewall_mcp.tools import OPEN_WORLD_TOOLS
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
@@ -187,14 +188,22 @@ async def test_every_output_schema_is_object_rooted():
         assert schema.get("properties"), tool.name
 
 
-async def test_every_tool_declares_the_conservative_open_world_hint():
-    """Sophos is an external appliance: its responses are not a closed data boundary."""
+async def test_every_tool_declares_the_per_tool_open_world_hint():
+    """The hint describes the interaction domain, not the trustworthiness of the data.
+
+    One configured appliance is a closed domain, so a tool that reads or writes its own
+    configuration is ``openWorldHint: false``. Only the tools whose result is produced by
+    entities the appliance does not own are open (``OPEN_WORLD_TOOLS``).
+    """
     async with Client(make_server()) as client:
         result = await client.list_tools()
 
     for tool in result.tools:
         assert tool.annotations is not None, tool.name
-        assert tool.annotations.open_world_hint is True, tool.name
+        assert tool.annotations.open_world_hint is (tool.name in OPEN_WORLD_TOOLS), tool.name
+
+    open_names = {tool.name for tool in result.tools if tool.annotations.open_world_hint}
+    assert open_names == set(OPEN_WORLD_TOOLS)
 
 
 async def test_read_only_tools_never_declare_write_only_hints():

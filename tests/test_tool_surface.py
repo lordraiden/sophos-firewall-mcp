@@ -8,8 +8,8 @@ the invariants that only the whole surface can prove:
   declared composites -- 112 tools with 112 unique names;
 * the full surface declares exactly 38 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
   exactly those, leaving 74 read-only tools and zero mutations;
-* every tool publishes an object-rooted output schema, a non-empty input schema and
-  ``openWorldHint=true``;
+* every tool publishes an object-rooted output schema, a non-empty input schema and the
+  per-tool ``openWorldHint`` verdict from ``OPEN_WORLD_TOOLS`` (closed by default);
 * every published input property name, at every depth of the request body, is snake_case
   (M1, the 0.5.0 breaking change);
 * every published output property name, at every depth of the response body, is camelCase
@@ -32,9 +32,12 @@ from typing import Any
 import yaml
 from mcp.server.mcpserver import MCPServer
 
+from mcp.types import ToolAnnotations
+
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.server import create_server
+from sophos_firewall_mcp.tools import OPEN_WORLD_TOOLS, ToolKind, register_tool
 
 ROOT = Path(__file__).resolve().parents[1]
 CURATED_PATH = ROOT / "scripts" / "coverage_curated.yaml"
@@ -205,7 +208,67 @@ async def test_every_tool_publishes_an_input_schema_and_an_open_world_hint() -> 
         annotations = tool.annotations
         assert annotations is not None, name
         assert annotations.title, name
-        assert annotations.open_world_hint is True, name
+        assert annotations.open_world_hint is (name in OPEN_WORLD_TOOLS), name
+
+
+async def test_the_open_world_set_is_exactly_the_documented_tools() -> None:
+    """Pin the judgment: changing the set must be a deliberate, reviewed edit.
+
+    ``openWorldHint`` describes the tool's interaction domain. This server talks to one
+    configured appliance, so a tool that reads or writes that appliance's own
+    configuration is closed. Only a result produced by entities the appliance does not own
+    -- DHCP clients, live users, live IPsec peers, the cellular carrier, the vendor's DNS
+    Protection verdict -- is open.
+    """
+    assert OPEN_WORLD_TOOLS == {
+        "dhcp_lease_list",
+        "ipsec_live_connection_list_ipv4",
+        "live_user_disconnect",
+        "live_user_list",
+        "network_status_cellular_wan",
+        "network_status_dns_protection",
+    }
+
+
+async def test_the_open_world_set_names_only_registered_tools() -> None:
+    """A rename must not leave a stale entry behind: the set is checked against the surface."""
+    tools = await tools_by_name()
+
+    assert OPEN_WORLD_TOOLS <= set(tools)
+
+
+async def test_an_explicit_open_world_hint_overrides_the_per_tool_default() -> None:
+    """A domain module may still declare the hint itself; the table is only the default."""
+    server = MCPServer[AppContext]("open-world-override")
+
+    @register_tool(
+        server,
+        read_only=False,
+        kind=ToolKind.READ,
+        name="synthetic_closed_read",
+        title="Synthetic closed read",
+        description="A read-only tool that declares a closed interaction domain explicitly.",
+        annotations=ToolAnnotations(open_world_hint=False),
+    )
+    async def synthetic_closed_read() -> dict[str, bool]:
+        return {"ok": True}
+
+    @register_tool(
+        server,
+        read_only=False,
+        kind=ToolKind.READ,
+        name="synthetic_open_read",
+        title="Synthetic open read",
+        description="A read-only tool that declares an open interaction domain explicitly.",
+        annotations=ToolAnnotations(open_world_hint=True),
+    )
+    async def synthetic_open_read() -> dict[str, bool]:
+        return {"ok": True}
+
+    tools = {tool.name: tool for tool in await server.list_tools()}
+
+    assert tools["synthetic_closed_read"].annotations.open_world_hint is False
+    assert tools["synthetic_open_read"].annotations.open_world_hint is True
 
 
 def _walk_properties(

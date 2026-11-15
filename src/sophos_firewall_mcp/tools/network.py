@@ -53,7 +53,13 @@ from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
 from sophos_firewall_mcp.models import network as models
 from sophos_firewall_mcp.models.common import ListPage
-from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
+from sophos_firewall_mcp.tools import (
+    DomainAdapter,
+    ToolKind,
+    confirm_destructive,
+    register_tool,
+    tool_error,
+)
 from sophos_firewall_mcp.tools.system import register_status_tools
 from sophos_firewall_mcp.tools.vpn import register_vpn_tools
 
@@ -399,14 +405,21 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "unless its type is 'vlan'; because deleteNetworkInterface has no request body, "
             "that pre-read is the only enforcement of the VLAN-only rule. Destructive: the "
             "interface and its configuration are removed, and a non-2xx response is reported "
-            "as an error rather than retried. Idempotent: repeating the delete has no further "
-            "effect, and an already-absent interface reports not found."
+            "as an error rather than retried. When the client supports elicitation the call "
+            "first asks the user to confirm, naming the interface; a declined or cancelled "
+            "confirmation aborts the call and nothing is deleted. Idempotent: repeating the "
+            "delete has no further effect, and an already-absent interface reports not found."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_interface_delete_vlan(
         request: models.NetworkInterfaceDeleteVlanInput, ctx: Context[AppContext]
     ) -> models.InterfaceDeleteOutput:
+        await confirm_destructive(
+            ctx,
+            action="delete the VLAN interface",
+            target=f"{request.id_or_name!r}",
+        )
         return await NetworkAdapter.from_context(ctx).delete_vlan(request.id_or_name)
 
     # -- Zones -------------------------------------------------------------------------

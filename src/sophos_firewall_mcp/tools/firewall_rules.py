@@ -45,10 +45,13 @@ Annotation policy: read tools carry no write hints; every mutation declares
 every non-additive mutation (update, delete, move, set_enabled) and false for the additive
 ones (create, clone); ``idempotent_hint`` is true when repeating the same call leaves the
 appliance in the same state (update, delete, move, set_enabled) and false for the two that
-create a new rule each time. ``open_world_hint`` is left at the foundation default
-(``true``): the appliance is external to the MCP process and its responses carry
-administrator- and system-controlled values, so the conservative interaction-domain
-classification applies.
+create a new rule each time. ``open_world_hint`` comes from the per-tool verdict in
+:data:`sophos_firewall_mcp.tools.OPEN_WORLD_TOOLS`: a rule base is the appliance's own
+configuration, so every tool here is closed (``false``).
+
+``firewall_rule_delete`` asks the client to confirm before the appliance is touched
+(:func:`sophos_firewall_mcp.tools.confirm_destructive`); a client that cannot be asked
+keeps the previous behaviour.
 """
 
 from __future__ import annotations
@@ -83,7 +86,13 @@ from sophos_firewall_mcp.models.firewall import (
     UpdateFirewallRuleIpv4Input,
     UpdateFirewallRuleIpv6Input,
 )
-from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
+from sophos_firewall_mcp.tools import (
+    DomainAdapter,
+    ToolKind,
+    confirm_destructive,
+    register_tool,
+    tool_error,
+)
 
 __all__ = ["register_firewall_tools"]
 
@@ -544,14 +553,21 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "Delete one firewall rule by id or name (deleteFirewallRuleIpv4 or "
             "deleteFirewallRuleIpv6, selected by the required ip_family). Destructive and "
-            "irreversible: the rule is removed from that family's rule base. Returns whether "
-            "the appliance confirmed the deletion."
+            "irreversible: the rule is removed from that family's rule base. When the client "
+            "supports elicitation the call first asks the user to confirm, naming the rule; "
+            "a declined or cancelled confirmation aborts the call and nothing is deleted. "
+            "Returns whether the appliance confirmed the deletion."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_delete(
         request: DeleteFirewallRuleInput, ctx: Context[AppContext]
     ) -> DeleteFirewallRuleOutput:
+        await confirm_destructive(
+            ctx,
+            action="delete the firewall rule",
+            target=f"{request.id_or_name!r} from the {request.ip_family} rule base",
+        )
         return await FirewallRuleAdapter.from_context(ctx).delete_rule(request)
 
     @register_tool(

@@ -64,7 +64,13 @@ from sophos_firewall_mcp.models.nat import (
     project_nat_rule,
     project_nat_rule_page,
 )
-from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
+from sophos_firewall_mcp.tools import (
+    DomainAdapter,
+    ToolKind,
+    confirm_destructive,
+    register_tool,
+    tool_error,
+)
 
 __all__ = ["register_nat_tools"]
 
@@ -342,8 +348,10 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "Delete one NAT rule by name or UUID (operationId deleteNatRuleIpv4ByIdOrName or "
             "deleteNatRuleIpv6ByIdOrName, selected by the required ip_family). Destructive "
-            "and not reversible; the rule is removed from that family's rule base. Bulk "
-            "delete is not exposed."
+            "and not reversible; the rule is removed from that family's rule base. When the "
+            "client supports elicitation the call first asks the user to confirm, naming the "
+            "rule; a declined or cancelled confirmation aborts the call and nothing is "
+            "deleted. Bulk delete is not exposed."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
@@ -351,6 +359,11 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         request: NatRuleDeleteInput, ctx: Context[AppContext]
     ) -> NatRuleDeleteOutput:
         path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
+        await confirm_destructive(
+            ctx,
+            action="delete the NAT rule",
+            target=f"{request.id_or_name!r} from the {request.ip_family} NAT rule base",
+        )
         return await NatAdapter.from_context(ctx).delete_rule(path, request.id_or_name)
 
     @register_tool(

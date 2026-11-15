@@ -1262,15 +1262,15 @@ async def test_write_mode_registers_every_tool():
     [
         (
             "user_list",
-            {"title": "List authentication users", "readOnlyHint": True, "openWorldHint": True},
+            {"title": "List authentication users", "readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_list",
-            {"title": "List network users", "readOnlyHint": True, "openWorldHint": True},
+            {"title": "List network users", "readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_get",
-            {"title": "Get network user", "readOnlyHint": True, "openWorldHint": True},
+            {"title": "Get network user", "readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_create",
@@ -1279,7 +1279,7 @@ async def test_write_mode_registers_every_tool():
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": False,
-                "openWorldHint": True,
+                "openWorldHint": False,
             },
         ),
         (
@@ -1289,7 +1289,7 @@ async def test_write_mode_registers_every_tool():
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": True,
-                "openWorldHint": True,
+                "openWorldHint": False,
             },
         ),
         (
@@ -1299,7 +1299,7 @@ async def test_write_mode_registers_every_tool():
                 "readOnlyHint": False,
                 "destructiveHint": True,
                 "idempotentHint": True,
-                "openWorldHint": True,
+                "openWorldHint": False,
             },
         ),
         (
