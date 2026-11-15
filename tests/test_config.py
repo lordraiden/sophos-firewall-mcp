@@ -14,8 +14,10 @@ from pydantic import ValidationError
 
 from sophos_firewall_mcp.config import (
     API_PATH_PREFIX,
+    DEFAULT_MAX_CONCURRENCY,
     DEFAULT_PORT,
     DEFAULT_TIMEOUT,
+    MAX_CONCURRENCY_LIMIT,
     ConfigurationError,
     Settings,
 )
@@ -117,18 +119,26 @@ def test_settings_expose_only_the_documented_fields() -> None:
         "ca_bundle",
         "timeout",
         "read_only_mode",
+        "max_concurrency",
     }
 
 
 def test_blank_optional_values_use_defaults() -> None:
     settings = Settings.from_env(
-        env(SOPHOS_PORT="", SOPHOS_TIMEOUT="", SOPHOS_VERIFY_SSL="", SOPHOS_READ_ONLY_MODE="")
+        env(
+            SOPHOS_PORT="",
+            SOPHOS_TIMEOUT="",
+            SOPHOS_VERIFY_SSL="",
+            SOPHOS_READ_ONLY_MODE="",
+            SOPHOS_MAX_CONCURRENCY="",
+        )
     )
 
     assert settings.port == 4444
     assert settings.timeout == 30.0
     assert settings.verify_ssl is True
     assert settings.read_only_mode is False
+    assert settings.max_concurrency == DEFAULT_MAX_CONCURRENCY == 4
 
 
 def test_optional_boolean_and_numeric_values_are_stripped() -> None:
@@ -389,6 +399,51 @@ def test_verify_ssl_false_is_allowed_without_ca_bundle() -> None:
 
     assert settings.verify_ssl is False
     assert settings.tls_verify is False
+
+
+# -- Concurrency bound -------------------------------------------------------
+
+
+def test_max_concurrency_defaults_to_four() -> None:
+    """L3: the shared client is bounded by default, without any configuration."""
+    settings = Settings.from_env(env())
+
+    assert settings.max_concurrency == DEFAULT_MAX_CONCURRENCY == 4
+
+
+@pytest.mark.parametrize("raw", ["1", "2", "8", "64"])
+def test_max_concurrency_is_read_from_env(raw: str) -> None:
+    assert Settings.from_env(env(SOPHOS_MAX_CONCURRENCY=raw)).max_concurrency == int(raw)
+
+
+def test_max_concurrency_is_stripped_like_every_other_optional_value() -> None:
+    assert Settings.from_env(env(SOPHOS_MAX_CONCURRENCY=" 3 ")).max_concurrency == 3
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "65", "1000"])
+def test_out_of_range_max_concurrency_is_rejected(raw: str) -> None:
+    """The setting exists to bound concurrency, so it cannot be set to "unbounded"."""
+    with pytest.raises(ConfigurationError) as info:
+        Settings.from_env(env(SOPHOS_MAX_CONCURRENCY=raw))
+
+    message = str(info.value)
+    assert "max_concurrency" in message
+    assert str(MAX_CONCURRENCY_LIMIT) in message
+    assert KEY not in message
+
+
+@pytest.mark.parametrize("raw", ["abc", "2.5", "four"])
+def test_non_integer_max_concurrency_is_rejected(raw: str) -> None:
+    with pytest.raises(ConfigurationError) as info:
+        Settings.from_env(env(SOPHOS_MAX_CONCURRENCY=raw))
+
+    assert "max_concurrency" in str(info.value)
+    assert KEY not in str(info.value)
+
+
+def test_max_concurrency_is_validated_on_direct_construction() -> None:
+    with pytest.raises(ValidationError):
+        Settings(host="fw.example.com", api_key=KEY, max_concurrency=0)
 
 
 # -- Secret handling ---------------------------------------------------------

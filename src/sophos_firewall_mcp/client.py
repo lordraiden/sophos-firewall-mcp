@@ -14,7 +14,10 @@ Transport policy (ADR-001 §9):
 * ``trust_env=False``: inherited proxy variables are ignored;
 * reads retry at most twice, only for connect/read timeouts and 502/503/504, with jittered
   exponential backoff; writes are never retried and surface
-  :class:`~sophos_firewall_mcp.errors.SophosAmbiguousWriteError` instead.
+  :class:`~sophos_firewall_mcp.errors.SophosAmbiguousWriteError` instead;
+* at most :attr:`~sophos_firewall_mcp.config.Settings.max_concurrency` requests are in flight at
+  once (four by default, ``SOPHOS_MAX_CONCURRENCY`` to change it), so a model that fans out cannot
+  turn one tool call per connection into a burst against the appliance.
 """
 
 from __future__ import annotations
@@ -126,6 +129,11 @@ class SophosRestClient:
 
     The client owns an HTTP connection pool: create one instance per process, reuse it for every
     tool call and close it with :meth:`aclose` (or ``async with``).
+
+    Concurrency is bounded by one semaphore shared by every primitive: at most
+    ``settings.max_concurrency`` requests are in flight at once, and a request waiting for a slot
+    holds no connection. The slot is released when the attempt finishes, including when it raises,
+    so a failing request cannot starve the client.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -135,6 +143,9 @@ class SophosRestClient:
         self._api_key = settings.api_key.get_secret_value()
         self._base_url = settings.base_url
         self._closed = False
+        # Created here, not lazily: since Python 3.10 a Semaphore binds to the running loop on first
+        # use, so constructing the client outside a loop is safe and the bound is fixed at startup.
+        self._semaphore = asyncio.Semaphore(settings.max_concurrency)
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             headers={
@@ -149,6 +160,11 @@ class SophosRestClient:
 
     def __repr__(self) -> str:
         return f"{type(self).__name__}(base_url={self._base_url!r})"
+
+    @property
+    def max_concurrency(self) -> int:
+        """Maximum number of requests this client keeps in flight at once."""
+        return self._settings.max_concurrency
 
     # -- Public interface -----------------------------------------------------
 
@@ -323,7 +339,10 @@ class SophosRestClient:
             kwargs["params"] = dict(params)
         if body is not _NO_BODY:
             kwargs["json"] = body
-        return await self._client.request(method, url, headers=request_headers, **kwargs)
+        # The single choke point for every request: the semaphore is held for exactly one attempt,
+        # so a retry waiting on its backoff does not occupy a slot.
+        async with self._semaphore:
+            return await self._client.request(method, url, headers=request_headers, **kwargs)
 
     async def _read(
         self, method: str, path: str, *, params: Mapping[str, Any] | None = None

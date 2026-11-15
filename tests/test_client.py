@@ -7,6 +7,7 @@ policy, the pagination helper and the secret-handling guarantees.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 from typing import Any
@@ -882,6 +883,113 @@ async def test_get_page_rejects_non_object_pages(router: Any) -> None:
         await client.aclose()
 
     assert "pages" in str(info.value)
+
+
+# -- Concurrency bound -------------------------------------------------------
+
+
+class _ConcurrencyProbe:
+    """RESPX async side effect that records how many requests overlap.
+
+    The handler holds its slot for a few milliseconds, which is long enough for every task that is
+    allowed to run to enter the handler before the first one leaves. Without a bound the peak equals
+    the fan-out; with a bound it equals the bound.
+    """
+
+    def __init__(self, hold_seconds: float = 0.01) -> None:
+        self.in_flight = 0
+        self.peak = 0
+        self._hold_seconds = hold_seconds
+
+    async def __call__(self, request: httpx.Request) -> httpx.Response:
+        self.in_flight += 1
+        self.peak = max(self.peak, self.in_flight)
+        try:
+            await asyncio.sleep(self._hold_seconds)
+        finally:
+            self.in_flight -= 1
+        return httpx.Response(200, json={})
+
+
+@pytest.mark.parametrize(
+    ("max_concurrency", "expected"),
+    [(None, 4), ("2", 2), ("1", 1)],
+)
+async def test_concurrent_requests_are_bounded_by_the_semaphore(
+    router: Any, max_concurrency: str | None, expected: int
+) -> None:
+    """L3: at most ``max_concurrency`` requests are in flight, whatever the fan-out."""
+    probe = _ConcurrencyProbe()
+    router.get(f"{BASE}/network/dns/settings").mock(side_effect=probe)
+
+    overrides = {} if max_concurrency is None else {"SOPHOS_MAX_CONCURRENCY": max_concurrency}
+    client = make_client(**overrides)
+    try:
+        assert client.max_concurrency == expected
+        results = await asyncio.gather(*(client.get("/network/dns/settings") for _ in range(8)))
+    finally:
+        await client.aclose()
+
+    assert results == [{}] * 8
+    assert probe.peak == expected
+
+
+async def test_reads_and_writes_share_one_bound(router: Any) -> None:
+    """One semaphore for the whole client: a write cannot bypass the bound a read respects."""
+    probe = _ConcurrencyProbe()
+    router.get(f"{BASE}/a").mock(side_effect=probe)
+    router.post(f"{BASE}/b").mock(side_effect=probe)
+
+    client = make_client(SOPHOS_MAX_CONCURRENCY="1")
+    try:
+        await asyncio.gather(client.get("/a"), client.post("/b", json={}), client.get("/a"))
+    finally:
+        await client.aclose()
+
+    assert probe.peak == 1
+
+
+async def test_a_failed_request_releases_its_semaphore_slot(router: Any) -> None:
+    """A slot is released on the error path too, or one failure would starve the client."""
+    router.get(f"{BASE}/fails").mock(return_value=httpx.Response(500))
+    router.get(f"{BASE}/works").mock(return_value=httpx.Response(200, json={"ok": True}))
+
+    client = make_client(SOPHOS_MAX_CONCURRENCY="1")
+    try:
+        with pytest.raises(SophosAPIError):
+            await client.get("/fails")
+        assert await client.get("/works") == {"ok": True}
+    finally:
+        await client.aclose()
+
+
+async def test_a_retry_backoff_does_not_hold_the_semaphore(
+    router: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The slot covers one attempt, not the backoff sleep: a retrying read must not block the rest."""
+    backoff_started = asyncio.Event()
+    release_backoff = asyncio.Event()
+
+    async def fake_sleep(seconds: float) -> None:
+        backoff_started.set()
+        await release_backoff.wait()
+
+    monkeypatch.setattr(client_module, "_sleep", fake_sleep)
+
+    router.get(f"{BASE}/retried").mock(
+        side_effect=[httpx.ReadTimeout("slow"), httpx.Response(200, json={"ok": True})]
+    )
+    router.get(f"{BASE}/other").mock(return_value=httpx.Response(200, json={"other": True}))
+
+    client = make_client(SOPHOS_MAX_CONCURRENCY="1")
+    try:
+        retried = asyncio.create_task(client.get("/retried"))
+        await asyncio.wait_for(backoff_started.wait(), timeout=1)
+        assert await asyncio.wait_for(client.get("/other"), timeout=1) == {"other": True}
+        release_backoff.set()
+        assert await asyncio.wait_for(retried, timeout=1) == {"ok": True}
+    finally:
+        await client.aclose()
 
 
 # -- Lifecycle ---------------------------------------------------------------
