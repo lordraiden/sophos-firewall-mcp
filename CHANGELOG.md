@@ -5,6 +5,107 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-15
+
+**Breaking: REST-only.** The server now speaks the **Sophos Firewall Configuration REST API**
+(`https://<host>:<port>/api/firewall-config/v1`, Bearer API key) and nothing else. The XML API
+transport, the XML credentials, the raw XML tool, the semantic tool router and the FastEmbed
+dependency are removed; there is no compatibility mode and no XML fallback. Tool names, inputs and
+outputs are new, so every existing client configuration and every saved tool call must be updated.
+
+### Breaking changes
+
+- **XML transport removed.** `SOPHOS_USERNAME`, `SOPHOS_PASSWORD` and `SOPHOS_API_VERSION` are no
+  longer read, `/webconsole/APIController` is no longer called, and `xmltodict` is no longer a
+  dependency. Authentication is a single Bearer API key (`SOPHOS_API_KEY` or `SOPHOS_API_KEY_FILE`).
+- **Tool surface replaced.** The 28 XML-era `sophos_*` tools are gone. The server now registers
+  **152 typed tools across 11 domains** (145 audited operations plus 7 composite tools), named by
+  domain (`firewall_rule_*`, `nat_rule_*`, `address_*`, `service_*`, `network_user_*`,
+  `live_user_*`, `ipsec_*`, `sslvpn_*`, `network_interface_*`, `zone_*`, `gateway_*`,
+  `unicast_route_*`, `sdwan_route_*`, `dhcp_*`, `dns_*`, `static_neighbor_*`,
+  `network_status_*`, `audit_firewall_rules`, `explain_connectivity`, `find_object_usage`).
+- **Raw API tool removed.** There is no replacement: no tool accepts a URL, path, HTTP method,
+  header or arbitrary payload. Operations outside the audited surface are not reachable.
+- **Semantic router removed.** `USE_ROUTER` / `TOOL_ROUTING`, the `route_tools` and
+  `call_routed_tool` meta-tools, the `router` extra and the FastEmbed model download are gone. The
+  full tool list is always advertised.
+- **Prompts and resources removed.** The `sophos://` resources and the guided prompts are not part
+  of the REST surface.
+- **Packaging.** `pyproject.toml` + `uv.lock` are the single dependency source; `requirements.txt`
+  and `requirements-dev.txt` are removed. Runtime dependency is `mcp>=2.3.0,<3`.
+
+### Added
+
+- **Typed REST client** (`client.py`, `config.py`, `errors.py`): one shared `httpx.AsyncClient`
+  created in the MCP lifespan and closed exactly once; HTTPS base URL built from a validated bare
+  host; Bearer key held as `SecretStr`; TLS verification on by default with optional
+  `SOPHOS_CA_BUNDLE`; explicit timeouts; no inherited proxy; no cross-origin redirects; bounded
+  read retries (connect/read timeouts and 502/503/504 only) and **no retry of writes**, which raise
+  an ambiguous-write error instead.
+- **MCP foundation** (`server.py`, `context.py`, `tools/__init__.py`): `MCPServer` with
+  `subscriptions=False`, STDIO transport, logs on `stderr`, a single `AppContext`, and a registration
+  contract shared by every domain.
+- **Eleven tool domains**: firewall rules (16), NAT rules (12), addresses and groups (37), services
+  and service groups (10), network users (6), live users (2), IPsec VPN (11, read-only), SSL VPN
+  (9, read-only), network architecture (44, read-only plus three VLAN-only interface writes),
+  network status (2, read-only) and audit (3, read-only composite tools).
+- **Read-only mode** (`SOPHOS_READ_ONLY_MODE=true`): mutation tools are not registered at all, so
+  discovery advertises 98 tools and zero mutations.
+- **Deterministic coverage matrix** (`scripts/generate_coverage.py`, `docs/API-COVERAGE.md`): every
+  operation of the checked-in OpenAPI contract is classified, with the tool that exposes it or the
+  reason it is excluded; the generator is SHA-gated to the audited contract.
+- **Live evidence protocol** (`docs/live-evidence/`): opt-in, read-only `pytest -m live` runs and a
+  documented per-domain evidence format.
+- **Release documentation** (`docs/release/RELEASE-0.4.0.md`): release notes, rollback plan and the
+  gate-B publication checklist.
+
+### Changed
+
+- **Pagination is explicit and bounded.** Listings return one page per call (`page`, `pageSize`,
+  `pageTotal` where the contract declares them); `page >= 1` and `1 <= pageSize <= 100` are
+  validated client-side. The server never auto-paginates.
+- **PATCH follows JSON Merge Patch (RFC 7396)** with `application/json`, as the contract documents;
+  omitted properties keep their persisted values. The four documented array exceptions are recorded
+  in `docs/API-COVERAGE.md` and are outside the v1 surface.
+- **Errors are sanitized.** Anticipated failures raise `ToolError` with a short message; raw remote
+  bodies, stack traces and secrets are never returned to the model.
+- **Outputs are typed DTOs with an object root**, not raw Sophos payloads, and are bounded.
+
+### Removed
+
+- XML transport, XML credentials, `xmltodict`, the raw XML tool, the semantic router, the FastEmbed
+  model download, the `router` extra, the MCP resources and prompts, and the stale
+  `requirements.txt` / `requirements-dev.txt` duplication.
+
+### Fixed
+
+- **Known dependency advisories in the locked runtime resolution.** `pip-audit` against
+  `uv export --locked --no-dev` reported 19 advisories in three transitive packages (via
+  `mcp`/`httpx`): `certifi` 2026.7.22 (PYSEC-2026-4320), `cryptography` 49.0.0 (PYSEC-2026-3552) and
+  `pyjwt` 2.13.0 (PYSEC-2026-4140…4152, 4183, GHSA-pxh4-856f-4h89). They are bumped to
+  `certifi` 2026.10.23, `cryptography` 50.0.2 and `pyjwt` 2.15.1; the audit now reports no known
+  vulnerabilities. No `pyproject.toml` constraint blocked the fix.
+
+### Accepted regressions
+
+The REST contract does not expose these capabilities, so they are not migrated and no placeholder
+tool is advertised:
+
+- **System information** — appliance model, serial number, firmware version and uptime. The contract
+  has no endpoint for them (`getSystemSettings` returns only `hostname`, `loginDisclaimer` and
+  `updatedAt`).
+- **Service status** — there is no REST endpoint that returns the running state of system services.
+- **Log query** — log destinations can be configured, but logs cannot be read through this API.
+
+### Known limitations
+
+- **Target firmware build is unknown.** The contract exposes no version endpoint, so no firmware
+  compatibility is claimed; verify against your own appliance.
+- **No live write validation.** The shared lab credential is read-only, so no POST, PATCH or DELETE
+  has been executed against a real appliance. Write tools are covered by contract tests only.
+- **Audit tools are configuration analysis**, not packet tests; they report `not-verifiable` when
+  the configuration does not contain enough evidence.
+
 ## [0.3.0] - 2026-10-28
 
 Breaking: requires `mcp>=2`, which renamed `FastMCP` to `MCPServer` and moved the import to
@@ -19,6 +120,10 @@ used to arrive as `Error executing tool <name>: ` with an empty message now carr
 its text and a traceback in the server log.
 
 ## [Unreleased]
+
+> **Superseded by 0.4.0.** The entries below describe XML-era code that the REST migration deleted
+> (`_guard.py`, the XML client, `resources.py`, `prompts.py`, the XML domain modules). They are kept
+> for history only and will not ship. The one entry that still applies is the upstream sync policy.
 
 ### Added
 - **Documented upstream sync policy (`docs/UPSTREAM-SYNC.md`, `scripts/sync-upstream.sh`)**: this fork is the

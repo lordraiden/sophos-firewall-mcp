@@ -10,34 +10,51 @@ on:
   schedule:
     - cron: "0 8 * * 1"  # Every Monday at 08:00 UTC
 
+permissions:
+  contents: read
+
 jobs:
   pip-audit:
-    name: Dependency vulnerability scan
+    name: Dependency audit (locked resolution)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
+          enable-cache: true
 
-      - name: Run pip-audit
+      # Audit what the image actually installs: the runtime resolution pinned by uv.lock.
+      # requirements.txt is not used anywhere and must not drift back into the pipeline.
+      - name: Export the locked runtime resolution
         run: |
-          pip install pip-audit
-          pip-audit -r requirements.txt
+          uv export --locked --no-hashes --no-emit-project --no-dev \
+            --format requirements-txt --output-file "$RUNNER_TEMP/requirements-locked.txt"
+
+      - name: Audit the locked resolution
+        run: uvx pip-audit --requirement "$RUNNER_TEMP/requirements-locked.txt" --strict
 
   semgrep:
     name: SAST (Semgrep)
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      # Pinned image and pinned registry packs: a new upstream rule cannot turn the gate
+      # red without a reviewed bump.
+      image: semgrep/semgrep:1.185.0
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Run Semgrep
-        run: semgrep --config=auto --error src/sophos_firewall_mcp
+        run: |
+          semgrep \
+            --config=p/python \
+            --config=p/security-audit \
+            --metrics=off \
+            --error \
+            src/sophos_firewall_mcp

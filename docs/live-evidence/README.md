@@ -142,6 +142,8 @@ the coverage matrix never implies firmware support that was not observed.
 | File | Scope | Result |
 |---|---|---|
 | [`api-smoke-2026-11-15.md`](api-smoke-2026-11-15.md) | Read-only smoke test: authentication, 20+ endpoints, pagination, error envelopes | API reachable, Bearer accepted, `live-users` pagination observed; SFOS build unknown; no writes attempted |
+| [`phase-2-deferral.md`](phase-2-deferral.md) | Phase-2 deferral record for the domain tools (#27–#31, #35) | Contract-tested only; live writes deferred to #32 |
+| [`phase-3-live-matrix.md`](phase-3-live-matrix.md) | Phase-3 read-only matrix: all 98 read-only tools across the six domain families | 74 PASS, 24 SKIP (no object of that kind), 0 FAIL after two fixed deviations; SFOS build unknown; no writes attempted |
 
 Open items that live evidence must still resolve:
 

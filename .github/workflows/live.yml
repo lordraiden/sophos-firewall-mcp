@@ -1,0 +1,123 @@
+name: Live appliance verification (opt-in)
+
+# Read-only verification against a real Sophos Firewall. This workflow never runs on a
+# push or a pull request: it is dispatched by hand, uses the `live-lab` environment (add
+# required reviewers there), and only reads. The lab key is read-only and the suite forces
+# SOPHOS_READ_ONLY_MODE=true, so the 54 mutation tools are never registered.
+#
+# Required repository secrets: SOPHOS_HOST, SOPHOS_PORT and one of SOPHOS_API_KEY /
+# SOPHOS_API_KEY_FILE -- the same precondition `tests/live/conftest.py` applies.
+# Optional repository variable: SOPHOS_VERIFY_SSL (default "true"; "false" only for a lab
+# appliance with a self-signed certificate).
+#
+# Secrets are never echoed: no `set -x`, no `env` dump, no command that prints them.
+# The run step fails when the suite collected zero tests or skipped every one of them, so a
+# missing secret can no longer produce a green job with no live coverage.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why this live run is needed (recorded in the run log)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-verification
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Read-only live matrix
+    runs-on: ubuntu-latest
+    environment: live-lab
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the locked dependency graph
+        run: uv sync --locked
+
+      - name: Record the reason for this run
+        run: |
+          echo "Live run requested: ${{ inputs.reason }}"
+
+      - name: Check that the lab connection is configured
+        env:
+          SOPHOS_HOST: ${{ secrets.SOPHOS_HOST }}
+          SOPHOS_PORT: ${{ secrets.SOPHOS_PORT }}
+          SOPHOS_API_KEY: ${{ secrets.SOPHOS_API_KEY }}
+          SOPHOS_API_KEY_FILE: ${{ secrets.SOPHOS_API_KEY_FILE }}
+        run: |
+          # Mirror the precondition in tests/live/conftest.py: HOST, PORT and exactly one
+          # key source. Only the variable *names* are printed, never a value.
+          missing=""
+          for name in SOPHOS_HOST SOPHOS_PORT; do
+            if [ -z "${!name:-}" ]; then
+              missing="${missing} ${name}"
+            fi
+          done
+          if [ -z "${SOPHOS_API_KEY:-}" ] && [ -z "${SOPHOS_API_KEY_FILE:-}" ]; then
+            missing="${missing} SOPHOS_API_KEY|SOPHOS_API_KEY_FILE"
+          fi
+          if [ -n "${missing}" ]; then
+            echo "::error::missing required live-lab configuration:${missing}"
+            exit 1
+          fi
+
+      - name: Run the read-only live suite
+        env:
+          SOPHOS_HOST: ${{ secrets.SOPHOS_HOST }}
+          SOPHOS_PORT: ${{ secrets.SOPHOS_PORT }}
+          SOPHOS_API_KEY: ${{ secrets.SOPHOS_API_KEY }}
+          SOPHOS_API_KEY_FILE: ${{ secrets.SOPHOS_API_KEY_FILE }}
+          SOPHOS_VERIFY_SSL: ${{ vars.SOPHOS_VERIFY_SSL || 'true' }}
+          SOPHOS_READ_ONLY_MODE: "true"
+        run: |
+          # pytest exits 0 when every live test is skipped, so the summary line alone cannot
+          # prove that anything ran. `--junitxml` gives a machine-readable count and the
+          # assertion below fails the job on zero collected tests or zero executed tests.
+          set +e
+          uv run --no-sync pytest -m live -q tests/live/ --junitxml="${RUNNER_TEMP}/live-junit.xml"
+          status=$?
+          set -e
+          uv run --no-sync python - "${RUNNER_TEMP}/live-junit.xml" <<'PY'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          path = sys.argv[1]
+          try:
+              root = ET.parse(path).getroot()
+          except (OSError, ET.ParseError) as exc:
+              print(f"::error::could not read the JUnit report {path}: {exc}")
+              raise SystemExit(1)
+
+          suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+          total = sum(int(suite.get("tests", 0)) for suite in suites)
+          skipped = sum(int(suite.get("skipped", 0)) for suite in suites)
+          failed = sum(
+              int(suite.get("failures", 0)) + int(suite.get("errors", 0)) for suite in suites
+          )
+          passed = total - skipped - failed
+          print(f"live tests: total={total} passed={passed} skipped={skipped} failed={failed}")
+          if total == 0:
+              print("::error::the live suite collected no tests; check the marker and the path")
+              raise SystemExit(1)
+          if passed == 0:
+              print(
+                  "::error::every live test was skipped; the appliance is unreachable or the "
+                  "configuration is incomplete"
+              )
+              raise SystemExit(1)
+          PY
+          exit "$status"
