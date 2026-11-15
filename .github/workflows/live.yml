@@ -1,0 +1,69 @@
+name: Live appliance verification (opt-in)
+
+# Read-only verification against a real Sophos Firewall. This workflow never runs on a
+# push or a pull request: it is dispatched by hand, uses the `live-lab` environment (add
+# required reviewers there), and only reads. The lab key is read-only and the suite forces
+# SOPHOS_READ_ONLY_MODE=true, so the 54 mutation tools are never registered.
+#
+# Required repository secrets: SOPHOS_HOST, SOPHOS_PORT, SOPHOS_API_KEY.
+# Optional repository variable: SOPHOS_VERIFY_SSL (default "true"; "false" only for a lab
+# appliance with a self-signed certificate).
+#
+# Secrets are never echoed: no `set -x`, no `env` dump, no command that prints them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: Why this live run is needed (recorded in the run log)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-verification
+  cancel-in-progress: false
+
+jobs:
+  live:
+    name: Read-only live matrix
+    runs-on: ubuntu-latest
+    environment: live-lab
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      - name: Install the locked dependency graph
+        run: uv sync --locked
+
+      - name: Record the reason for this run
+        run: |
+          echo "Live run requested: ${{ inputs.reason }}"
+
+      - name: Check that the lab connection is configured
+        env:
+          SOPHOS_HOST: ${{ secrets.SOPHOS_HOST }}
+          SOPHOS_API_KEY: ${{ secrets.SOPHOS_API_KEY }}
+        run: |
+          if [ -z "${SOPHOS_HOST:-}" ] || [ -z "${SOPHOS_API_KEY:-}" ]; then
+            echo "::error::SOPHOS_HOST and SOPHOS_API_KEY secrets are not configured"
+            exit 1
+          fi
+
+      - name: Run the read-only live suite
+        env:
+          SOPHOS_HOST: ${{ secrets.SOPHOS_HOST }}
+          SOPHOS_PORT: ${{ secrets.SOPHOS_PORT }}
+          SOPHOS_API_KEY: ${{ secrets.SOPHOS_API_KEY }}
+          SOPHOS_VERIFY_SSL: ${{ vars.SOPHOS_VERIFY_SSL || 'true' }}
+          SOPHOS_READ_ONLY_MODE: "true"
+        run: uv run --no-sync pytest -m live -q tests/live/

@@ -1,19 +1,41 @@
-version: '3.8'
+# Docker Compose for the Sophos Firewall MCP server (REST-only, STDIO).
+#
+# The server speaks MCP over stdin/stdout: it is not an HTTP service and publishes no port.
+# `stdin_open: true` keeps the STDIO session open; `tty: false` is explicit because a TTY
+# would corrupt the protocol stream.
+#
+# The API key is mounted as a secret file, never passed in the environment:
+#   SOPHOS_API_KEY_FILE=/run/secrets/sophos_api_key
+# Set SOPHOS_API_KEY_FILE on the host to the path of the key file (default ./secrets/sophos_api_key).
+#
+# TLS is verified by default. Only a lab appliance with a self-signed certificate needs
+# SOPHOS_VERIFY_SSL=false; prefer SOPHOS_CA_BUNDLE with the appliance CA instead.
 
 services:
   sophos-firewall-mcp:
     build: .
-    image: sophos-firewall-mcp:latest
+    image: ghcr.io/lordraiden/sophos-firewall-mcp:main
     container_name: sophos-firewall-mcp
     environment:
-      - SOPHOS_HOST=${SOPHOS_HOST:-192.168.1.1}
-      - SOPHOS_PORT=${SOPHOS_PORT:-4444}
-      # Exactly one of SOPHOS_API_KEY / SOPHOS_API_KEY_FILE is required.
-      - SOPHOS_API_KEY=${SOPHOS_API_KEY:-}
-      - SOPHOS_API_KEY_FILE=${SOPHOS_API_KEY_FILE:-}
-      - SOPHOS_VERIFY_SSL=${SOPHOS_VERIFY_SSL:-true}
-      - SOPHOS_CA_BUNDLE=${SOPHOS_CA_BUNDLE:-}
-      - SOPHOS_TIMEOUT=${SOPHOS_TIMEOUT:-30}
-      - SOPHOS_READ_ONLY_MODE=${SOPHOS_READ_ONLY_MODE:-false}
-    restart: unless-stopped
+      SOPHOS_HOST: ${SOPHOS_HOST:?set SOPHOS_HOST to the firewall hostname or IP}
+      SOPHOS_PORT: ${SOPHOS_PORT:-4444}
+      SOPHOS_API_KEY_FILE: /run/secrets/sophos_api_key
+      SOPHOS_VERIFY_SSL: ${SOPHOS_VERIFY_SSL:-true}
+      SOPHOS_CA_BUNDLE: ${SOPHOS_CA_BUNDLE:-}
+      SOPHOS_TIMEOUT: ${SOPHOS_TIMEOUT:-30}
+      SOPHOS_READ_ONLY_MODE: ${SOPHOS_READ_ONLY_MODE:-false}
+    secrets:
+      - sophos_api_key
     stdin_open: true
+    tty: false
+    restart: unless-stopped
+    # The server is stateless: it needs no writable filesystem and no extra privileges.
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  sophos_api_key:
+    file: ${SOPHOS_API_KEY_FILE:-./secrets/sophos_api_key}

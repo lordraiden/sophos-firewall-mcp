@@ -5,6 +5,13 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
     name: Lint & type check
@@ -14,21 +21,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Python
-        uses: actions/setup-python@v7
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
         with:
           python-version: "3.12"
+          enable-cache: true
 
-      - name: Install dependencies
-        run: |
-          pip install -e .
-          pip install -r requirements-dev.txt
+      - name: Install the locked dependency graph
+        run: uv sync --locked
 
       - name: flake8
-        run: flake8 src/sophos_firewall_mcp tests scripts
+        run: uv run --no-sync flake8 src/sophos_firewall_mcp tests scripts
 
       - name: mypy
-        run: mypy src/sophos_firewall_mcp
+        run: uv run --no-sync mypy src/sophos_firewall_mcp
 
       - name: black
-        run: black --check src tests scripts
+        run: uv run --no-sync black --check src tests scripts
