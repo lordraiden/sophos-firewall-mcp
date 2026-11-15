@@ -159,8 +159,8 @@ def test_every_reference_is_local_and_resolved(generator: Any, openapi: Any) -> 
 def test_curated_decisions_present(generator: Any, curated: Any) -> None:
     assert curated["version"] == 1
     assert list(curated["domains"]) == list(generator.DOMAIN_ORDER)
-    assert len(curated["tool_map"]) == 96
-    assert len(set(curated["tool_map"].values())) == 96
+    assert len(curated["tool_map"]) == 145
+    assert len(set(curated["tool_map"].values())) == 145
     operations = _iter_operations(_load_yaml(SPEC_PATH))
     known = {operation["operationId"] for operation in operations}
     assert set(curated["tool_map"]) <= known
@@ -180,9 +180,19 @@ def test_curated_decisions_present(generator: Any, curated: Any) -> None:
         "administrators_crud",
         "user_groups",
         "vpn_mutations",
-        "interface_mutations",
-        "country_groups",
-        "mac_objects",
+        "zones_mutations",
+        "gateway_mutations",
+        "static_unicast_route_mutations",
+        "sdwan_route_mutations",
+        "dhcp_mutations",
+        "dns_mutations",
+        "static_neighbor_mutations",
+        "neighbor_settings_mutations",
+        "router_advertisements",
+        "multicast_routing",
+        "mdns_reflector",
+        "mac_bulk_delete",
+        "country_group_mutations",
         "login_logout",
     } <= rule_ids
     for rule in curated["exclusion_rules"]:
@@ -196,7 +206,8 @@ def test_curated_decisions_present(generator: Any, curated: Any) -> None:
     )
     assert any("bulk" in rule["reason"].lower() for rule in curated["exclusion_rules"])
     assert "read-only" in curated["domains"]["ipsec_vpn"]["v1_scope"].lower()
-    assert "read-only" in curated["domains"]["interfaces"]["v1_scope"].lower()
+    assert "vlan" in curated["domains"]["network"]["v1_scope"].lower()
+    assert "read-only" in curated["domains"]["network"]["v1_scope"].lower()
 
     pagination_rules = " ".join(curated["pagination"]["rules"])
     assert "page >= 1" in pagination_rules
@@ -222,6 +233,101 @@ def test_curated_decisions_present(generator: Any, curated: Any) -> None:
     assert "page_zero" in observations
     assert "error_envelopes" in observations
     assert curated["firmware"]["status"].strip()
+
+
+def test_scope_change_is_recorded(generator: Any, curated: Any) -> None:
+    release_summary = curated["release"]["summary"]
+    for token in ("145", "152", "11"):
+        assert token in release_summary
+    assert "composite" in release_summary
+
+    assert generator.DOMAIN_ORDER == (
+        "firewall_rules",
+        "nat_rules",
+        "addresses",
+        "services",
+        "auth_users",
+        "live_users",
+        "ipsec_vpn",
+        "ssl_vpn",
+        "network_status",
+        "network",
+        "audit",
+        "admin_system",
+        "other",
+    )
+    assert "network" in curated["domains"]
+    assert "audit" in curated["domains"]
+    assert "interfaces" not in curated["domains"]
+
+    # The network_status rule must be evaluated before the broader network rule.
+    keys = [rule.key for rule in generator.DOMAIN_RULES]
+    assert keys.index("network_status") < keys.index("network")
+    assert generator.domain_for_path("/network/dns/protection/status") == "network_status"
+    assert generator.domain_for_path("/network/cellular-wan/modem-status") == "network_status"
+    assert generator.domain_for_path("/network/dns/settings") == "network"
+    assert generator.domain_for_path("/network/interfaces/network-interfaces") == "network"
+    assert generator.domain_for_path("/routing/gateways/ipv4") == "network"
+    assert generator.domain_for_path("/sd-wan/routes/ipv4") == "network"
+    assert generator.domain_for_path("/network/dhcp/server/servers/ipv4") == "network"
+    assert generator.domain_for_path("/network/neighbors/static/ipv4") == "network"
+    assert generator.domain_for_path("/authentication/users") == "auth_users"
+
+    # MAC CRUD and read-only country groups.
+    for operation_id in (
+        "getAllMacAddresses",
+        "getMacAddressByIdOrName",
+        "createMacAddress",
+        "updateMacAddressByIdOrName",
+        "deleteMacAddressByIdOrName",
+        "getAllCountryGroups",
+        "getCountryGroupByIdOrName",
+    ):
+        assert operation_id in curated["tool_map"]
+    assert "createCountryGroup" not in curated["tool_map"]
+    assert "updateCountryGroupByIdOrName" not in curated["tool_map"]
+    assert "deleteCountryGroupByIdOrName" not in curated["tool_map"]
+
+    # VLAN-only interface writes with the required note.
+    vlan_note = (
+        "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM "
+        "interfaces are read-only"
+    )
+    assert curated["tool_map"]["createNetworkInterface"] == "network_interface_create_vlan"
+    assert curated["tool_map"]["updateNetworkInterface"] == "network_interface_update_vlan"
+    assert curated["tool_map"]["deleteNetworkInterface"] == "network_interface_delete_vlan"
+    for operation_id in (
+        "createNetworkInterface",
+        "updateNetworkInterface",
+        "deleteNetworkInterface",
+    ):
+        assert curated["tool_notes"][operation_id] == vlan_note
+
+    # Composite tools are declared, audited and distinct from the 1:1 map.
+    composite = {tool["name"]: tool for tool in curated["composite_tools"]}
+    assert set(composite) == {
+        "firewall_rule_set_enabled_ipv4",
+        "firewall_rule_set_enabled_ipv6",
+        "firewall_rule_clone_ipv4",
+        "firewall_rule_clone_ipv6",
+        "audit_firewall_rules",
+        "explain_connectivity",
+        "find_object_usage",
+    }
+    assert composite["firewall_rule_set_enabled_ipv4"]["operation_ids"] == [
+        "updateFirewallRuleIpv4"
+    ]
+    assert composite["firewall_rule_clone_ipv4"]["operation_ids"] == [
+        "getFirewallRuleIpv4",
+        "createFirewallRuleIpv4",
+    ]
+    assert composite["audit_firewall_rules"]["domain"] == "audit"
+    for tool in composite.values():
+        assert tool["description"].strip()
+        assert set(tool["operation_ids"]) <= set(curated["tool_map"])
+
+    regressions = {item["id"] for item in curated["regressions"]}
+    assert {"system-information", "service-status", "log-query"} <= regressions
 
 
 # ---------------------------------------------------------------------------
@@ -261,8 +367,10 @@ def test_rows_are_grouped_by_domain_and_sorted(generator: Any, generated: str) -
     assert set(sections) == set(generator.DOMAIN_ORDER)
     assert sum(declared_counts.values()) == EXPECTED_OPERATION_COUNT
     for key, rows in sections.items():
-        assert rows, f"domain {key} has no rows"
         assert len(rows) == declared_counts[key]
+        if not rows:
+            assert key == "audit", f"domain {key} has no rows"
+            continue
         order = [(path, METHOD_ORDER[method]) for _operation_id, method, path in rows]
         assert order == sorted(order), f"domain {key} rows are not sorted"
         for _operation_id, _method, path in rows:
@@ -337,6 +445,41 @@ def test_document_documents_the_mapping_rule(generator: Any, generated: str) -> 
         assert rule.title in generated
     assert "first matching rule wins" in generated
     assert "GET, POST, PATCH, DELETE" in generated
+    assert "`network_status` is evaluated before `network`" in generated
+    assert "`audit` never matches a path" in generated
+
+
+def test_document_records_the_scope_change(generated: str) -> None:
+    assert "145 operations and 152 MCP tools across 11 domains" in generated
+    assert "| **Total** | **145** | **152** |" in generated
+    for tool in (
+        "firewall_rule_set_enabled_ipv4",
+        "firewall_rule_set_enabled_ipv6",
+        "firewall_rule_clone_ipv4",
+        "firewall_rule_clone_ipv6",
+        "audit_firewall_rules",
+        "explain_connectivity",
+        "find_object_usage",
+    ):
+        assert f"`{tool}`" in generated
+    assert "### 4.2 Composite tools" in generated
+    assert "### 5.10 Network (113 operations)" in generated
+    assert "### 5.11 Audit (composite) (0 operations)" in generated
+    assert "**Generated inventory**: none" in generated
+    assert "network_interface_create_vlan" in generated
+    assert "network_interface_update_vlan" in generated
+    assert "network_interface_delete_vlan" in generated
+    assert (
+        "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM "
+        "interfaces are read-only"
+    ) in generated
+    assert "### 4.10 Accepted regressions" in generated
+    for regression in ("system-information", "service-status", "log-query"):
+        assert f"`{regression}`" in generated
+    assert "mac_address_create" in generated
+    assert "country_group_list" in generated
+    assert "country_group_create" not in generated
+    assert "### 5.9 Network status (2 operations)" in generated
 
 
 def test_deterministic_regeneration(generated: str, tmp_path: Path) -> None:
@@ -406,17 +549,19 @@ def test_inventory_refuses_missing_or_duplicate_operations(generator: Any) -> No
     records = generator.build_records(document, curated)
     facts = generator.compute_facts(document, SPEC_PATH, EXPECTED_SHA256)
     rendered = generator.render_document(facts, records, curated, document)
-    generator.validate_inventory(records, rendered, document)
+    generator.validate_inventory(records, rendered, document, curated)
 
     with pytest.raises(generator.SpecError):
-        generator.validate_inventory(records[:-1], rendered, document)
+        generator.validate_inventory(records[:-1], rendered, document, curated)
 
     with pytest.raises(generator.SpecError):
-        generator.validate_inventory(records + [records[0]], rendered, document)
+        generator.validate_inventory(records + [records[0]], rendered, document, curated)
 
     first_row = next(line for line in rendered.splitlines() if ROW_RE.match(line))
     with pytest.raises(generator.SpecError):
-        generator.validate_inventory(records, rendered.replace(first_row + "\n", "", 1), document)
+        generator.validate_inventory(
+            records, rendered.replace(first_row + "\n", "", 1), document, curated
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -14,18 +14,21 @@
 version: 1
 
 release:
-  phase: "Phase 2 (#27-#31)"
+  phase: "Phase 2 (#27-#31, #35)"
   summary: >-
-    96 MCP tools across 10 domains: firewall rules, NAT rules, addresses and
-    address groups, services and service groups, authentication users, live
-    users, read-only IPsec/SSL VPN, read-only network interfaces, and two
-    read-only status endpoints.
+    145 operations and 152 MCP tools across 11 domains: firewall rules, NAT
+    rules, addresses and address groups, services and service groups,
+    authentication users, live users, read-only IPsec/SSL VPN, network
+    architecture (read-only plus VLAN-only interface writes), two read-only
+    status endpoints, and three read-only audit/composite tools. The 152 tools
+    are 145 one-to-one tools plus 7 composite tools.
   rule: >-
     An operation is part of the v1 surface only when it appears in `tool_map`.
-    Every other operation is listed with an explicit exclusion reason. Bulk
-    delete is excluded everywhere. Tool names below are the intended v1
-    surface; the domain issues (#27-#31) own the implementation and #32 owns
-    the final reconciliation.
+    Composite tools reuse those audited operations and add no new Sophos
+    endpoint. Every other operation is listed with an explicit exclusion
+    reason. Bulk delete is excluded everywhere. Tool names below are the
+    intended v1 surface; the domain issues (#27-#31, #35) own the
+    implementation and #32 owns the final reconciliation.
 
 # ---------------------------------------------------------------------------
 # Domain sections, in the canonical order used by the generated document.
@@ -36,8 +39,11 @@ domains:
   firewall_rules:
     title: "Firewall rules"
     v1_scope: >-
-      Individual CRUD and move for IPv4 and IPv6 rules. `enabled` and
-      `position` are explicit inputs; a created rule is never auto-enabled.
+      Individual CRUD and move for IPv4 and IPv6 rules, plus two composite
+      tools per family: enable/disable (`firewall_rule_set_enabled_*`, a PATCH
+      of `enabled`) and clone (`firewall_rule_clone_*`, a get followed by a
+      create). `enabled` and `position` are explicit inputs; a created rule is
+      never auto-enabled.
     exclusions:
       - "Bulk delete (`bulkDeleteFirewallRulesIpv4/Ipv6`): high blast radius and not required for individual CRUD (PLAN §4)."
       - "WAF rule variant (`ruleType: waf`): create/update schemas are discriminated by `ruleType`; v1 tools accept only `ruleType: firewall` (PLAN §4; #27)."
@@ -45,6 +51,7 @@ domains:
       - "The contract has no firewall rule groups; do not infer them from other object groups."
       - "`move` changes rule ordering and is a separate operation (`moveFirewallRuleIpv4/Ipv6`)."
       - "The Firewall AI Assistant default (disabled, placed last) is not evidence for the REST POST default; represent and return the applied state explicitly."
+      - "`firewall_rule_set_enabled_*` and `firewall_rule_clone_*` are composite tools over the audited operations; they add no new endpoint."
     default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
 
   nat_rules:
@@ -60,15 +67,16 @@ domains:
   addresses:
     title: "Addresses and address groups"
     v1_scope: >-
-      IPv4, IPv6 and FQDN addresses and address groups:
-      list/get/create/update/delete.
+      IPv4, IPv6 and FQDN addresses and address groups: full CRUD. MAC
+      addresses: full CRUD. Country groups: read-only (list and get).
     exclusions:
-      - "MAC address objects (`/network/addresses/mac`): classified and deferred by v1 scope (PLAN §4; #29)."
-      - "Country groups (`/network/address-groups/country`): classified and deferred by v1 scope (PLAN §4; #29)."
+      - "Country group mutations (create/update/delete/bulk delete): country groups are read-only in v1 (PLAN §4; #29)."
+      - "MAC bulk delete (`bulkDeleteMacAddresses`): excluded from v1; individual MAC CRUD is exposed (PLAN §4; #29)."
       - "Bulk delete of addresses and address groups: excluded from v1 (PLAN §4)."
     caveats:
-      - "IPv4, IPv6 and FQDN addresses have distinct schemas; do not merge them into one model."
+      - "IPv4, IPv6, FQDN and MAC addresses have distinct schemas; do not merge them into one model."
       - "Groups are per family/type; do not assume mixed membership."
+      - "Country groups are built-in/read-only: only list and get are exposed."
     default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
 
   services:
@@ -135,15 +143,6 @@ domains:
       - "Clientless bookmarks and bookmark groups are separate resources."
     default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
 
-  interfaces:
-    title: "Network interfaces"
-    v1_scope: "Read-only: list and get network interfaces."
-    exclusions:
-      - "create/update/delete network interface: deferred because a mutation can interrupt management connectivity (PLAN §4; #31; administration help)."
-    caveats:
-      - "The contract defines full CRUD; v1 exposes read-only until a safe lab test exists."
-    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
-
   network_status:
     title: "Network status"
     v1_scope: "Two read-only status endpoints: DNS protection status and cellular WAN modem status."
@@ -151,6 +150,41 @@ domains:
       - "No generic firewall health endpoint exists; Firewall Health Check is a Web Admin Console compliance view, not this API."
     caveats:
       - "`getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`; do not promise model, serial number, firmware or uptime."
+      - "There is no REST endpoint for system service status; see the accepted regressions."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  network:
+    title: "Network"
+    v1_scope: >-
+      Read-only network architecture: interfaces, zones, gateways (IPv4/IPv6,
+      WAN and custom), static unicast routes, SD-WAN routes, DHCP servers,
+      leases and relays, DNS settings, host entries and request routes, and
+      static neighbors. The only writes are VLAN-only interface operations
+      (`network_interface_create_vlan`, `network_interface_update_vlan`,
+      `network_interface_delete_vlan`).
+    exclusions:
+      - "Interface writes are VLAN-only: physical, bridge, LAG and XFRM interfaces are read-only in v1."
+      - "Zone, gateway, static-route, SD-WAN, DHCP, DNS, neighbor and router-advertisement mutations are excluded from v1."
+      - "Global DHCP server settings and neighbor settings are classified but not exposed."
+    caveats:
+      - "Physical, bridge, LAG and XFRM interfaces stay read-only because a wrong mutation can interrupt management connectivity and the contract does not let the tool validate the interface type before the write; the VLAN tools reject any type other than `vlan`."
+      - "The network domain is the read-only architecture view; it is not a configuration editor for routing or DHCP."
+      - "Distinguish configured routes and gateways from live state; the contract exposes no live routing table."
+    default_exclusion: "Not in the v1 network scope: global settings reads and operations outside the read-only architecture view are classified here (PLAN §4; #31)."
+
+  audit:
+    title: "Audit (composite)"
+    v1_scope: >-
+      Three composite, read-only analysis tools (#35): `audit_firewall_rules`,
+      `explain_connectivity` and `find_object_usage`. They call the audited
+      list/get operations through the shared REST client and reason over the
+      results; they add no new Sophos operation.
+    exclusions:
+      - "No Sophos operation is mapped 1:1 to this domain; the tools are composite by design."
+    caveats:
+      - "Composite tools are read-only and add no new endpoint; they must not invent data the API does not return."
+      - "`explain_connectivity` is configuration analysis, not a packet test: it reports `method: config-analysis` and `not-verifiable` when the configuration is insufficient."
+      - "Outputs are bounded and report truncation explicitly."
     default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
 
   admin_system:
@@ -220,6 +254,17 @@ tool_map:
   updateFqdnByIdOrName: address_update_fqdn
   deleteFqdnByIdOrName: address_delete_fqdn
 
+  # MAC addresses, full CRUD (#29)
+  getAllMacAddresses: mac_address_list
+  getMacAddressByIdOrName: mac_address_get
+  createMacAddress: mac_address_create
+  updateMacAddressByIdOrName: mac_address_update
+  deleteMacAddressByIdOrName: mac_address_delete
+
+  # Country groups, read-only (#29)
+  getAllCountryGroups: country_group_list
+  getCountryGroupByIdOrName: country_group_get
+
   # Address groups (#29)
   getAllIpv4AddressGroups: address_group_list_ipv4
   getIpv4AddressGroupByIdOrName: address_group_get_ipv4
@@ -283,9 +328,51 @@ tool_map:
   getClientlessPolicy: sslvpn_clientless_policy_get
   getSslvpnGlobalSettings: sslvpn_global_settings_get
 
-  # Interfaces, read-only (#31)
-  listNetworkInterfaces: interface_list
-  getNetworkInterface: interface_get
+  # Network architecture, read-only plus VLAN-only interface writes (#31)
+  listNetworkInterfaces: network_interface_list
+  getNetworkInterface: network_interface_get
+  createNetworkInterface: network_interface_create_vlan
+  updateNetworkInterface: network_interface_update_vlan
+  deleteNetworkInterface: network_interface_delete_vlan
+  getAllZones: zone_list
+  getZone: zone_get
+  getGatewaysIpv4: gateway_list_ipv4
+  getWanGatewaysIpv4: wan_gateway_list_ipv4
+  getWanGatewayIpv4ByIdOrName: wan_gateway_get_ipv4
+  getCustomGatewaysIpv4: custom_gateway_list_ipv4
+  getCustomGatewayIpv4ByIdOrName: custom_gateway_get_ipv4
+  getGatewaysIpv6: gateway_list_ipv6
+  getWanGatewaysIpv6: wan_gateway_list_ipv6
+  getWanGatewayIpv6ByIdOrName: wan_gateway_get_ipv6
+  getCustomGatewaysIpv6: custom_gateway_list_ipv6
+  getCustomGatewayIpv6ByIdOrName: custom_gateway_get_ipv6
+  getUnicastRoutesIPv4: unicast_route_list_ipv4
+  getUnicastRouteIPv4: unicast_route_get_ipv4
+  getUnicastRoutesIPv6: unicast_route_list_ipv6
+  getUnicastRouteIPv6: unicast_route_get_ipv6
+  listSdwanRoutesIpv4: sdwan_route_list_ipv4
+  getSdwanRouteIpv4: sdwan_route_get_ipv4
+  listSdwanRoutesIpv6: sdwan_route_list_ipv6
+  getSdwanRouteIpv6: sdwan_route_get_ipv6
+  listDhcpServersIpv4: dhcp_server_list_ipv4
+  getDhcpServerIpv4: dhcp_server_get_ipv4
+  listDhcpServersIpv6: dhcp_server_list_ipv6
+  getDhcpServerIpv6: dhcp_server_get_ipv6
+  getDhcpLeasesIpv4: dhcp_lease_list_ipv4
+  getDhcpLeasesIpv6: dhcp_lease_list_ipv6
+  getAllDhcpRelayIpv4: dhcp_relay_list_ipv4
+  getDhcpRelayByIdIpv4: dhcp_relay_get_ipv4
+  getAllDhcpRelayIpv6: dhcp_relay_list_ipv6
+  getDhcpRelayByIdIpv6: dhcp_relay_get_ipv6
+  getDnsSettings: dns_settings_get
+  getAllDnsHostEntries: dns_host_entry_list
+  getDnsHostEntryById: dns_host_entry_get
+  getAllDnsRequestRoutes: dns_request_route_list
+  getDnsRequestRouteById: dns_request_route_get
+  getAllStaticNeighborIpv4s: static_neighbor_list_ipv4
+  getStaticNeighborIpv4: static_neighbor_get_ipv4
+  getAllStaticNeighborIpv6s: static_neighbor_list_ipv6
+  getStaticNeighborIpv6: static_neighbor_get_ipv6
 
   # Read-only status (#31)
   getDnsProtectionStatus: network_status_dns_protection
@@ -305,8 +392,99 @@ tool_notes:
   getIpsecSiteToSiteLiveConnectionsIpv4: "live state, not configuration"
   listNetworkInterfaces: "read-only in v1"
   getNetworkInterface: "read-only in v1"
+  createNetworkInterface: "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
+  updateNetworkInterface: "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
+  deleteNetworkInterface: "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM interfaces are read-only"
   getDnsProtectionStatus: "read-only status; not a general firewall health check"
   getCellularWanStatus: "read-only status; not a general firewall health check"
+
+# ---------------------------------------------------------------------------
+# Composite tools. They reuse audited operations from tool_map and add no new
+# Sophos endpoint. The domain issues own the implementation; the operationIds
+# below are the intended composition.
+# ---------------------------------------------------------------------------
+composite_tools:
+  - name: firewall_rule_set_enabled_ipv4
+    domain: firewall_rules
+    operation_ids: ["updateFirewallRuleIpv4"]
+    description: >-
+      Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses
+      `updateFirewallRuleIpv4` and adds no new endpoint.
+
+  - name: firewall_rule_set_enabled_ipv6
+    domain: firewall_rules
+    operation_ids: ["updateFirewallRuleIpv6"]
+    description: >-
+      Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses
+      `updateFirewallRuleIpv6` and adds no new endpoint.
+
+  - name: firewall_rule_clone_ipv4
+    domain: firewall_rules
+    operation_ids: ["getFirewallRuleIpv4", "createFirewallRuleIpv4"]
+    description: >-
+      Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then
+      create a copy with `createFirewallRuleIpv4`.
+
+  - name: firewall_rule_clone_ipv6
+    domain: firewall_rules
+    operation_ids: ["getFirewallRuleIpv6", "createFirewallRuleIpv6"]
+    description: >-
+      Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then
+      create a copy with `createFirewallRuleIpv6`.
+
+  - name: audit_firewall_rules
+    domain: audit
+    operation_ids:
+      - getAllFirewallRulesIpv4
+      - getAllFirewallRulesIpv6
+      - getAllNatRulesIpv4
+      - getAllNatRulesIpv6
+      - getAllIpAddresses
+      - getAllIpv6Addresses
+      - getAllFqdns
+      - getAllIpv4AddressGroups
+      - getAllIpv6AddressGroups
+      - getAllFqdnGroups
+      - getAllServices
+      - getAllServiceGroups
+    description: >-
+      Read-only rule-base audit (any-any, disabled, shadowed/duplicate,
+      no-logging, unused-object, nat-without-rule, unrestricted-service) with
+      bounded findings and evidence; adds no new endpoint (#35).
+
+  - name: explain_connectivity
+    domain: audit
+    operation_ids:
+      - listNetworkInterfaces
+      - getAllZones
+      - getAllFirewallRulesIpv4
+      - getAllFirewallRulesIpv6
+      - getAllNatRulesIpv4
+      - getAllNatRulesIpv6
+      - getGatewaysIpv4
+      - getGatewaysIpv6
+      - getUnicastRoutesIPv4
+      - getUnicastRoutesIPv6
+    description: >-
+      Read-only explanation of which interface/zone, firewall rule, NAT rule
+      and route apply to a flow; reports `method: config-analysis` and
+      `not-verifiable` when evidence is missing; adds no new endpoint (#35).
+
+  - name: find_object_usage
+    domain: audit
+    operation_ids:
+      - getAllFirewallRulesIpv4
+      - getAllFirewallRulesIpv6
+      - getAllNatRulesIpv4
+      - getAllNatRulesIpv6
+      - getAllIpv4AddressGroups
+      - getAllIpv6AddressGroups
+      - getAllFqdnGroups
+      - getAllServiceGroups
+    description: >-
+      Read-only search for every rule, NAT entry and group that references an
+      address, group or service; bounded scan with explicit truncation; adds no
+      new endpoint (#35).
 
 # ---------------------------------------------------------------------------
 # Ordered exclusion rules. The tool map wins first; then these rules are
@@ -314,6 +492,17 @@ tool_notes:
 # All predicates present in a rule must match (logical AND).
 # ---------------------------------------------------------------------------
 exclusion_rules:
+  - id: mac_bulk_delete
+    applies: "`bulkDeleteMacAddresses`"
+    operation_ids: ["bulkDeleteMacAddresses"]
+    reason: "Bulk delete of MAC objects is excluded from v1; individual MAC CRUD is exposed (PLAN §4; #29)."
+
+  - id: country_group_mutations
+    applies: "mutations under `/network/address-groups/country`"
+    path_prefix: "/network/address-groups/country"
+    kind: "mutation"
+    reason: "Country groups are read-only in v1; mutations are excluded (PLAN §4; #29)."
+
   - id: bulk_delete
     applies: "POST to any path ending in `/delete`"
     method: "POST"
@@ -341,21 +530,69 @@ exclusion_rules:
     kind: "mutation"
     reason: "VPN v1 is read-only; no VPN mutation is registered (PLAN §4; #31)."
 
-  - id: interface_mutations
-    applies: "mutations under `/network/interfaces`"
-    path_prefix: "/network/interfaces"
+  - id: zones_mutations
+    applies: "mutations under `/network/zones`"
+    path_prefix: "/network/zones"
     kind: "mutation"
-    reason: "Interface mutations deferred: they can interrupt management connectivity; v1 exposes read-only (PLAN §4; #31)."
+    reason: "Zones are read-only in v1; zone mutations are excluded (PLAN §4; #31)."
 
-  - id: country_groups
-    applies: "path prefix `/network/address-groups/country`"
-    path_prefix: "/network/address-groups/country"
-    reason: "Country address groups classified and deferred by v1 scope (PLAN §4; #29)."
+  - id: gateway_mutations
+    applies: "mutations under `/routing/gateways` (WAN and custom gateways)"
+    path_prefix: "/routing/gateways"
+    kind: "mutation"
+    reason: "Gateways are read-only in v1; WAN and custom gateway mutations are excluded (PLAN §4; #31)."
 
-  - id: mac_objects
-    applies: "path prefix `/network/addresses/mac`"
-    path_prefix: "/network/addresses/mac"
-    reason: "MAC address objects classified and deferred by v1 scope (PLAN §4; #29)."
+  - id: static_unicast_route_mutations
+    applies: "mutations under `/routing/static-unicast-routes`"
+    path_prefix: "/routing/static-unicast-routes"
+    kind: "mutation"
+    reason: "Static unicast routes are read-only in v1; route mutations are excluded (PLAN §4; #31)."
+
+  - id: sdwan_route_mutations
+    applies: "mutations and moves under `/sd-wan/routes`"
+    path_prefix: "/sd-wan/routes"
+    kind: "mutation"
+    reason: "SD-WAN routes are read-only in v1; route mutations and moves are excluded (PLAN §4; #31)."
+
+  - id: dhcp_mutations
+    applies: "mutations under `/network/dhcp` (servers, relays, settings)"
+    path_prefix: "/network/dhcp"
+    kind: "mutation"
+    reason: "DHCP servers, relays and settings are read-only in v1; mutations are excluded (PLAN §4; #31)."
+
+  - id: dns_mutations
+    applies: "mutations under `/network/dns` (settings, host entries, request routes)"
+    path_prefix: "/network/dns"
+    kind: "mutation"
+    reason: "DNS settings, host entries and request routes are read-only in v1; mutations are excluded (PLAN §4; #31)."
+
+  - id: static_neighbor_mutations
+    applies: "mutations under `/network/neighbors/static`"
+    path_prefix: "/network/neighbors/static"
+    kind: "mutation"
+    reason: "Static neighbors are read-only in v1; neighbor mutations are excluded (PLAN §4; #31)."
+
+  - id: neighbor_settings_mutations
+    applies: "mutations under `/network/neighbors/settings`"
+    path_prefix: "/network/neighbors/settings"
+    kind: "mutation"
+    reason: "Neighbor settings are read-only in v1; the settings mutation is excluded (PLAN §4; #31)."
+
+  - id: router_advertisements
+    applies: "path prefix `/network/router-advertisements`"
+    path_prefix: "/network/router-advertisements"
+    reason: "Router advertisements are outside the v1 network read-only scope (PLAN §4; #31)."
+
+  - id: multicast_routing
+    applies: "path prefix `/routing/static-multicast-routes` or `/routing/static-multicast-settings`"
+    path_prefixes:
+      ["/routing/static-multicast-routes", "/routing/static-multicast-settings"]
+    reason: "Multicast routing is outside the v1 network read-only scope (PLAN §4; #31)."
+
+  - id: mdns_reflector
+    applies: "path prefix `/network/mdns-reflector`"
+    path_prefix: "/network/mdns-reflector"
+    reason: "mDNS reflector configuration is outside the v1 network read-only scope (PLAN §4; #31)."
 
   - id: login_logout
     applies: "`networkUserLiveLogin`, `networkUserLiveLogout`"
@@ -502,3 +739,34 @@ firmware:
     `updatedAt`. SFOS 23.0 GA Build 371 is the documented reference for the
     REST API, not a verified target build.
   live_evidence: "docs/live-evidence/api-smoke-2026-11-15.md"
+
+# ---------------------------------------------------------------------------
+# Accepted regressions: capabilities of the old XML tooling / Web Admin
+# Console that the REST contract does not expose. They are accepted for v1 and
+# are not hidden behind placeholder tools.
+# ---------------------------------------------------------------------------
+regressions:
+  - id: system-information
+    statement: >-
+      The REST contract exposes no endpoint for appliance model, serial
+      number, firmware version or uptime; `getSystemSettings` returns only
+      `hostname`, `loginDisclaimer` and `updatedAt`.
+    decision: >-
+      Accepted regression: v1 does not expose system information. No
+      placeholder tool is created; #32 records it in the release notes.
+
+  - id: service-status
+    statement: >-
+      There is no REST endpoint that returns the running state of system
+      services (SMB, NTP, SSH, etc.).
+    decision: >-
+      Accepted regression: v1 does not expose service status. Do not infer it
+      from configuration endpoints.
+
+  - id: log-query
+    statement: >-
+      The contract has no log query endpoint: log destinations can be
+      configured, but logs cannot be read through this API.
+    decision: >-
+      Accepted regression: log analysis is out of v1 scope. Do not propose a
+      log tool.

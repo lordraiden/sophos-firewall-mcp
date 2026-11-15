@@ -146,18 +146,34 @@ DOMAIN_RULES: tuple[DomainRule, ...] = (
         lambda path: path.startswith("/ssl-vpn/"),
     ),
     DomainRule(
-        "interfaces",
-        "Network interfaces",
-        "path starts with `/network/interfaces/`",
-        lambda path: path.startswith("/network/interfaces/"),
-    ),
-    DomainRule(
         "network_status",
         "Network status",
         "path is exactly `/network/dns/protection/status` or "
-        "`/network/cellular-wan/modem-status`",
+        "`/network/cellular-wan/modem-status`; evaluated before `network`",
         lambda path: path
         in ("/network/dns/protection/status", "/network/cellular-wan/modem-status"),
+    ),
+    DomainRule(
+        "network",
+        "Network",
+        "path starts with `/network/interfaces/`, `/network/zones`, "
+        "`/routing/gateways/`, `/routing/static-unicast-routes/`, `/sd-wan/routes/`, "
+        "`/network/dhcp/`, `/network/dns/` or `/network/neighbors/`",
+        lambda path: path.startswith("/network/interfaces/")
+        or path.startswith("/network/zones")
+        or path.startswith("/routing/gateways/")
+        or path.startswith("/routing/static-unicast-routes/")
+        or path.startswith("/sd-wan/routes/")
+        or path.startswith("/network/dhcp/")
+        or path.startswith("/network/dns/")
+        or path.startswith("/network/neighbors/"),
+    ),
+    DomainRule(
+        "audit",
+        "Audit (composite)",
+        "never matches: this domain has no Sophos operation and is provided by "
+        "composite tools only",
+        lambda path: False,
     ),
     DomainRule(
         "admin_system",
@@ -253,6 +269,12 @@ class Curated:
         )
         self.exclusion_rules: Sequence[Mapping[str, Any]] = _mapping_sequence(
             data.get("exclusion_rules"), "exclusion_rules"
+        )
+        self.composite_tools: Sequence[Mapping[str, Any]] = _mapping_sequence(
+            data.get("composite_tools") or [], "composite_tools"
+        )
+        self.regressions: Sequence[Mapping[str, Any]] = _mapping_sequence(
+            data.get("regressions") or [], "regressions"
         )
         self.risk: Mapping[str, Any] = _mapping(data.get("risk"), "risk")
         self.patch: Mapping[str, Any] = _mapping(data.get("patch"), "patch")
@@ -737,6 +759,30 @@ def load_curated(path: Path) -> Curated:
         for field in ("id", "statement", "decision"):
             if not isinstance(observation.get(field), str) or not observation[field]:
                 raise SpecError(f"live observation needs a string {field}")
+    composite_names = [tool.get("name") for tool in curated.composite_tools]
+    if not all(isinstance(name, str) and name for name in composite_names):
+        raise SpecError("every composite tool needs a non-empty string name")
+    if len(composite_names) != len(set(composite_names)):
+        raise SpecError("composite_tools contains duplicate tool names")
+    if set(composite_names) & set(tool_names):
+        raise SpecError("a composite tool name collides with a tool_map name")
+    for tool in curated.composite_tools:
+        for field in ("name", "domain", "description"):
+            if not isinstance(tool.get(field), str) or not tool[field]:
+                raise SpecError(f"composite tool needs a string {field}")
+        if tool["domain"] not in DOMAIN_ORDER:
+            raise SpecError(f"composite tool {tool['name']!r} has unknown domain")
+        operation_ids = tool.get("operation_ids")
+        if (
+            not isinstance(operation_ids, list)
+            or not operation_ids
+            or not all(isinstance(item, str) and item for item in operation_ids)
+        ):
+            raise SpecError(f"composite tool {tool['name']!r} needs a non-empty operation_ids list")
+    for regression in curated.regressions:
+        for field in ("id", "statement", "decision"):
+            if not isinstance(regression.get(field), str) or not regression[field]:
+                raise SpecError(f"regression needs a string {field}")
     return curated
 
 
@@ -794,6 +840,19 @@ def build_records(document: Any, curated: Curated) -> list[Record]:
     unknown_patch = sorted(set(patch_notes) - known_ids)
     if unknown_patch:
         raise SpecError(f"patch exceptions reference unknown operationIds: {unknown_patch}")
+    for tool in curated.composite_tools:
+        unknown_composite = sorted(set(tool["operation_ids"]) - known_ids)
+        if unknown_composite:
+            raise SpecError(
+                f"composite tool {tool['name']!r} references unknown operationIds: "
+                f"{unknown_composite}"
+            )
+        unaudited = sorted(set(tool["operation_ids"]) - set(curated.tool_map))
+        if unaudited:
+            raise SpecError(
+                f"composite tool {tool['name']!r} references operations outside the audited "
+                f"v1 tool_map: {unaudited}"
+            )
 
     records: list[Record] = []
     for operation in operations:
@@ -830,7 +889,9 @@ def build_records(document: Any, curated: Curated) -> list[Record]:
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
-def validate_inventory(records: Sequence[Record], rendered: str, document: Any) -> None:
+def validate_inventory(
+    records: Sequence[Record], rendered: str, document: Any, curated: Curated
+) -> None:
     expected = extract_operations(document)
     expected_ids = {operation.operation_id for operation in expected}
     record_ids = [record.operation.operation_id for record in records]
@@ -880,10 +941,11 @@ def validate_inventory(records: Sequence[Record], rendered: str, document: Any) 
         if len(matches) != 1:
             raise SpecError(f"rendered row for {operation_id} does not match exactly one operation")
 
+    composite_domains = {tool["domain"] for tool in curated.composite_tools}
     for domain in DOMAIN_ORDER:
         count = sum(1 for record in records if record.operation.domain == domain)
-        if count == 0:
-            raise SpecError(f"domain {domain!r} has no operations")
+        if count == 0 and domain not in composite_domains:
+            raise SpecError(f"domain {domain!r} has no operations and no composite tools")
     if sum(
         sum(1 for record in records if record.operation.domain == domain) for domain in DOMAIN_ORDER
     ) != len(records):
@@ -944,6 +1006,28 @@ def _tools_for_domain(records: Sequence[Record], domain: str) -> list[str]:
             continue
         tools.append(record.mcp[1:].split("`", 1)[0])
     return sorted(tools)
+
+
+def _tool_counts(records: Sequence[Record], curated: Curated, domain: str) -> tuple[int, int]:
+    """Return (one-to-one operations, total tools including composites)."""
+    operations = len(_tools_for_domain(records, domain))
+    composites = sum(1 for tool in curated.composite_tools if tool["domain"] == domain)
+    return operations, operations + composites
+
+
+def _composite_rows(curated: Curated, domain: str | None = None) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
+    for tool in curated.composite_tools:
+        if domain is not None and tool["domain"] != domain:
+            continue
+        rows.append(
+            (
+                _code(tool["name"]),
+                ", ".join(_code(item) for item in tool["operation_ids"]),
+                _cell(tool["description"]),
+            )
+        )
+    return rows
 
 
 # ---------------------------------------------------------------------------
@@ -1147,7 +1231,9 @@ def render_document(
     add(
         "Sections and rows are emitted in the canonical order below; within a section rows are "
         "sorted by path and then by the fixed method order GET, POST, PATCH, DELETE. The mapping "
-        "is derived from the path only and the first matching rule wins."
+        "is derived from the path only and the first matching rule wins. `network_status` is "
+        "evaluated before `network` so the two status paths are not captured by the broader "
+        "network rule; `audit` never matches a path because it is provided by composite tools."
     )
     add("")
     domain_counts = Counter(record.operation.domain for record in records)
@@ -1175,21 +1261,60 @@ def render_document(
     add("")
     add(_cell(curated.release.get("rule", "")))
     add("")
-    scope_rows = []
+    scope_rows: list[tuple[str, str, str, str]] = []
+    total_operations = 0
+    total_tools = 0
+    domains_with_tools = 0
     for rule in DOMAIN_RULES:
         block = _mapping(curated.domains[rule.key], rule.key)
-        tools = _tools_for_domain(records, rule.key)
-        scope_rows.append(
-            (
-                rule.title,
-                str(len(tools)),
-                _cell(block["v1_scope"]),
-            )
+        operations, tool_count = _tool_counts(records, curated, rule.key)
+        if tool_count == 0:
+            continue
+        domains_with_tools += 1
+        total_operations += operations
+        total_tools += tool_count
+        scope_rows.append((rule.title, str(operations), str(tool_count), _cell(block["v1_scope"])))
+    scope_rows.append(("**Total**", f"**{total_operations}**", f"**{total_tools}**", ""))
+    add(
+        markdown_table(
+            ("Domain", "v1 operations", "v1 tools", "v1 scope"),
+            scope_rows,
         )
-    add(markdown_table(("Domain", "v1 tools", "v1 scope"), scope_rows))
+    )
+    add("")
+    add(
+        f"Generated: {total_operations} one-to-one tools (one per audited operation) plus "
+        f"{len(curated.composite_tools)} composite tools = {total_tools} MCP tools across "
+        f"{domains_with_tools} domains with tools. `admin_system` and `other` are "
+        "classification-only domains (0 tools); their full inventories are in §5."
+    )
     add("")
 
-    add("### 4.2 Exclusions")
+    add("### 4.2 Composite tools")
+    add("")
+    add(
+        "Composite tools add no new Sophos endpoint: they reuse the audited operations in "
+        "`tool_map` and reason over their results. They are read-only and state "
+        "`method: config-analysis` where they explain configuration."
+    )
+    add("")
+    add(
+        markdown_table(
+            ("Tool", "Domain", "Underlying operationIds", "Description"),
+            (
+                (
+                    _code(tool["name"]),
+                    _code(tool["domain"]),
+                    ", ".join(_code(item) for item in tool["operation_ids"]),
+                    _cell(tool["description"]),
+                )
+                for tool in curated.composite_tools
+            ),
+        )
+    )
+    add("")
+
+    add("### 4.3 Exclusions")
     add("")
     add(
         "The table lists the ordered exclusion rules. The tool map wins first, then these rules "
@@ -1212,7 +1337,7 @@ def render_document(
     )
     add("")
 
-    add("### 4.3 PATCH semantics and documented exceptions")
+    add("### 4.4 PATCH semantics and documented exceptions")
     add("")
     add(_cell(curated.patch.get("default_semantics", "")))
     add("")
@@ -1239,7 +1364,7 @@ def render_document(
     )
     add("")
 
-    add("### 4.4 Pagination")
+    add("### 4.5 Pagination")
     add("")
     add(_cell(curated.pagination.get("declared_parameters", "")))
     add("")
@@ -1248,7 +1373,7 @@ def render_document(
     add(_bullets(str(item) for item in curated.pagination.get("rules") or []))
     add("")
 
-    add("### 4.5 Object identifiers and name formats")
+    add("### 4.6 Object identifiers and name formats")
     add("")
     add(_bullets(str(item) for item in curated.identifiers.get("formats") or []))
     add("")
@@ -1297,7 +1422,7 @@ def render_document(
     add(_bullets(str(item) for item in curated.identifiers.get("rules") or []))
     add("")
 
-    add("### 4.6 Responses and errors")
+    add("### 4.7 Responses and errors")
     add("")
     add(_cell(curated.errors.get("envelope", "")))
     add("")
@@ -1310,14 +1435,14 @@ def render_document(
     add(_bullets(str(item) for item in curated.errors.get("rules") or []))
     add("")
 
-    add("### 4.7 Security and permissions")
+    add("### 4.8 Security and permissions")
     add("")
     add(_cell(curated.security.get("contract", "")))
     add("")
     add(_bullets(str(item) for item in curated.security.get("rules") or []))
     add("")
 
-    add("### 4.8 Live observations (15 November 2026)")
+    add("### 4.9 Live observations (15 November 2026)")
     add("")
     add(
         "Read-only smoke test against the lab appliance; full evidence in "
@@ -1341,7 +1466,30 @@ def render_document(
     )
     add("")
 
-    add("### 4.9 Firmware and live verification")
+    add("### 4.10 Accepted regressions")
+    add("")
+    add(
+        "The REST contract does not expose every capability of the old XML tooling or the Web "
+        "Admin Console. These gaps are accepted for v1 and are not hidden behind placeholder "
+        "tools."
+    )
+    add("")
+    add(
+        markdown_table(
+            ("Regression", "Statement", "Decision"),
+            (
+                (
+                    _code(str(regression["id"])),
+                    _cell(regression["statement"]),
+                    _cell(regression["decision"]),
+                )
+                for regression in curated.regressions
+            ),
+        )
+    )
+    add("")
+
+    add("### 4.11 Firmware and live verification")
     add("")
     add(_cell(curated.firmware.get("status", "")))
     add("")
@@ -1360,6 +1508,7 @@ def render_document(
         block = _mapping(curated.domains[rule.key], rule.key)
         domain_records = [record for record in records if record.operation.domain == rule.key]
         tools = _tools_for_domain(records, rule.key)
+        composites = _composite_rows(curated, rule.key)
         add(f"### 5.{index} {rule.title} ({len(domain_records)} operations)")
         add("")
         add(f"**Curated decisions** (`scripts/coverage_curated.yaml` → " f"`domains.{rule.key}`):")
@@ -1369,6 +1518,8 @@ def render_document(
             add("- v1 tools: " + ", ".join(_code(tool) for tool in tools))
         else:
             add("- v1 tools: none")
+        if composites:
+            add(f"- composite tools: {len(composites)}")
         exclusions = block.get("exclusions") or []
         if exclusions:
             add("- exclusions: " + " ".join(_cell(item) for item in exclusions))
@@ -1376,45 +1527,61 @@ def render_document(
         if caveats:
             add("- caveats: " + " ".join(_cell(item) for item in caveats))
         add("")
-        add("**Generated inventory** (from `firewall_config_openapi.yaml`):")
-        add("")
-        add(
-            markdown_table(
-                (
-                    "operationId",
-                    "method",
-                    "path",
-                    "request content type",
-                    "request schema",
-                    "responses",
-                    "response schema",
-                    "pagination",
-                    "other query params",
-                    "path identifier",
-                    "kind",
-                    "risk",
-                    "MCP tool / exclusion",
-                ),
-                (
-                    (
-                        _code(record.operation.operation_id),
-                        record.operation.method,
-                        _code(record.operation.path),
-                        record.operation.request_content_type,
-                        _schema_cell(record.operation.request_schema),
-                        record.operation.response_statuses,
-                        _schema_cell(record.operation.response_schema),
-                        record.operation.pagination,
-                        record.operation.other_query,
-                        record.operation.identifier,
-                        record.operation.kind,
-                        record.operation.risk,
-                        record.mcp,
-                    )
-                    for record in domain_records
-                ),
+        if composites:
+            add("**Composite tools** (reuse audited operations; no new Sophos endpoint):")
+            add("")
+            add(
+                markdown_table(
+                    ("Tool", "Underlying operationIds", "Description"),
+                    composites,
+                )
             )
-        )
+            add("")
+        if domain_records:
+            add("**Generated inventory** (from `firewall_config_openapi.yaml`):")
+            add("")
+            add(
+                markdown_table(
+                    (
+                        "operationId",
+                        "method",
+                        "path",
+                        "request content type",
+                        "request schema",
+                        "responses",
+                        "response schema",
+                        "pagination",
+                        "other query params",
+                        "path identifier",
+                        "kind",
+                        "risk",
+                        "MCP tool / exclusion",
+                    ),
+                    (
+                        (
+                            _code(record.operation.operation_id),
+                            record.operation.method,
+                            _code(record.operation.path),
+                            record.operation.request_content_type,
+                            _schema_cell(record.operation.request_schema),
+                            record.operation.response_statuses,
+                            _schema_cell(record.operation.response_schema),
+                            record.operation.pagination,
+                            record.operation.other_query,
+                            record.operation.identifier,
+                            record.operation.kind,
+                            record.operation.risk,
+                            record.mcp,
+                        )
+                        for record in domain_records
+                    ),
+                )
+            )
+        else:
+            add(
+                "**Generated inventory**: none — this domain has no Sophos operation and is "
+                "provided entirely by composite tools."
+            )
         add("")
 
     add("## Appendix A — Component schema index")
@@ -1546,7 +1713,7 @@ def generate(
     curated = load_curated(curated_path)
     records = build_records(document, curated)
     rendered = render_document(facts, records, curated, document)
-    validate_inventory(records, rendered, document)
+    validate_inventory(records, rendered, document, curated)
     return rendered, facts, records, curated
 
 
