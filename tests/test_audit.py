@@ -1163,6 +1163,72 @@ async def test_audit_progress_does_not_change_the_output(router: Any) -> None:
     assert with_progress.structured_content == without_progress.structured_content
 
 
+async def test_explain_connectivity_reports_progress_for_every_page_it_reads(
+    router: Any,
+) -> None:
+    """L9: the connectivity walk reports progress instead of hanging opaquely."""
+    install(router, connectivity_collections(rules=[ALLOW_RULE]))
+
+    updates: list[tuple[float, float | None, str | None]] = []
+
+    async def record(progress: float, total: float | None, message: str | None) -> None:
+        updates.append((progress, total, message))
+
+    server = make_server()
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "explain_connectivity",
+            {
+                "request": {
+                    "source": {"ip": "10.0.0.5"},
+                    "destination": {"ip": "8.8.8.8"},
+                    "service": {"name": "HTTP"},
+                }
+            },
+            progress_callback=record,
+        )
+
+    assert result.is_error is False
+    pages = result.structured_content["scan"]["pagesRead"]
+    assert pages > 0
+    assert [update[0] for update in updates] == [float(page) for page in range(1, pages + 1)]
+    assert {update[1] for update in updates} == {80.0}
+    assert all(update[2] is not None for update in updates)
+
+
+async def test_find_object_usage_reports_progress_for_every_page_it_reads(
+    router: Any,
+) -> None:
+    """L9: the usage walk reports progress instead of hanging opaquely."""
+    install(
+        router,
+        {
+            ADDR_V4: page([ipv4_address(name="orphan")]),
+            RULES_V4: page([firewall_rule(name="r1")]),
+        },
+    )
+
+    updates: list[tuple[float, float | None, str | None]] = []
+
+    async def record(progress: float, total: float | None, message: str | None) -> None:
+        updates.append((progress, total, message))
+
+    server = make_server()
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "find_object_usage",
+            {"request": {"object_type": "address", "identifier": "orphan"}},
+            progress_callback=record,
+        )
+
+    assert result.is_error is False
+    pages = result.structured_content["scan"]["pagesRead"]
+    assert pages > 0
+    assert [update[0] for update in updates] == [float(page) for page in range(1, pages + 1)]
+    assert {update[1] for update in updates} == {80.0}
+    assert all(update[2] is not None for update in updates)
+
+
 async def test_audit_reads_the_audited_paths_with_the_documented_pagination(
     router: Any,
 ) -> None:
@@ -2186,9 +2252,8 @@ async def test_composite_descriptions_state_the_latency_bound() -> None:
         assert "Reads up to 80 pages" in description
         assert "expect a few seconds" in description
         assert "up to a minute" in description
-
-    # The audit tool is the one that reports progress, and it says so.
-    assert "Progress is reported once per page" in tools["audit_firewall_rules"].description
+        # All three composites report progress, and each says so.
+        assert "Progress is reported once per page" in description
 
 
 async def test_audit_description_states_the_two_finding_shapes(router: Any) -> None:

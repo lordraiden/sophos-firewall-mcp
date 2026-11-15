@@ -1,4 +1,5 @@
-"""Refuse to start when ``mcp`` resolves outside this server's own environment.
+"""Warn when ``mcp`` resolves outside this server's environment, and refuse to start when
+``mcp.server.mcpserver`` is missing.
 
 The dependency is pinned to ``mcp>=2`` because ``mcp.server.fastmcp`` was removed in 2.0 and replaced by ``mcp.server.mcpserver``. That pin protects
 the *install*, not the *run*: a parent process that exports ``PYTHONPATH`` pointing at another

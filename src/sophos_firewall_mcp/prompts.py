@@ -43,6 +43,11 @@ AUDIT_CHECKS: tuple[str, ...] = (
 #: Object types ``find_object_usage`` accepts.
 OBJECT_TYPES: tuple[str, ...] = ("address", "address-group", "service", "service-group")
 
+#: The IP families ``audit_firewall_rules`` accepts. FQDN objects have no IP family, so the
+#: audit scan is left unfiltered for them: an FQDN object can be referenced by both rule
+#: families, and the unused-object check must see both.
+AUDIT_IP_FAMILIES: tuple[str, ...] = ("ipv4", "ipv6")
+
 
 def _request(payload: dict[str, object]) -> str:
     """Render a tool call's ``arguments`` object as compact JSON.
@@ -110,15 +115,15 @@ def _explain_message(
     source: str,
     destination: str,
     endpoint_type: str | None,
-    service: str | None,
+    service: str,
     protocol: str | None,
     port: int | None,
 ) -> str:
     """The flow-explanation instruction, with the caller's endpoints folded in."""
     kind = endpoint_type or "ip"
-    service_payload: dict[str, object] = {}
-    if service:
-        service_payload["name"] = service
+    if port is not None and protocol not in ("tcp", "udp"):
+        raise ValueError("port requires protocol 'tcp' or 'udp'")
+    service_payload: dict[str, object] = {"name": service}
     if protocol:
         service_payload["protocol"] = protocol
     if port is not None:
@@ -126,9 +131,8 @@ def _explain_message(
     payload: dict[str, object] = {
         "source": {kind: source},
         "destination": {kind: destination},
+        "service": service_payload,
     }
-    if service_payload:
-        payload["service"] = service_payload
 
     return f"""Explain, from configuration, why this flow is allowed or denied.
 
@@ -137,7 +141,8 @@ def _explain_message(
    {_request(payload)}
 
    An endpoint is exactly one of `ip`, `zone` or `fqdn`; both endpoints above are read as
-   `{kind}`. A service is a `name`, a `protocol`/`port` pair, or both.
+   `{kind}`. The service is required: `name` is the service object name, and `protocol`/`port`
+   refine it when the flow is described that way.
 
 2. Read the result in order: the resolved source interface and zone, the resolved
    destination, the matching firewall rules in evaluation order with the first decisive
@@ -160,7 +165,7 @@ def _explain_message(
 def _unused_message(object_type: str | None, ip_family: str | None) -> str:
     """The unused-object instruction, with the caller's filters folded in."""
     audit_payload: dict[str, object] = {"checks": ["unused-object"], "max_findings": 100}
-    if ip_family:
+    if ip_family in AUDIT_IP_FAMILIES:
         audit_payload["ip_family"] = ip_family
     usage_payload: dict[str, object] = {
         "object_type": object_type or "address",
@@ -175,6 +180,12 @@ def _unused_message(object_type: str | None, ip_family: str | None) -> str:
         if object_type
         else f"`object_type` is one of {', '.join(OBJECT_TYPES)}."
     )
+    family_note = (
+        "\n   FQDN objects have no IP family, so the audit scans both rule families; the\n"
+        "   usage lookup is narrowed to FQDN objects.\n"
+        if ip_family == "fqdn"
+        else ""
+    )
     return f"""Find address and service objects that nothing references ({scope}).
 
 1. Call `audit_firewall_rules` with:
@@ -183,7 +194,7 @@ def _unused_message(object_type: str | None, ip_family: str | None) -> str:
 
    The `unused-object` check reports an address or service object that no firewall rule,
    NAT rule or group references.
-
+{family_note}
 2. Confirm every candidate with `find_object_usage`:
 
    {_request(usage_payload)}
@@ -260,6 +271,16 @@ def register_prompts(server: MCPServer[AppContext]) -> None:
             str,
             Field(description="Destination IP address, zone name or FQDN."),
         ],
+        service: Annotated[
+            str,
+            Field(
+                min_length=1,
+                description=(
+                    "Service object name the flow is described by (required). "
+                    "`explain_connectivity` needs a service."
+                ),
+            ),
+        ],
         endpoint_type: Annotated[
             str | None,
             Field(
@@ -268,17 +289,17 @@ def register_prompts(server: MCPServer[AppContext]) -> None:
                 )
             ),
         ] = None,
-        service: Annotated[
-            str | None,
-            Field(description="Service object name, when the flow is described by one."),
-        ] = None,
         protocol: Annotated[
             str | None,
             Field(description="Protocol of the flow: tcp, udp, icmp, icmpv6 or ip."),
         ] = None,
         port: Annotated[
             int | None,
-            Field(description="Destination port (TCP or UDP only)."),
+            Field(
+                description=(
+                    "Destination port (TCP or UDP only; requires `protocol` to be 'tcp' or 'udp')."
+                )
+            ),
         ] = None,
     ) -> str:
         """Explain, from configuration, why a flow is allowed or denied."""
@@ -305,7 +326,11 @@ def register_prompts(server: MCPServer[AppContext]) -> None:
         ip_family: Annotated[
             str | None,
             Field(
-                description="Restrict address lookups to 'ipv4', 'ipv6' or 'fqdn'. Omit for all."
+                description=(
+                    "Restrict address lookups to 'ipv4', 'ipv6' or 'fqdn'. Omit for all. "
+                    "An FQDN object has no IP family, so the audit scans both rule families "
+                    "and the usage lookup is narrowed to FQDN objects."
+                )
             ),
         ] = None,
     ) -> str:

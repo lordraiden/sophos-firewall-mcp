@@ -57,7 +57,7 @@ appliance's ``pages.total`` metadata or on a short page. Every result carries a
 :class:`~sophos_firewall_mcp.models.audit.ScanReport`; ``truncated`` is true only when a
 limit was actually hit.
 
-``audit_firewall_rules`` reports progress once per page it reads, against the global page
+The three composite tools report progress once per page they read, against the global page
 cap, so a multi-page scan is observable instead of an opaque hang. Progress is advisory:
 it never changes the checks, the verdicts or the output shape, and the SDK makes the
 notification a no-op when the client did not supply a progress token.
@@ -1367,10 +1367,15 @@ class AuditAdapter(DomainAdapter):
     # -- explain_connectivity ----------------------------------------------------------
 
     async def explain_connectivity(
-        self, request: ExplainConnectivityInput
+        self, request: ExplainConnectivityInput, *, progress: ProgressReporter | None = None
     ) -> ExplainConnectivityOutput:
-        """Explain, from configuration, which interface, rule, NAT entry and route apply."""
-        budget = _Budget()
+        """Explain, from configuration, which interface, rule, NAT entry and route apply.
+
+        ``progress`` is called once per page the bounded walk reads, so a multi-page scan
+        is observable instead of an opaque hang; it never changes the verdicts or the
+        output shape.
+        """
+        budget = _Budget(progress=progress)
         missing: list[str] = []
         notes: list[str] = [
             "Configuration analysis only: the REST contract exposes no ping, traceroute, "
@@ -1619,9 +1624,16 @@ class AuditAdapter(DomainAdapter):
 
     # -- find_object_usage -------------------------------------------------------------
 
-    async def find_object_usage(self, request: FindObjectUsageInput) -> FindObjectUsageOutput:
-        """Find every reference to one object across rules, NAT rules and groups."""
-        budget = _Budget()
+    async def find_object_usage(
+        self, request: FindObjectUsageInput, *, progress: ProgressReporter | None = None
+    ) -> FindObjectUsageOutput:
+        """Find every reference to one object across rules, NAT rules and groups.
+
+        ``progress`` is called once per page the bounded walk reads, so a multi-page scan
+        is observable instead of an opaque hang; it never changes the references or the
+        output shape.
+        """
+        budget = _Budget(progress=progress)
         notes: list[str] = []
         families = _address_families(request.ip_family)
 
@@ -2986,13 +2998,16 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "address- and service-object membership is not resolved here; an FQDN endpoint "
             "cannot be resolved without DNS. Truncation is explicit. Read-only. "
             f"Reads up to {MAX_PAGES_TOTAL} pages; expect a few seconds on a small "
-            "configuration and up to a minute on a large one."
+            "configuration and up to a minute on a large one. Progress is reported once per "
+            "page when the client supplies a progress token."
         ),
     )
     async def explain_connectivity(
         request: ExplainConnectivityInput, ctx: Context[AppContext]
     ) -> ExplainConnectivityOutput:
-        return await AuditAdapter.from_context(ctx).explain_connectivity(request)
+        return await AuditAdapter.from_context(ctx).explain_connectivity(
+            request, progress=ctx.report_progress
+        )
 
     @register_tool(
         server,
@@ -3011,10 +3026,13 @@ def register_audit_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "object itself was found, the total reference count and explicit truncation flags. "
             "A group membership counts as a reference. Never mutates and adds no endpoint. "
             f"Reads up to {MAX_PAGES_TOTAL} pages; expect a few seconds on a small "
-            "configuration and up to a minute on a large one."
+            "configuration and up to a minute on a large one. Progress is reported once per "
+            "page when the client supplies a progress token."
         ),
     )
     async def find_object_usage(
         request: FindObjectUsageInput, ctx: Context[AppContext]
     ) -> FindObjectUsageOutput:
-        return await AuditAdapter.from_context(ctx).find_object_usage(request)
+        return await AuditAdapter.from_context(ctx).find_object_usage(
+            request, progress=ctx.report_progress
+        )

@@ -14,6 +14,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib.metadata
+import json
 import os
 import re
 import subprocess
@@ -24,6 +25,7 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 
+import jsonschema
 import pytest
 from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import Context, MCPServer
@@ -1264,9 +1266,62 @@ PROMPT_NAMES = ("audit_firewall", "explain_flow", "find_unused_objects")
 #: required arguments; the other two render with none.
 PROMPT_ARGUMENTS: dict[str, dict[str, str]] = {
     "audit_firewall": {},
-    "explain_flow": {"source": "10.0.0.5", "destination": "8.8.8.8"},
+    "explain_flow": {"source": "10.0.0.5", "destination": "8.8.8.8", "service": "HTTPS"},
     "find_unused_objects": {},
 }
+
+#: Every documented prompt argument combination, including the values that used to render
+#: an invalid tool call (``fqdn`` for ``find_unused_objects``). Each rendered call is
+#: validated against the named tool's published input schema.
+PROMPT_ARGUMENT_MATRIX: dict[str, tuple[dict[str, str], ...]] = {
+    "audit_firewall": (
+        {},
+        {"ip_family": "ipv4"},
+        {"ip_family": "ipv6"},
+        {"checks": "any-any, shadowed"},
+        {"rule_name_contains": "Allow LAN to WAN"},
+        {"ip_family": "ipv6", "checks": "disabled", "rule_name_contains": "WAN"},
+    ),
+    "explain_flow": (
+        {"source": "10.0.0.5", "destination": "8.8.8.8", "service": "HTTPS"},
+        {"source": "DMZ", "destination": "WAN", "service": "HTTPS", "endpoint_type": "zone"},
+        {
+            "source": "a.example",
+            "destination": "b.example",
+            "service": "HTTPS",
+            "endpoint_type": "fqdn",
+        },
+        {
+            "source": "10.0.0.5",
+            "destination": "8.8.8.8",
+            "service": "HTTPS",
+            "protocol": "tcp",
+            "port": "443",
+        },
+        {
+            "source": "10.0.0.5",
+            "destination": "8.8.8.8",
+            "service": "HTTPS",
+            "protocol": "udp",
+            "port": "53",
+        },
+    ),
+    "find_unused_objects": (
+        {},
+        {"object_type": "service"},
+        {"object_type": "address-group"},
+        {"ip_family": "ipv4"},
+        {"ip_family": "ipv6"},
+        {"ip_family": "fqdn"},
+        {"object_type": "address-group", "ip_family": "fqdn"},
+    ),
+}
+
+#: The literal prefix of a rendered tool call.
+_RENDERED_REQUEST = '{"request":'
+
+#: A backticked snake_case token, which is how the prompt text names a tool.
+_BACKTICKED_NAME = re.compile(r"`([a-z][a-z0-9_]*)`")
 
 #: Upper bound for one resource body. A resource is passive context a client may inject
 #: into every turn, so it must stay cheap: the four bodies together are under 10 KB.
@@ -1459,7 +1514,7 @@ async def test_prompts_list_publishes_the_three_workflows():
     required = {
         argument.name for argument in by_name["explain_flow"].arguments if argument.required
     }
-    assert required == {"source", "destination"}
+    assert required == {"source", "destination", "service"}
 
 
 async def test_each_prompt_renders_a_self_contained_instruction():
@@ -1490,16 +1545,22 @@ async def test_prompt_arguments_reach_the_tool_call():
 
     flow = await server.get_prompt(
         "explain_flow",
-        {"source": "10.0.0.5", "destination": "8.8.8.8", "protocol": "tcp", "port": "443"},
+        {
+            "source": "10.0.0.5",
+            "destination": "8.8.8.8",
+            "service": "HTTPS",
+            "protocol": "tcp",
+            "port": "443",
+        },
     )
     flow_text = flow.messages[0].content.text
     assert '"source": {"ip": "10.0.0.5"}' in flow_text
     assert '"destination": {"ip": "8.8.8.8"}' in flow_text
-    assert '"port": 443' in flow_text
+    assert '"service": {"name": "HTTPS", "protocol": "tcp", "port": 443}' in flow_text
 
     zone_flow = await server.get_prompt(
         "explain_flow",
-        {"source": "DMZ", "destination": "WAN", "endpoint_type": "zone"},
+        {"source": "DMZ", "destination": "WAN", "service": "HTTPS", "endpoint_type": "zone"},
     )
     zone_text = zone_flow.messages[0].content.text
     assert '"source": {"zone": "DMZ"}' in zone_text
@@ -1519,6 +1580,63 @@ async def test_explain_flow_requires_its_endpoints():
 
     with pytest.raises(ValueError):
         await server.get_prompt("explain_flow", {})
+
+
+def rendered_tool_calls(text: str, tool_names: set[str]) -> list[tuple[str, dict[str, Any]]]:
+    """Extract every rendered ``{"request": ...}`` and the tool it belongs to.
+
+    The prompt text names the tool immediately before the call, so the nearest preceding
+    backticked token that is a registered tool is the callee. ``raw_decode`` parses the
+    nested object without needing to know where it ends.
+    """
+    calls: list[tuple[str, dict[str, Any]]] = []
+    for match in re.finditer(re.escape(_RENDERED_REQUEST), text):
+        prefix = text[: match.start()]
+        names = [name for name in _BACKTICKED_NAME.findall(prefix) if name in tool_names]
+        assert names, f"no tool name before the request at offset {match.start()}"
+        payload, _ = json.JSONDecoder().raw_decode(text[match.start() :])
+        calls.append((names[-1], payload))
+    return calls
+
+
+async def test_every_rendered_prompt_call_validates_against_its_tool_schema():
+    """L10: a rendered prompt must emit a call the named tool accepts.
+
+    This is the regression guard for the two defects CI missed: ``explain_flow`` used to
+    omit the required ``service``, and ``find_unused_objects`` used to forward
+    ``ip_family="fqdn"`` to ``audit_firewall_rules``, whose enum is ``ipv4|ipv6``.
+    """
+    server = create_server(make_settings())
+    tools = {tool.name: tool for tool in await server.list_tools()}
+
+    for name, argument_sets in PROMPT_ARGUMENT_MATRIX.items():
+        for arguments in argument_sets:
+            result = await server.get_prompt(name, arguments)
+            text = result.messages[0].content.text
+            calls = rendered_tool_calls(text, set(tools))
+            assert calls, f"{name} rendered no tool call for {arguments}"
+
+            for tool_name, payload in calls:
+                jsonschema.validate(payload, tools[tool_name].input_schema)
+
+
+async def test_explain_flow_rejects_a_port_without_a_tcp_or_udp_protocol():
+    """L10: a port the tool cannot accept must fail to render, not render an invalid call."""
+    server = create_server(make_settings())
+
+    with pytest.raises(ValueError) as raised:
+        await server.get_prompt(
+            "explain_flow",
+            {"source": "10.0.0.5", "destination": "8.8.8.8", "service": "HTTPS", "port": "443"},
+        )
+
+    # The SDK wraps the render failure; the actionable message is in the cause chain.
+    messages: list[str] = []
+    error: BaseException | None = raised.value
+    while error is not None:
+        messages.append(str(error))
+        error = error.__cause__
+    assert any("port requires protocol" in message for message in messages)
 
 
 async def test_published_resource_and_prompt_text_names_only_real_tools():

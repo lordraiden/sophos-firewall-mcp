@@ -215,9 +215,10 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **152 tools in a single response**: **894,142 bytes**, roughly **223k tokens**
-at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO on
-a 2026-07-28 connection, including the trailing newline. There is no pagination cursor, so a client
+`tools/list` returns all **152 tools in a single response**: **807,743 bytes**, roughly **202k tokens**
+at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO
+with the legacy `initialize` handshake, including the trailing newline; the 2026-07-28 era adds a few
+dozen bytes of envelope. There is no pagination cursor, so a client
 that injects the whole catalog into the prompt either truncates it — and then cannot call the tools
 that were cut — or exhausts the context window before the first call.
 
@@ -234,13 +235,13 @@ The catalog is static for the process lifetime, so:
   `explain_flow`, `find_unused_objects`), so a client can read the contract and the conventions
   without loading the tool catalog.
 
-The payload is dominated by the output schemas (471 KB after the 0.7.0 trim, which removed 2,783
+The payload is dominated by the output schemas (471 KB after the catalog trim, which removed 2,783
 auto-generated property `title` keys and compacted 1,646 nullable unions); the 40 IPv4/IPv6 tool pairs
-account for 308 KB between them.
+account for 243 KB between them.
 
 ## Configuration
 
-The server reads exactly these eight environment variables. There are no XML-era settings.
+The server reads exactly these nine environment variables. There are no XML-era settings.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|

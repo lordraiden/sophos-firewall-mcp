@@ -193,8 +193,8 @@ def _surface_document() -> str:
     return f"""# Sophos Firewall Configuration REST API
 
 This server administers one Sophos Firewall (SFOS 23) appliance through its Configuration
-REST API. Every tool is a typed wrapper over one audited operation of that API; the server
-adds no endpoint of its own.
+REST API. Every tool wraps one or more audited operations of that API; the server adds no
+endpoint of its own.
 
 ## Connection
 
@@ -389,10 +389,16 @@ list page is 28-70 KB.
 ## Errors
 
 A failed call returns `isError: true` with a short, sanitized message that names the failed
-operation and the HTTP status, for example:
+operation, and the HTTP status when there is one. For example, a transport failure:
 
 ```
 the firewall could not be reached or did not answer in time; retry the read [GET /network/dns/settings]
+```
+
+and an error the appliance answered with:
+
+```
+the firewall rejected the request as invalid; check the field values (HTTP 400) [POST /firewall/rules/ipv4]
 ```
 
 An unknown argument is rejected before the handler runs, with the field path and the rule
