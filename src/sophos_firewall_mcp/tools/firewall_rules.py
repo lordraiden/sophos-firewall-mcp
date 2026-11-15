@@ -47,8 +47,10 @@ Annotation policy: read tools carry no write hints; every mutation declares
 every non-additive mutation (update, delete, move, set_enabled) and false for the additive
 ones (create, clone); ``idempotent_hint`` is true when repeating the same call leaves the
 appliance in the same state (update, delete, move, set_enabled) and false for the two that
-create a new rule each time. ``open_world_hint`` is false everywhere: the appliance is a
-fixed, closed endpoint.
+create a new rule each time. ``open_world_hint`` is left at the foundation default
+(``true``): the appliance is external to the MCP process and its responses carry
+administrator- and system-controlled values, so the conservative interaction-domain
+classification applies.
 """
 
 from __future__ import annotations
@@ -411,7 +413,6 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "(mutually exclusive). WAF rules are out of scope: they are omitted and "
             "counted in wafRulesSkipped. Read-only."
         ),
-        annotations=ToolAnnotations(open_world_hint=False),
     )
     async def firewall_rule_list_ipv4(
         request: ListFirewallRulesInput, ctx: Context[AppContext]
@@ -430,7 +431,6 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "collection automatically. Filter by name with nameContains or nameNotEquals "
             "(mutually exclusive). Read-only."
         ),
-        annotations=ToolAnnotations(open_world_hint=False),
     )
     async def firewall_rule_list_ipv6(
         request: ListFirewallRulesInput, ctx: Context[AppContext]
@@ -448,7 +448,6 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "applied enabled state, the action, the logging flag, the schedule and the "
             "match criteria. WAF rules are out of scope and are rejected. Read-only."
         ),
-        annotations=ToolAnnotations(open_world_hint=False),
     )
     async def firewall_rule_get_ipv4(
         request: GetFirewallRuleInput, ctx: Context[AppContext]
@@ -466,7 +465,6 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "applied enabled state, the action, the logging flag, the schedule and the "
             "match criteria. Read-only."
         ),
-        annotations=ToolAnnotations(open_world_hint=False),
     )
     async def firewall_rule_get_ipv6(
         request: GetFirewallRuleInput, ctx: Context[AppContext]
@@ -487,9 +485,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "firewall: WAF rules are out of scope. Returns the created rule with its "
             "applied enabled state."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=False, idempotent_hint=False, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
     async def firewall_rule_create_ipv4(
         request: CreateFirewallRuleIpv4Input, ctx: Context[AppContext]
@@ -509,9 +505,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "and before need a referenceItem naming the anchor rule. Returns the created "
             "rule with its applied enabled state."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=False, idempotent_hint=False, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
     async def firewall_rule_create_ipv6(
         request: CreateFirewallRuleIpv6Input, ctx: Context[AppContext]
@@ -530,9 +524,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "persisted value, and an explicit null on an optional member removes it. The "
             "rule is identified by idOrName. Returns the updated rule."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_update_ipv4(
         request: UpdateFirewallRuleIpv4Input, ctx: Context[AppContext]
@@ -551,9 +543,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "persisted value, and an explicit null on an optional member removes it. The "
             "rule is identified by idOrName. Returns the updated rule."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_update_ipv6(
         request: UpdateFirewallRuleIpv6Input, ctx: Context[AppContext]
@@ -571,9 +561,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "Destructive and irreversible: the rule is removed from the rule base. "
             "Returns whether the appliance confirmed the deletion."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_delete_ipv4(
         request: DeleteFirewallRuleInput, ctx: Context[AppContext]
@@ -591,9 +579,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "Destructive and irreversible: the rule is removed from the rule base. "
             "Returns whether the appliance confirmed the deletion."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_delete_ipv6(
         request: DeleteFirewallRuleInput, ctx: Context[AppContext]
@@ -612,9 +598,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "after|before|bottom|top; after and before need a referenceItem naming the "
             "anchor rule. Reordering changes which rule matches first."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_move_ipv4(
         request: MoveFirewallRuleInput, ctx: Context[AppContext]
@@ -633,9 +617,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "after|before|bottom|top; after and before need a referenceItem naming the "
             "anchor rule. Reordering changes which rule matches first."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_move_ipv6(
         request: MoveFirewallRuleInput, ctx: Context[AppContext]
@@ -654,9 +636,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "target state, so a missing value can never silently disable a rule. Returns "
             "the rule with the applied enabled state."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_set_enabled_ipv4(
         request: SetFirewallRuleEnabledInput, ctx: Context[AppContext]
@@ -675,9 +655,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "target state, so a missing value can never silently disable a rule. Returns "
             "the rule with the applied enabled state."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=True, idempotent_hint=True, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_set_enabled_ipv6(
         request: SetFirewallRuleEnabledInput, ctx: Context[AppContext]
@@ -697,9 +675,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "copied. position is required and after/before need a referenceItem. WAF "
             "sources are rejected."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=False, idempotent_hint=False, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
     async def firewall_rule_clone_ipv4(
         request: CloneFirewallRuleInput, ctx: Context[AppContext]
@@ -718,9 +694,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "created disabled unless enabled=true is passed; read-only members are not "
             "copied. position is required and after/before need a referenceItem."
         ),
-        annotations=ToolAnnotations(
-            destructive_hint=False, idempotent_hint=False, open_world_hint=False
-        ),
+        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
     async def firewall_rule_clone_ipv6(
         request: CloneFirewallRuleInput, ctx: Context[AppContext]

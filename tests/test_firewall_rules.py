@@ -933,7 +933,9 @@ async def test_read_tools_carry_no_write_hints() -> None:
     for name in READ_TOOLS:
         wire = tools[name].annotations.model_dump(by_alias=True, exclude_none=True)
         assert wire["readOnlyHint"] is True
-        assert wire["openWorldHint"] is False
+        # The appliance is external to the MCP process: the foundation default (True)
+        # classifies the interaction domain conservatively.
+        assert wire["openWorldHint"] is True
         assert "destructiveHint" not in wire
         assert "idempotentHint" not in wire
 
@@ -966,7 +968,7 @@ async def test_mutation_tools_declare_their_risk_and_idempotence(
     assert wire["readOnlyHint"] is False
     assert wire["destructiveHint"] is destructive
     assert wire["idempotentHint"] is idempotent
-    assert wire["openWorldHint"] is False
+    assert wire["openWorldHint"] is True
 
 
 async def test_create_input_schema_is_closed_and_requires_position() -> None:
