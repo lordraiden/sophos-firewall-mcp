@@ -48,6 +48,20 @@ No se debe empezar un repositorio nuevo. Se conserva lordraiden/sophos-firewall-
 
 No mantener capas, abstracciones o dependencias solo por continuidad histórica.
 
+## Estado real del repositorio en la revisión (15 de noviembre de 2026)
+
+La migración parte de una implementación todavía XML y de una infraestructura que tiene inconsistencias que deben tratarse como trabajo explícito, no como detalles de empaquetado:
+
+- `pyproject.toml` declara actualmente `mcp[cli]>=2.0.0,<3.0.0`, mientras que el baseline MCP de este plan es `mcp>=2.3.0,<3` sin el extra CLI en runtime. También incluye `xmltodict` y el extra opcional `router` (FastEmbed/numpy), que deben desaparecer de la distribución REST.
+- `requirements.txt` declara `mcp[cli]>=1.2.0,<2.0.0`, incompatible con el runtime actual `MCPServer` y desalineado con `pyproject.toml`. Existe `uv.lock`; debe convertirse en el lock canónico, regenerarse con el nuevo contrato y usarse con resolución bloqueada en CI/build. Eliminar los requirements duplicados o generarlos de forma verificable desde esa resolución; retirar también tipos/fixtures de XML en `requirements-dev.txt`.
+- `src/sophos_firewall_mcp/client.py` sigue siendo cliente XML (`/webconsole/APIController`, usuario/contraseña, APIVersion, `xmltodict`). `server.py` ya usa `MCPServer` de SDK v2, pero registra herramientas globalmente, importa el raw API tool, prompts/resources y el router FastEmbed; no tiene lifespan que comparta un REST client.
+- `_guard.py` captura `BaseException` y convierte errores inesperados en `SophosAPIError` tras una lista de excepciones passthrough. No trasladar este wrapper al diseño nuevo: usar errores de dominio tipados y `ToolError` para fallos previstos; dejar excepciones inesperadas bajo el manejo/logging del SDK y propagar cancelación/shutdown sin envolverlas.
+- `Dockerfile` instala `.[router]` y descarga el modelo FastEmbed durante el build. `docker-compose.yml` todavía entrega credenciales XML, desactiva TLS por defecto y activa `tty: true`; `.env.example` y README también documentan XML, FastEmbed y el flujo de autenticación antiguo. Deben migrarse como una misma unidad y mantener STDIO sin TTY.
+- CI ejecuta tests para Python 3.11/3.12/3.13 y lint/type-check con Python 3.12. `.github/workflows/security.yml` ejecuta `pip-audit -r requirements.txt`, que hoy audita la línea MCP 1.x y no el conjunto de dependencias que instala el paquete desde `pyproject.toml`/lock. Corregirlo para auditar el lock de runtime usado por el build.
+- `.github/workflows/docker-publish.yml` publica actualmente tanto en pushes a `main` como en tags `v*`, y asigna `latest` a pushes de `main`. Esto contradice la política de no promover una release de producción sin aprobación: los pushes a main deben producir, como mucho, tags de desarrollo (por ejemplo `main`/SHA); `latest` y tags estables deben reservarse a una promoción de release explícita y revisada.
+
+El alcance de esta revisión es corregir el plan y las issues; estos archivos de implementación no se han modificado como parte de la actualización documental.
+
 # 2. Qué API estamos implementando y qué exige Sophos
 
 El objetivo es la **Sophos Firewall Configuration REST API del propio appliance**, no la Sophos Central Firewall Management API ni un API de inventario/gestión centralizada.
@@ -460,14 +474,16 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 
 # 11. CI, empaquetado y publicación
 
-- Usar pyproject.toml y un lockfile como fuente canónica. No mantener requirements.txt divergente; eliminarlo o derivarlo/validarlo automáticamente.
+- Usar `pyproject.toml` + `uv.lock` como fuentes canónicas. Ejecutar installs bloqueados (`uv sync --locked` o equivalente) en CI/build. Eliminar `requirements.txt`/`requirements-dev.txt` si no tienen consumidor, o generarlos y verificarlos desde `uv.lock`; no mantener pines independientes. Eliminar tipos de xmltodict y FastEmbed del set de desarrollo/runtime que ya no se use.
 - Actualizar Dockerfile para no instalar FastEmbed ni descargar modelos.
 - Docker Compose debe pasar únicamente configuración REST y secreto, mantener stdio y no asignar TTY.
 - Revisar ejecución no-root, paquetes mínimos, señales y cierre ordenado.
-- Pipelines deben instalar desde el mismo lockfile que construye la imagen y escanear ese conjunto real de dependencias.
+- Pipelines deben instalar desde el mismo lockfile que construye la imagen y escanear ese conjunto real de dependencias. En particular, sustituir el `pip-audit -r requirements.txt` actual, que analiza MCP 1.x mientras `pyproject.toml` instala MCP 2.x, por un export auditado de la resolución bloqueada real.
 - Matrix de Python según versiones que se declaren oficialmente soportadas.
 - Añadir validación OpenAPI/drift reproducible.
 - Actualizar README, .env.example, CHANGELOG, API-COVERAGE y release metadata.
+- Cambiar `docker-publish.yml`: no promover `latest` en cada push a `main`; los commits de main pueden publicar solo tags de desarrollo (main/SHA). Reservar `latest` y tags semver estables a una promoción de release explícita, revisada y protegida por el mecanismo de aprobación del repositorio.
+- Verificar el nombre canónico de la imagen GHCR y actualizar README/Compose; el README actual referencia `ghcr.io/jelmervdm/...` mientras el workflow etiqueta con `${{ github.repository }}` (`ghcr.io/lordraiden/...`).
 - No publicar tag/imagen de release sin la aprobación de release habitual del propietario.
 
 # 12. Riesgos y decisiones que no deben darse por resueltas
