@@ -221,7 +221,7 @@ async def test_list_ipv6_contract(router: Any) -> None:
     result = await call(make_server(), "firewall_rule_list_ipv6", {"page": 3, "pageTotal": True})
 
     assert result.is_error is False
-    assert query_of(route) == {"page": "3", "pageSize": "50", "pageTotal": "true"}
+    assert query_of(route) == {"page": "3", "pageSize": "10", "pageTotal": "true"}
     output = result.structured_content
     assert output is not None
     assert output["items"][0]["ipFamily"] == "ipv6"
@@ -240,7 +240,7 @@ async def test_list_applies_name_not_equals_filter(router: Any) -> None:
     assert query_of(route) == {
         "nameNotEquals": "blocked",
         "page": "1",
-        "pageSize": "50",
+        "pageSize": "10",
         "pageTotal": "false",
     }
 
@@ -262,6 +262,58 @@ async def test_list_rejects_a_page_size_above_the_live_limit(router: Any) -> Non
 
     assert result.is_error is True
     assert router.calls == []
+
+
+async def test_list_ipv4_reports_the_evaluation_position_from_the_page_offset(router: Any) -> None:
+    router.get(IPV4_COLLECTION).mock(
+        return_value=httpx.Response(200, json=page([ipv4_rule(), ipv4_rule(name="second-rule")]))
+    )
+
+    result = await call(make_server(), "firewall_rule_list_ipv4", {"page": 2, "pageSize": 10})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    # Page 2 of a 10-rule page starts at position 11; the index inside the page is 0-based.
+    assert [item["position"] for item in output["items"]] == [11, 12]
+
+
+async def test_list_ipv6_reports_the_evaluation_position_from_the_page_offset(router: Any) -> None:
+    router.get(IPV6_COLLECTION).mock(
+        return_value=httpx.Response(200, json=page([ipv6_rule(), ipv6_rule(name="second-rule-v6")]))
+    )
+
+    result = await call(make_server(), "firewall_rule_list_ipv6", {"page": 1, "pageSize": 50})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    assert [item["position"] for item in output["items"]] == [1, 2]
+
+
+async def test_list_position_counts_a_skipped_waf_rule(router: Any) -> None:
+    router.get(IPV4_COLLECTION).mock(
+        return_value=httpx.Response(
+            200,
+            json=page(
+                [
+                    ipv4_rule(name="waf-rule", ruleType="waf", wafRule={"name": "waf"}),
+                    ipv4_rule(),
+                ]
+            ),
+        )
+    )
+
+    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    # The WAF rule occupies the first slot of the returned page but is not projected, so
+    # the firewall rule keeps the position the appliance's list order gives it.
+    assert [item["name"] for item in output["items"]] == ["allow-lan-to-wan"]
+    assert [item["position"] for item in output["items"]] == [2]
+    assert output["wafRulesSkipped"] == 1
 
 
 async def test_list_ipv4_skips_waf_rules_and_reports_the_count(router: Any) -> None:
@@ -365,6 +417,20 @@ async def test_get_accepts_a_uuid_identifier(router: Any) -> None:
 
     assert result.is_error is False
     assert str(route.calls.last.request.url) == f"{BASE}/firewall/rules/ipv4/{UUID}"
+
+
+async def test_get_reports_a_null_position(router: Any) -> None:
+    router.get(IPV4_ITEM).mock(return_value=httpx.Response(200, json=ipv4_rule()))
+
+    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": "allow-lan-to-wan"})
+
+    assert result.is_error is False
+    output = result.structured_content
+    assert output is not None
+    # The contract does not return the evaluation position on a single-object read, so the
+    # field is present and null rather than absent or invented.
+    assert "position" in output
+    assert output["position"] is None
 
 
 async def test_get_rejects_a_waf_rule(router: Any) -> None:
@@ -996,12 +1062,14 @@ async def test_output_schemas_are_object_rooted_and_typed() -> None:
         assert output["type"] == "object"
         assert "name" in output["required"]
         assert "ipFamily" in output["properties"]
+        assert "position" in output["properties"]
 
     listing = tools["firewall_rule_list_ipv4"].output_schema
     assert listing is not None
     assert listing["type"] == "object"
     assert "items" in listing["properties"]
     assert "wafRulesSkipped" in listing["properties"]
+    assert "position" in listing["$defs"]["FirewallRuleIpv4Output"]["properties"]
 
 
 # -- Model contract --------------------------------------------------------------------
@@ -1172,6 +1240,11 @@ def test_output_enabled_is_none_only_when_the_appliance_omits_it() -> None:
     payload.pop("enabled")
 
     assert FirewallRuleIpv4Output.model_validate(payload).enabled is None
+
+
+def test_output_position_is_null_unless_the_list_derives_it() -> None:
+    assert FirewallRuleIpv4Output.model_validate(ipv4_rule()).position is None
+    assert FirewallRuleIpv6Output.model_validate(ipv6_rule()).position is None
 
 
 def test_list_output_preserves_the_pages_metadata() -> None:
@@ -1386,3 +1459,31 @@ def test_nested_input_models_publish_snake_case_and_serialize_to_the_wire_names(
 
     # The camelCase spelling is still accepted on input, so the alias is a choice.
     assert CreateFirewallRuleIpv4Input(**MINIMAL_CREATE).position == "bottom"
+
+
+# -- Phase-5 polish: default page size, output size and the duplicated payload ----------
+
+
+def test_list_input_defaults_to_ten() -> None:
+    """M11: a firewall rule is large, so the default page must stay small."""
+    parsed = ListFirewallRulesInput()
+
+    assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+    description = ListFirewallRulesInput.model_json_schema()["properties"]["page_size"][
+        "description"
+    ]
+    assert "Defaults to 10" in description
+    # The bounds are unchanged: this is a default, not a schema break.
+    assert ListFirewallRulesInput(page_size=100).page_size == 100
+
+
+async def test_list_descriptions_state_the_page_size_and_the_duplicated_payload() -> None:
+    """M11/L7: the size of a full page and the SDK's double payload are documented."""
+    tools = {tool.name: tool for tool in await make_server().list_tools()}
+
+    for name in ("firewall_rule_list_ipv4", "firewall_rule_list_ipv6"):
+        description = tools[name].description
+        assert "page_size defaults to 10" in description, name
+        assert "~70 KB" in description, name
+        assert "structuredContent" in description, name
+        assert "read one of them, not both" in description, name

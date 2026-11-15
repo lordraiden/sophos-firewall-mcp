@@ -1,14 +1,27 @@
 [project]
 name = "sophos-firewall-mcp-server"
-version = "0.5.0"
-description = "MCP server for the Sophos Firewall Configuration REST API (SFOS): typed, bounded administration tools over STDIO"
+version = "0.6.0"
+description = "MCP server for the Sophos Firewall 23 (SFOS 23.0) Configuration REST API: 152 typed tools for firewall, NAT, objects, users, network and audit over STDIO"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 authors = [
     {name = "Jelmer van der Mul"},
 ]
-keywords = ["sophos", "firewall", "sfos", "mcp", "model-context-protocol", "security", "network"]
+keywords = [
+    "sophos",
+    "firewall",
+    "sfos",
+    "mcp",
+    "model-context-protocol",
+    "security",
+    "network",
+    "sophos firewall 23",
+    "sfos 23",
+    "sophos rest api",
+    "firewall automation",
+    "ai agents",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",

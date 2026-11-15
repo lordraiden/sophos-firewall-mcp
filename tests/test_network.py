@@ -14,6 +14,7 @@ lifespan-created ``AppContext``.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +32,11 @@ from sophos_firewall_mcp.models.network import (
     FilterInput,
     FilteredPageInput,
     KeysetPage,
+    KeysetPages,
+    NetworkInterface,
     NetworkInterfaceCreateVlanInput,
     NetworkInterfaceUpdateVlanInput,
+    PageInput,
     SdwanRoute,
     UnicastRouteIpv4,
     UnicastRouteIpv6,
@@ -53,7 +57,7 @@ SPEC_PATH = Path(__file__).resolve().parents[1] / "firewall_config_openapi.yaml"
 RELAY_UUID = "6f1c2d3e-4b5a-4c7d-8e9f-0a1b2c3d4e5f"
 
 PAGE = {"current": 1, "size": 50, "maxSize": 100}
-DEFAULT_PAGE_QUERY = {"page": "1", "pageSize": "50", "pageTotal": "false"}
+DEFAULT_PAGE_QUERY = {"page": "1", "pageSize": "10", "pageTotal": "false"}
 
 
 # -- Helpers ---------------------------------------------------------------------------
@@ -957,8 +961,12 @@ def test_unicast_route_models_match_the_parsed_contract() -> None:
     assert set(UnicastRouteIpv6.model_fields) == _response_properties("getUnicastRouteIPv6")
 
 
-async def test_unpaginated_lists_render_only_items(router: Any) -> None:
-    """The four list operations declare no ``pages`` member, so none is rendered."""
+async def test_unpaginated_lists_render_pages_null(router: Any) -> None:
+    """M16: the four list operations declare no ``pages``, so the envelope renders null.
+
+    A uniform envelope lets an agent tell "no pagination metadata" from "truncated" and
+    keeps a generic pagination loop working across every list tool.
+    """
     router.get(f"{BASE}/network/dhcp/relays/ipv4").mock(
         return_value=httpx.Response(200, json={"items": [{"id": RELAY_UUID, "name": "relay1"}]})
     )
@@ -966,7 +974,10 @@ async def test_unpaginated_lists_render_only_items(router: Any) -> None:
     result = await call_tool("dhcp_relay_list_ipv4", {"request": {}})
 
     assert result.is_error is False
-    assert set(result.structured_content) == {"items"}
+    assert set(result.structured_content) == {"items", "pages"}
+    assert result.structured_content["pages"] is None
+    assert result.structured_content["items"][0]["id"] == RELAY_UUID
+    assert result.structured_content["items"][0]["name"] == "relay1"
 
     tools = await tool_map()
     for name in (
@@ -977,4 +988,193 @@ async def test_unpaginated_lists_render_only_items(router: Any) -> None:
     ):
         schema = tools[name].output_schema
         assert schema is not None
-        assert "pages" not in schema["properties"], name
+        assert "pages" in schema["properties"], name
+        assert schema["properties"]["pages"]["type"] == "null", name
+        assert "pages: null" in tools[name].description or "pages is null" in (
+            tools[name].description
+        ), name
+
+
+async def test_dhcp_lease_list_documents_the_keyset_ceiling(router: Any) -> None:
+    """M15: only the first page is reachable, and the description must say so.
+
+    The contract declares no ``fromKey``/``nextKey`` request parameters, so the tool must
+    not invent them; it must instead warn that a non-null ``nextKey`` means the list is
+    incomplete.
+    """
+    router.get(f"{BASE}/network/dhcp/server/leases/ipv4").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [{"leasedIp": "10.0.10.50"}],
+                "pages": {
+                    "fromKey": "10.0.10.50",
+                    "nextKey": "10.0.10.51",
+                    "size": 1,
+                    "maxSize": 1,
+                },
+            },
+        )
+    )
+
+    result = await call_tool("dhcp_lease_list_ipv4", {})
+
+    assert result.is_error is False
+    # The appliance value is preserved, including the non-null nextKey.
+    assert result.structured_content["pages"]["nextKey"] == "10.0.10.51"
+
+    tools = await tool_map()
+    for name in ("dhcp_lease_list_ipv4", "dhcp_lease_list_ipv6"):
+        description = tools[name].description
+        assert "Only the first page is reachable" in description, name
+        assert "pages.nextKey" in description, name
+        assert "incomplete" in description, name
+        # No undeclared pagination input is exposed.
+        assert tools[name].input_schema.get("properties", {}) == {}, name
+
+
+def test_dhcp_lease_pages_max_size_is_documented_as_the_item_count() -> None:
+    """L8: ``maxSize`` is the item count here, not a page-size bound; the value is kept."""
+    pages = KeysetPages.model_validate(
+        {"fromKey": "10.10.10.3", "nextKey": None, "size": 21, "maxSize": 21}
+    )
+
+    assert pages.maxSize == 21
+    assert pages.size == 21
+    description = KeysetPages.model_json_schema()["properties"]["maxSize"]["description"]
+    assert "Not a page-size bound" in description
+    assert "item count" in description
+    # The keyset semantics of the other members are published too.
+    schema = KeysetPages.model_json_schema()["properties"]
+    assert "incomplete" in schema["nextKey"]["description"]
+    assert "Always null here" in schema["total"]["description"]
+    assert "Always null here" in schema["items"]["description"]
+
+
+# -- Phase-5 polish: default page size, epoch sentinel, DNS host entry, DHCP relay notes --
+
+
+def test_page_input_defaults_to_ten() -> None:
+    """M11: a default list call must stay small enough for a model context."""
+    parsed = PageInput()
+
+    assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+    description = PageInput.model_json_schema()["properties"]["page_size"]["description"]
+    assert "Defaults to 10" in description
+    # The bounds are unchanged: this is a default, not a schema break.
+    assert PageInput(page_size=100).page_size == 100
+
+
+def test_every_paginated_list_input_defaults_to_ten() -> None:
+    """M11: the default is uniform across every paginated list tool, VPN included."""
+    from sophos_firewall_mcp.models.firewall import ListFirewallRulesInput
+    from sophos_firewall_mcp.models.nat import NatRuleListInput
+    from sophos_firewall_mcp.models.objects import ListQuery
+    from sophos_firewall_mcp.models.users import NetworkUserListInput, UserListInput
+    from sophos_firewall_mcp.models.vpn import VpnFilteredPageInput, VpnPageInput
+
+    models = (
+        PageInput,
+        FilteredPageInput,
+        ListQuery,
+        ListFirewallRulesInput,
+        NatRuleListInput,
+        UserListInput,
+        NetworkUserListInput,
+        VpnPageInput,
+        VpnFilteredPageInput,
+    )
+    for model in models:
+        assert model().page_size == 10, model.__name__
+
+
+def test_epoch_sentinel_is_published_as_null() -> None:
+    """L6: the appliance's epoch "never" sentinel is published as null, and only it."""
+    interface = NetworkInterface.model_validate(
+        {
+            "name": "WAN - Port 1",
+            "createdAt": "1970-01-01T00:00:00Z",
+            "updatedAt": "2026-11-15T10:00:00Z",
+        }
+    )
+
+    # The parsed value stays available to server-side logic: audit_firewall_rules detects
+    # built-in objects from the epoch stamp, so hiding it from the model would disable it.
+    assert interface.createdAt == datetime(1970, 1, 1, tzinfo=UTC)
+    published = interface.model_dump(mode="json", by_alias=True)
+    assert published["createdAt"] is None
+    assert published["updatedAt"] == "2026-11-15T10:00:00Z"
+
+    # Only the exact sentinel is mapped: one second later is a real timestamp.
+    near = NetworkInterface.model_validate({"name": "x", "createdAt": "1970-01-01T00:00:01Z"})
+    assert near.model_dump(mode="json")["createdAt"] == "1970-01-01T00:00:01Z"
+
+
+async def test_dns_host_entry_projects_the_nested_address(router: Any) -> None:
+    """P5-D1: the appliance nests the address under ``hostEntries[].ipv4``/``ipv6``."""
+    payload = {
+        "id": "c83ed35b-0000-4000-8000-000000000000",
+        "name": "mcp-test-dns",
+        "domain": "p5d904810.invalid",
+        "enableReverseResolution": False,
+        "hostEntries": [
+            {
+                "ipv4": {"ipv4Address": "192.0.2.11"},
+                "ttl": 60,
+                "weight": 1,
+                "publishOnWan": False,
+            },
+            {
+                "ipv6": {"ipv6Interface": {"name": "Port2"}},
+                "ttl": 120,
+                "weight": 2,
+                "publishOnWan": True,
+            },
+        ],
+    }
+    router.get(f"{BASE}/network/dns/host-entries/mcp-test-dns").mock(
+        return_value=httpx.Response(200, json=payload)
+    )
+
+    result = await call_tool("dns_host_entry_get", {"request": {"idOrName": "mcp-test-dns"}})
+
+    assert result.is_error is False
+    entries = result.structured_content["hostEntries"]
+    assert entries[0]["ipv4"] == {"ipv4Address": "192.0.2.11", "ipv4Interface": None}
+    assert entries[0]["ttl"] == 60
+    assert entries[1]["ipv6"] == {"ipv6Address": None, "ipv6Interface": {"name": "Port2"}}
+    assert entries[1]["publishOnWan"] is True
+
+
+async def test_dhcp_relay_get_documents_the_401_and_the_uuid_only_input() -> None:
+    """M9/P5-O1/P5-O3: a 401 here does not prove the key is broken; only a UUID is accepted."""
+    tools = await tool_map()
+
+    for name in ("dhcp_relay_get_ipv4", "dhcp_relay_get_ipv6"):
+        description = tools[name].description
+        assert "401" in description, name
+        assert "real, listed relay" in description, name
+        assert "does not by itself mean the API key is invalid" in description, name
+        assert "404" in description, name
+
+    ipv4 = tools["dhcp_relay_get_ipv4"].description
+    assert "format uuid" in ipv4
+    assert "{idOrName}" in ipv4
+    assert "dhcp_relay_list_ipv4" in ipv4
+
+
+async def test_dhcp_relay_and_static_neighbor_document_the_logical_interface() -> None:
+    """P5-O2: the interface reference is the logical name, not the hardware name."""
+    tools = await tool_map()
+
+    relay = tools["dhcp_relay_list_ipv4"].description
+    assert "logical interface name" in relay
+    assert "DMZ - Services" in relay
+    assert "Port3" in relay
+    assert "interfaceDoesNotExist" in relay
+
+    neighbor = tools["static_neighbor_list_ipv4"].description
+    assert "logical interface name" in neighbor
+    assert "DMZ - Services" in neighbor
+    assert "Port3" in neighbor
+    assert "Invalid interface." in neighbor

@@ -623,10 +623,10 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List IPv4 addresses",
         description=(
             "List one page of IPv4 address objects (single address, network, range or IP "
-            "list). Read-only. `page` is 1-based, `page_size` is 1-100 and `page_total` "
-            "requests total metadata; `name_contains` and `name_not_equals` are mutually "
-            "exclusive. Returns the page items and the appliance `pages` metadata; it "
-            "never auto-paginates."
+            "list). Read-only. `page` is 1-based, `page_size` is 1-100 (default 10) and "
+            "`page_total` requests total metadata; `name_contains` and `name_not_equals` are "
+            "mutually exclusive. Returns the page items and the appliance `pages` metadata; "
+            "it never auto-paginates."
         ),
         kind=ToolKind.READ,
         handler=address_list_ipv4,
@@ -686,9 +686,9 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List IPv6 addresses",
         description=(
             "List one page of IPv6 address objects (single address, network, range or IP "
-            "list). Read-only. `page` is 1-based, `page_size` is 1-100 and `page_total` "
-            "requests total metadata; `name_contains` and `name_not_equals` are mutually "
-            "exclusive. Returns the page items and the appliance `pages` metadata."
+            "list). Read-only. `page` is 1-based, `page_size` is 1-100 (default 10) and "
+            "`page_total` requests total metadata; `name_contains` and `name_not_equals` are "
+            "mutually exclusive. Returns the page items and the appliance `pages` metadata."
         ),
         kind=ToolKind.READ,
         handler=address_list_ipv6,
@@ -746,7 +746,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List FQDN addresses",
         description=(
             "List one page of FQDN address objects. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 and `page_total` requests total metadata; "
+            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
             "`name_contains` and `name_not_equals` are mutually exclusive. Returns the "
             "page items and the appliance `pages` metadata."
         ),
@@ -803,7 +803,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List IPv4 address groups",
         description=(
             "List one page of IPv4 address groups. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 and `page_total` requests total metadata; "
+            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
             "`name_contains` and `name_not_equals` are mutually exclusive. Members are "
             "returned as name references."
         ),
@@ -863,7 +863,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List IPv6 address groups",
         description=(
             "List one page of IPv6 address groups. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 and `page_total` requests total metadata; "
+            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
             "`name_contains` and `name_not_equals` are mutually exclusive. Members are "
             "returned as name references."
         ),
@@ -922,7 +922,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List FQDN address groups",
         description=(
             "List one page of FQDN address groups. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 and `page_total` requests total metadata; "
+            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
             "`name_contains` and `name_not_equals` are mutually exclusive. Members are "
             "returned as name references."
         ),
@@ -980,9 +980,9 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List MAC address objects",
         description=(
             "List one page of MAC address objects (a single address or a MAC list). "
-            "Read-only. `page` is 1-based, `page_size` is 1-100 and `page_total` requests "
-            "total metadata; `name_contains` and `name_not_equals` are mutually exclusive. "
-            "Returns the page items and the appliance `pages` metadata."
+            "Read-only. `page` is 1-based, `page_size` is 1-100 (default 10) and "
+            "`page_total` requests total metadata; `name_contains` and `name_not_equals` are "
+            "mutually exclusive. Returns the page items and the appliance `pages` metadata."
         ),
         kind=ToolKind.READ,
         handler=mac_address_list,
@@ -1039,7 +1039,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List country groups",
         description=(
             "List one page of built-in country groups. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 and `page_total` requests total metadata; "
+            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
             "`name_contains` and `name_not_equals` are mutually exclusive. Country groups "
             "are read-only in v1: no create, update or delete tool exists."
         ),

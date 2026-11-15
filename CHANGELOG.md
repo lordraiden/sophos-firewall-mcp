@@ -5,6 +5,84 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-15
+
+**Sophos Firewall 23 support, stated explicitly.** This server implements the **Sophos Firewall 23
+(SFOS 23.0) Configuration REST API** (`/api/firewall-config/v1`). The live evidence in this repository
+was produced against **SFOS 23.0.0 GA-Build371**; no general firmware compatibility claim is made for
+any other SFOS build. It is not the Sophos Central Firewall Management API and not the legacy XML API.
+
+**Breaking: published output field names are unified on camelCase (the Sophos wire names).** 0.5.0
+unified the *inputs* on snake_case; the *outputs* were still split — 119 tools published camelCase
+because their outputs are projections of the appliance payload, while 23 tools (12 NAT, 8 users and
+3 audit tools) published snake_case. Every published output property is now camelCase; for the 119
+projection tools that is the wire name, and the three audit composites are camelCase by convention
+because they are computed, not projections. The names are
+(`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`, `originalServicesOrGroups`,
+`translatedSource`, …). The convention is deliberate and now documented: **inputs are snake_case
+because the model writes them, outputs are wire-faithful because the model reads them.** The JSON
+request body sent to the appliance is unchanged; the default `pageSize` query value changes from 50
+to 10 (see M11 below). Callers that parsed the 0.5.0 snake_case output names must update.
+
+### Fixed
+
+- **M11 — list and audit outputs no longer threaten a model context by default.** Every list tool
+  defaults to `page_size: 10`, and the heavy domains (firewall rules, NAT, services) state the
+  approximate size of a full page, so a default call no longer returns a 72 KB firewall-rule
+  collection (~18,000 tokens) into the context.
+- **M12 — firewall and NAT rule objects expose their evaluation `position`.** List outputs carry the
+  page offset plus the index; a get-by-id returns `position: null`, because a single object has no
+  evaluation order. Evaluation order no longer requires a full `audit_firewall_rules` run.
+- **M13 — NAT rules carry a derived `kind`** (`snat` / `dnat` / `unknown`), computed from which
+  translation field is populated, because the appliance exposes no discriminator.
+- **M14 — one shape for object references across domains.** NAT projections now use the same
+  `{"name": …}` reference objects as firewall rules, so one parser works for "the services of a rule"
+  in both domains.
+- **M15 — the keyset pagination ceiling of `dhcp_lease_list_ipv4` is documented.** The tool exposes no
+  undeclared inputs; the description states that only the first page is reachable and that a non-null
+  `nextKey` means the list is incomplete.
+- **M16 — the four unpaginated list tools return a uniform envelope.** `dhcp_server_list_ipv4/ipv6` and
+  `dhcp_relay_list_ipv4/ipv6` return `pages: null` instead of omitting the key, so "empty" is
+  distinguishable from "truncated" and a generic pagination loop no longer breaks.
+- **L1 — `Pages` field descriptions reach the published `outputSchema`.** `pages.total` is the number of
+  **pages** and `pages.items` the number of **items**; the ambiguity that made `total: 12` read as
+  "12 addresses" is gone.
+- **L3 — the `audit_firewall_rules` description matches the finding shape.** Object-scoped findings
+  (`unused-object`) carry the object and leave `ruleName` / `ruleId` / `position` null, which the
+  description now says.
+- **L6 — the epoch sentinel is mapped to `null`.** Built-in objects no longer report
+  `createdAt` / `updatedAt` as `1970-01-01T00:00:00Z`; the appliance's "never" sentinel becomes `null`,
+  as the DNS settings fix already did for the empty string.
+- **L7 — the duplicated payload is documented.** Every result carries the JSON in a `TextContent` block
+  and the same object in `structuredContent`; the duplication is the MCP SDK's single-argument
+  convention, so it is documented rather than silently changed.
+- **L8 — `dhcp_lease_list_ipv4` `pages.maxSize` is documented as the item count**, not a page-size
+  bound, so `maxSize: 21` no longer reads as a limit of 21 items per page.
+- **L9 — the 1000-item ceiling of `ipsec_live_connection_list_ipv4` is documented**, because the tool
+  takes no arguments and a larger set would be silently truncated.
+- **L10 — `ipsec_remote_access_settings_get` explains the unset state.** An all-null object with
+  `connectionState: "unset"` is described as "not configured" instead of leaving the agent to infer it.
+- **M9 — the `dhcp_relay_get_ipv4` 401 quirk is documented.** The appliance answers `401` for a UUID
+  that does not exist, unlike every other get tool's `404`; the description says so, so an agent does
+  not conclude that the API key is broken.
+- **M10 — the `request` argument wrapper is documented.** The wrapper is the SDK's single-argument
+  convention; the descriptions now state it instead of leaving the agent to discover it from a
+  validation error.
+
+### Known limitations
+
+- **Firmware compatibility is limited to the tested build.** The live evidence applies to **SFOS 23.0.0
+  GA-Build371** only. The Configuration REST API exposes no version endpoint, so the server cannot
+  detect the firmware and makes no claim for other SFOS builds, including later 23.0 maintenance
+  builds and SFOS 24.
+- **Live write validation is limited** to the object kinds exercised on the lab appliance; ambiguous
+  write reconciliation, a real `403` denial, bulk delete and interface/VPN mutations remain unverified.
+- **Accepted regressions** are unchanged: no system information, no service status and no log query,
+  because the Configuration REST API exposes no endpoint for them.
+- **Audit tools are configuration analysis, not packet tests**; `explain_connectivity` reports
+  `method: config-analysis` and `not-verifiable` when the configuration lacks the evidence.
+- **Pagination is one page per call**; the server never fetches every page automatically.
+
 ## [0.5.0] - 2026-11-15
 
 **Breaking: input parameter names are unified on snake_case.** The 0.4.0 surface published two

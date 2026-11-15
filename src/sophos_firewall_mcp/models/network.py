@@ -40,11 +40,13 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    field_serializer,
     field_validator,
     model_validator,
 )
 
 from .common import ObjectName, ObjectNameOrId, ObjectRef
+from .objects import serialize_epoch_sentinel
 
 __all__ = [
     "ActivationCondition",
@@ -68,6 +70,8 @@ __all__ = [
     "DhcpServerIpv4",
     "DhcpServerIpv6",
     "DnsHostEntry",
+    "DnsHostEntryIpv4",
+    "DnsHostEntryIpv6",
     "DnsHostEntryRecord",
     "DnsOverHttpsServer",
     "DnsOverHttpsSettings",
@@ -209,9 +213,20 @@ EnabledState = Literal["enabled", "disabled"]
 
 
 class _Output(BaseModel):
-    """Base for response projections: unknown server fields are ignored, never echoed."""
+    """Base for response projections: unknown server fields are ignored, never echoed.
+
+    The epoch "never" sentinel is published as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
+    """
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
 
 class _Input(BaseModel):
@@ -229,16 +244,22 @@ class PageInput(_Input):
     Only for the operations whose contract declares ``page``/``pageSize``/``pageTotal``.
     The bounds are validated here and again by the client before any I/O: the appliance
     accepts ``page=0`` and rejects ``pageSize`` above 100 with ``400 invalidPageSizeParam``.
+
+    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    context, and the caller raises it explicitly when it wants a bigger page.
     """
 
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(
-        default=50,
+        default=10,
         ge=1,
         le=100,
         validation_alias=AliasChoices("page_size", "pageSize"),
         serialization_alias="pageSize",
-        description="Page size, 1-100.",
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; raise it "
+            "explicitly for a bigger page."
+        ),
     )
     page_total: bool = Field(
         default=False,
@@ -1156,15 +1177,53 @@ class KeysetPages(_Output):
 
     The contract returns ``fromKey``/``nextKey`` instead of ``current``: the lease
     endpoints declare no ``page``/``pageSize`` request parameters, so the keys are
-    preserved as metadata only and no pagination input is exposed.
+    preserved as metadata only and no pagination input is exposed. Only the first page is
+    therefore reachable, and a non-null ``nextKey`` means the returned list is incomplete.
+
+    ``maxSize`` is **not** a page-size bound on these endpoints. The contract describes it
+    as "the maximum page size that can be requested", but there is no page size to request
+    here: the appliance reports the number of items in the returned page in that member
+    (21 items and ``maxSize: 21`` on the lab appliance). The value is preserved exactly as
+    returned, never rewritten.
     """
 
-    fromKey: str | None = None
-    nextKey: str | None = None
-    total: int | None = None
-    items: int | None = None
-    size: int | None = None
-    maxSize: int | None = None
+    fromKey: str | None = Field(
+        default=None,
+        description="Key of the first item in the returned page.",
+    )
+    nextKey: str | None = Field(
+        default=None,
+        description=(
+            "Key of the next page. A non-null value means the list is incomplete: this "
+            "server exposes no input to pass the key back, so the remaining items are "
+            "unreachable through it."
+        ),
+    )
+    total: int | None = Field(
+        default=None,
+        description=(
+            "Number of pages, when the request asked for totals. Always null here: the "
+            "lease endpoints declare no pageTotal parameter."
+        ),
+    )
+    items: int | None = Field(
+        default=None,
+        description=(
+            "Number of items across all pages, when the request asked for totals. Always "
+            "null here: the lease endpoints declare no pageTotal parameter."
+        ),
+    )
+    size: int | None = Field(
+        default=None,
+        description="Number of items in the returned page.",
+    )
+    maxSize: int | None = Field(
+        default=None,
+        description=(
+            "Not a page-size bound on this endpoint: the appliance reports the item count "
+            "of the returned page here. Preserved as returned."
+        ),
+    )
 
 
 ItemT = TypeVar("ItemT")
@@ -1183,13 +1242,22 @@ class UnpaginatedList(BaseModel, Generic[ItemT]):
     """A collection the contract returns without ``pages`` metadata.
 
     ``getAllDhcpRelayIpv4``/``Ipv6`` and ``listDhcpServersIpv4``/``Ipv6`` declare only
-    ``items`` in their 200 response, so their projection must not render a ``pages``
-    member the contract does not define.
+    ``items`` in their 200 response, so the appliance returns no pagination metadata. The
+    projection still renders ``pages`` explicitly as ``null`` so the envelope matches every
+    other list tool: an agent can tell "no pagination metadata" from "truncated", and a
+    generic pagination loop does not break on these four tools.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     items: list[ItemT]
+    pages: None = Field(
+        default=None,
+        description=(
+            "Always null: the operation declares no pagination metadata, so the whole "
+            "collection is returned in one call."
+        ),
+    )
 
 
 class DhcpRelayIpv4(_Output):
@@ -1289,16 +1357,45 @@ class DnsSettings(_Output):
         return None if value == "" else value
 
 
+class DnsHostEntryIpv4(_Output):
+    """The IPv4 side of one DNS host-entry record.
+
+    The contract requires exactly one of ``ipv4Address`` and ``ipv4Interface``; both are
+    optional here so a firmware that sends neither does not fail the read.
+    """
+
+    ipv4Address: str | None = None
+    ipv4Interface: ObjectRef | None = None
+
+
+class DnsHostEntryIpv6(_Output):
+    """The IPv6 side of one DNS host-entry record.
+
+    The contract requires exactly one of ``ipv6Address`` and ``ipv6Interface``; both are
+    optional here so a firmware that sends neither does not fail the read.
+    """
+
+    ipv6Address: str | None = None
+    ipv6Interface: ObjectRef | None = None
+
+
 class DnsHostEntryRecord(_Output):
-    """One record of a DNS host entry: an IPv4 or an IPv6 address/interface."""
+    """One record of a DNS host entry: an IPv4 or an IPv6 address/interface.
+
+    The appliance nests the address under ``ipv4``/``ipv6``
+    (``hostEntries[].ipv4.ipv4Address``), exactly as the contract declares. An earlier
+    projection declared flat ``ipv4Address``/``ipv4Interface``/``ipv6Address``/
+    ``ipv6Interface`` members the appliance never sends, so every address and interface was
+    projected as ``null`` while the object still validated (P5-D1). The nested shape is the
+    one that carries the data; ``ttl``, ``weight`` and ``publishOnWan`` are flat in both
+    shapes and are unchanged.
+    """
 
     ttl: int | None = None
     weight: int | None = None
     publishOnWan: bool | None = None
-    ipv4Address: str | None = None
-    ipv4Interface: ObjectRef | None = None
-    ipv6Address: str | None = None
-    ipv6Interface: ObjectRef | None = None
+    ipv4: DnsHostEntryIpv4 | None = None
+    ipv6: DnsHostEntryIpv6 | None = None
 
 
 class DnsHostEntry(_Output):

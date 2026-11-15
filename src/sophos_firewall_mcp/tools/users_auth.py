@@ -250,7 +250,7 @@ class UsersAdapter(DomainAdapter):
             await self.client.delete(path)
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return NetworkUserDeleteOutput(deleted=True, id_or_name=request.id_or_name)
+        return NetworkUserDeleteOutput(deleted=True, idOrName=request.id_or_name)
 
     async def list_live_users(self, request: LiveUserListInput) -> ListPage[LiveUserSessionOutput]:
         """``getLiveUsers``: the ``{items, pages}`` live-session body, no request pagination."""
@@ -302,8 +302,9 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "`administrativeAccess`. This is the general user list, not the network-user "
             "collection: use `network_user_list` for network-user accounts with policies and "
             "VPN access, and `network_user_get` for one account. Pagination is "
-            "`page`/`page_size` (max 100)/`page_total`; the optional `name_contains` and "
-            "`name_not_equals` filters are mutually exclusive. Returns one page per call; "
+            "`page`/`page_size` (max 100, default 10)/`page_total`; the optional "
+            "`name_contains` and `name_not_equals` filters are mutually exclusive. Returns one "
+            "page per call; "
             "there is no cursor or limit parameter."
         ),
     )
@@ -321,8 +322,9 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         description=(
             "List network-user accounts (`getNetworkUsers`) as a paginated collection with "
             "their policies and VPN access. Returns one page per call; pagination is "
-            "`page`/`page_size` (max 100)/`page_total`, and the optional `name_contains` and "
-            "`name_not_equals` filters are mutually exclusive. This is the network-user "
+            "`page`/`page_size` (max 100, default 10)/`page_total`, and the optional "
+            "`name_contains` and `name_not_equals` filters are mutually exclusive. This is the "
+            "network-user "
             "collection, not the general authentication-user list: use `user_list` for the "
             "basic summary of all authentication users."
         ),

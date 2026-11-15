@@ -28,11 +28,11 @@ Conventions
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Literal, Self, Union
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from sophos_firewall_mcp.models.common import (
     ObjectName,
@@ -139,6 +139,40 @@ _INPUT_CONFIG = ConfigDict(extra="forbid", populate_by_name=True)
 _OUTPUT_CONFIG = ConfigDict(extra="ignore", populate_by_name=True)
 
 
+#: The appliance's "never" sentinel for ``createdAt``/``updatedAt``. Built-in objects
+#: (``##ALL_RW``, ``Internet IPv4 group``, ``WAN - Port 1``, …) carry it instead of a real
+#: creation time, so the projection publishes it as ``null`` (L6).
+EPOCH_SENTINEL = "1970-01-01T00:00:00Z"
+
+#: The sentinel as the two datetime values pydantic parses it into: aware UTC for the
+#: appliance's ``Z`` form, naive for a payload that omits the offset.
+_EPOCH_UTC = datetime(1970, 1, 1, tzinfo=UTC)
+_EPOCH_NAIVE = datetime(1970, 1, 1)
+
+
+def serialize_epoch_sentinel(value: datetime | None) -> datetime | None:
+    """Publish the appliance's epoch "never" sentinel as ``None`` (L6).
+
+    Only the exact sentinel is mapped: ``1970-01-01T00:00:01Z`` and every other timestamp
+    are preserved, so a real creation time is never hidden. The mapping happens at
+    serialization time, not at validation time, so the parsed value stays available to
+    server-side logic that needs it -- ``audit_firewall_rules`` detects built-in objects
+    from the epoch stamp, and hiding it from the model would silently disable that
+    heuristic.
+
+    Args:
+        value: The parsed timestamp of a ``createdAt``/``updatedAt`` member.
+
+    Returns:
+        ``None`` when *value* is the epoch sentinel, otherwise *value* unchanged.
+    """
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        return None if value == _EPOCH_NAIVE else value
+    return None if value == _EPOCH_UTC else value
+
+
 class _InputModel(BaseModel):
     """Base for every request model: closed and addressable by field name or alias."""
 
@@ -146,9 +180,20 @@ class _InputModel(BaseModel):
 
 
 class _OutputModel(BaseModel):
-    """Base for every response projection: forward-compatible and alias-aware."""
+    """Base for every response projection: forward-compatible and alias-aware.
+
+    The epoch "never" sentinel is published as ``null`` (L6); see
+    :func:`serialize_epoch_sentinel`.
+    """
 
     model_config = _OUTPUT_CONFIG
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
 
 # -- Shared identifier and membership primitives --------------------------------------
@@ -188,10 +233,21 @@ class ListQuery(_InputModel):
     The contract declares ``page``, ``pageSize``, ``pageTotal``, ``nameContains`` and
     ``nameNotEquals`` on every list operation in this domain. The two name filters are
     mutually exclusive; the validator rejects a request that sets both.
+
+    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    context, and the caller raises it explicitly when it wants a bigger page.
     """
 
     page: int = Field(1, ge=1)
-    page_size: int = Field(50, ge=1, le=100)
+    page_size: int = Field(
+        10,
+        ge=1,
+        le=100,
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; raise it "
+            "explicitly for a bigger page."
+        ),
+    )
     page_total: bool = False
     name_contains: str | None = Field(None, min_length=1, max_length=255)
     name_not_equals: str | None = Field(None, min_length=1, max_length=255)

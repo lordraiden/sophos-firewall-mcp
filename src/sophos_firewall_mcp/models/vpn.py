@@ -23,11 +23,12 @@ security-association view. Neither is derived from the other.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from .common import ObjectNameOrId, ObjectRef
+from .objects import serialize_epoch_sentinel
 
 __all__ = [
     "BookmarkProtocol",
@@ -189,9 +190,20 @@ SslVpnAuthenticationAlgorithm = Literal["sha512", "sha384", "sha256", "sha1", "m
 
 
 class _Output(BaseModel):
-    """Base for response projections: unknown server fields are ignored, never echoed."""
+    """Base for response projections: unknown server fields are ignored, never echoed.
+
+    The epoch "never" sentinel is published as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
+    """
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
 
 class _Input(BaseModel):
@@ -209,16 +221,22 @@ class VpnPageInput(_Input):
     The bounds mirror the contract and the client-side validation: ``page >= 1`` and
     ``1 <= pageSize <= 100``. Only the operations whose contract declares
     ``page``/``pageSize``/``pageTotal`` accept this model.
+
+    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    context, and the caller raises it explicitly when it wants a bigger page.
     """
 
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(
-        default=50,
+        default=10,
         ge=1,
         le=100,
         validation_alias=AliasChoices("page_size", "pageSize"),
         serialization_alias="pageSize",
-        description="Page size, 1-100.",
+        description=(
+            "Page size, 1-100. Defaults to 10 so a default call stays small; raise it "
+            "explicitly for a bigger page."
+        ),
     )
     page_total: bool = Field(
         default=False,
@@ -644,8 +662,16 @@ class SophosConnectClientSettings(_Output):
 
 
 class IpsecRemoteAccessSettings(_Output):
-    """The remote-access IPsec configuration (a single settings object)."""
+    """The remote-access IPsec configuration (a single settings object).
 
+    ``configured`` is derived, not returned by the appliance. The contract requires
+    ``connectionState`` and uses ``"unset"`` to mean "remote-access IPsec is not configured
+    at all", so the projection lifts that sentinel into a boolean an agent can branch on
+    without knowing it: ``configured`` is true only for ``enabled`` and ``disabled``. An
+    unset configuration is otherwise an object whose every other member is null.
+    """
+
+    configured: bool = False
     name: str | None = None
     connectionState: Literal["unset", "enabled", "disabled"] | None = None
     profile: ObjectRef | None = None
@@ -660,6 +686,18 @@ class IpsecRemoteAccessSettings(_Output):
     protectedNetworks: RemoteAccessProtectedNetworks | None = None
     sophosConnectClientSettings: SophosConnectClientSettings | None = None
     updatedAt: datetime | None = None
+
+    @model_validator(mode="after")
+    def _derive_configured(self) -> Self:
+        """Derive ``configured`` from the required ``connectionState``.
+
+        ``"unset"`` is the appliance's "never configured" sentinel, so it maps to false;
+        ``"enabled"`` and ``"disabled"`` both mean a configuration exists. A missing
+        ``connectionState`` violates the contract and is reported as not configured rather
+        than guessed as configured.
+        """
+        self.configured = self.connectionState in ("enabled", "disabled")
+        return self
 
 
 # -- SSL VPN ---------------------------------------------------------------------------

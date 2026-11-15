@@ -315,6 +315,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "List the firewall's network interfaces one page at a time, with optional name "
             "filters. Each item carries its type (physical, vlan, bridge, lag, xfrm or "
             "cellularWan), zone, IPv4/IPv6 configuration and VLAN/bridge/LAG details. "
+            "Pagination: `page` is 1-based and `page_size` is 1-100 (default 10). "
             "Read-only: no interface is changed by this tool. Use network_interface_get for "
             "one interface, and the network_interface_*_vlan tools for the only interface "
             "writes this server exposes."
@@ -418,7 +419,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         description=(
             "List the firewall's network zones one page at a time, with optional name filters. "
             "Each zone carries its type (lan, wan, dmz, local, vpn or discover) and the firewall "
-            "services allowed for it. Read-only: zone mutations are excluded from this server."
+            "services allowed for it. Pagination: `page` is 1-based and `page_size` is 1-100 "
+            "(default 10). Read-only: zone mutations are excluded from this server."
         ),
     )
     async def zone_list(
@@ -766,8 +768,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv4 DHCP servers",
         description=(
             "List the IPv4 DHCP servers with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call. Configuration only: "
-            "use dhcp_lease_list_ipv4 for live leases. Read-only: DHCP mutations are excluded."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Configuration only: use dhcp_lease_list_ipv4 for live leases. Read-only: DHCP "
+            "mutations are excluded."
         ),
     )
     async def dhcp_server_list_ipv4(
@@ -800,8 +803,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv6 DHCP servers",
         description=(
             "List the IPv6 DHCP servers with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call. Configuration only: "
-            "use dhcp_lease_list_ipv6 for live leases. Read-only."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Configuration only: use dhcp_lease_list_ipv6 for live leases. Read-only."
         ),
     )
     async def dhcp_server_list_ipv6(
@@ -838,7 +841,12 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "List the active IPv4 DHCP leases. This is live state, not configuration. The "
             "contract declares no page/pageSize parameters for this operation (it returns "
             "keyset metadata), so the call takes no pagination input and returns one page with "
-            "its pages metadata preserved. Read-only."
+            "its pages metadata preserved. Only the first page is reachable: a non-null "
+            "pages.nextKey means the list is incomplete and the remaining leases cannot be "
+            "fetched through this server. pages.maxSize is not a page-size bound here -- the "
+            "appliance reports the item count of the returned page in it (21 items and "
+            "maxSize 21 on the lab appliance) -- and the value is preserved as returned. "
+            "Read-only."
         ),
     )
     async def dhcp_lease_list_ipv4(
@@ -857,7 +865,10 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "List the active IPv6 DHCP leases. This is live state, not configuration. The "
             "contract declares no page/pageSize parameters for this operation, so the call "
             "takes no pagination input and returns one page with its pages metadata preserved. "
-            "Read-only."
+            "Only the first page is reachable: a non-null pages.nextKey means the list is "
+            "incomplete and the remaining leases cannot be fetched through this server. "
+            "pages.maxSize is not a page-size bound here either (the appliance reports the "
+            "item count of the returned page in it, as on the IPv4 lease list). Read-only."
         ),
     )
     async def dhcp_lease_list_ipv6(
@@ -876,7 +887,11 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv4 DHCP relays",
         description=(
             "List the IPv4 DHCP relays with optional name filters. The operation declares no "
-            "pagination. Read-only: DHCP mutations are excluded."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "The interface reference on a relay is the logical interface name (for example "
+            "'DMZ - Services'), not the hardware name ('Port3'): the appliance rejects the "
+            "hardware name with 500 interfaceDoesNotExist. Read-only: DHCP mutations "
+            "are excluded."
         ),
     )
     async def dhcp_relay_list_ipv4(
@@ -893,7 +908,15 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get an IPv4 DHCP relay",
         description=(
             "Read one IPv4 DHCP relay by UUID. The contract declares format uuid for this path "
-            "parameter, so a relay name is rejected before any request is sent. Read-only."
+            "parameter, so a relay name is rejected before any request is sent, even though "
+            "the operation's path is {idOrName} and its description says 'ID or name'. "
+            "The appliance may answer 401 for this sub-resource even for a real, listed relay: "
+            "on SFOS 23.0.0 GA-Build371 the collection returns 200 and the create 201 with the "
+            "same token, while GET and DELETE on the relay itself return 401 for both a name "
+            "and a UUID, and an unknown path returns 404. A 401 from this tool "
+            "therefore does not by itself mean the API key is invalid: confirm the relay with "
+            "dhcp_relay_list_ipv4 first, and treat the endpoint as possibly unusable on this "
+            "firmware. Read-only."
         ),
     )
     async def dhcp_relay_get_ipv4(
@@ -910,7 +933,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv6 DHCP relays",
         description=(
             "List the IPv6 DHCP relays with optional name filters. The operation declares no "
-            "pagination. Read-only."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Read-only."
         ),
     )
     async def dhcp_relay_list_ipv6(
@@ -927,7 +951,12 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get an IPv6 DHCP relay",
         description=(
             "Read one IPv6 DHCP relay by UUID. The contract declares format uuid for this path "
-            "parameter, so a relay name is rejected before any request is sent. Read-only."
+            "parameter, so a relay name is rejected before any request is sent. The appliance "
+            "may answer 401 for this sub-resource even for a real, listed relay: on SFOS "
+            "23.0.0 GA-Build371 the collection returns 200 with the same token while GET on "
+            "the relay itself returns 401, and an unknown path returns 404. A 401 "
+            "from this tool therefore does not by itself mean the API key is invalid: confirm "
+            "the relay with dhcp_relay_list_ipv6 first. Read-only."
         ),
     )
     async def dhcp_relay_get_ipv6(
@@ -963,7 +992,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         description=(
             "List the DNS host entries one page at a time, with optional name filters. Each "
             "entry carries its domain, reverse-resolution flag and up to eight records with "
-            "TTL, weight and publish-on-WAN settings. Read-only."
+            "TTL, weight and publish-on-WAN settings. Pagination: `page` is 1-based and "
+            "`page_size` is 1-100 (default 10). Read-only."
         ),
     )
     async def dns_host_entry_list(
@@ -996,7 +1026,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List DNS request routes",
         description=(
             "List the DNS request routes one page at a time, with optional name filters. Each "
-            "route maps a domain to a set of DNS servers. Read-only."
+            "route maps a domain to a set of DNS servers. Pagination: `page` is 1-based and "
+            "`page_size` is 1-100 (default 10). Read-only."
         ),
     )
     async def dns_request_route_list(
@@ -1031,8 +1062,10 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv4 static neighbors",
         description=(
             "List the static IPv4 neighbor (ARP) entries one page at a time, with optional name "
-            "filters. Read-only: neighbor mutations are excluded, and the global neighbor "
-            "settings are not exposed."
+            "filters. The interface reference on an entry is the logical interface name (for "
+            "example 'DMZ - Services'), not the hardware name ('Port3'): the appliance rejects "
+            "the hardware name with 400 'Invalid interface.'. Read-only: neighbor "
+            "mutations are excluded, and the global neighbor settings are not exposed."
         ),
     )
     async def static_neighbor_list_ipv4(

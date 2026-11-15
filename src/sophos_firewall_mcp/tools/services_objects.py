@@ -275,8 +275,12 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
             "query parameter, so the filter is also applied client-side to the returned "
             "page: `items` may be shorter than `page_size` and `pages` still describes the "
             "unfiltered collection. `name_contains` and `name_not_equals` are mutually "
-            "exclusive. `page` is 1-based and `page_size` is 1-100. Returns the page items "
-            "and the appliance `pages` metadata; it never auto-paginates."
+            "exclusive. `page` is 1-based and `page_size` is 1-100 (default 10). Returns "
+            "the page items and the appliance `pages` metadata; it never auto-paginates. "
+            "Size: the lab appliance's 94 services are ~28 KB of JSON at pageSize=50, so "
+            "keep page_size small and page through the collection. The MCP SDK returns the "
+            "payload both as a text block and as structuredContent; read one of them, not "
+            "both."
         ),
         kind=ToolKind.READ,
         handler=service_list,
@@ -337,7 +341,8 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         description=(
             "List one page of service groups. Read-only. `name_contains` and "
             "`name_not_equals` are mutually exclusive; `page` is 1-based and `page_size` "
-            "is 1-100. Returns the page items and the appliance `pages` metadata."
+            "is 1-100 (default 10). Returns the page items and the appliance `pages` "
+            "metadata."
         ),
         kind=ToolKind.READ,
         handler=service_group_list,

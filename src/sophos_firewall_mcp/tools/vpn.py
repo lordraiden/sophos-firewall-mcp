@@ -180,7 +180,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "List the IPsec profiles one page at a time, with optional name filters. Each "
             "profile carries its key exchange (IKEv1/IKEv2), authentication mode, phase-1 and "
-            "phase-2 proposals and dead-peer-detection settings. Read-only: VPN mutations are "
+            "phase-2 proposals and dead-peer-detection settings. Pagination: `page` is 1-based "
+            "and `page_size` is 1-100 (default 10). Read-only: VPN mutations are "
             "excluded from this server."
         ),
     )
@@ -215,7 +216,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "List the IPsec site-to-site failover groups one page at a time, with optional name "
             "filters and the operation's opaque filter/sort parameters. Each group carries its "
-            "member connections, liveness checks and failback settings. Read-only."
+            "member connections, liveness checks and failback settings. Pagination: `page` is "
+            "1-based and `page_size` is 1-100 (default 10). Read-only."
         ),
     )
     async def ipsec_failover_group_list(
@@ -333,7 +335,9 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "security associations, traffic selectors and packet/byte counters. This is "
             "operational state, not configuration: an empty list means no tunnel is currently "
             "established, not that none is configured. The operation declares no pagination "
-            "parameters. Read-only."
+            "parameters and the appliance caps the response at 1000 items (pages.size and "
+            "pages.maxSize are both 1000), so a list of exactly 1000 items may be truncated "
+            "and there is no way to page past it. Read-only."
         ),
     )
     async def ipsec_live_connection_list_ipv4(
@@ -351,8 +355,11 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "Read the remote-access IPsec configuration: connection state, profile, gateway "
             "authentication, authorized users and groups, the IPv4 lease range, DNS settings "
-            "and Sophos Connect client settings. Read-only: the settings cannot be changed "
-            "through this server."
+            "and Sophos Connect client settings. configured is derived, not returned by the "
+            "appliance: it is false when connectionState is unset (remote-access IPsec is not "
+            "configured at all) and true when connectionState is enabled or disabled, so an "
+            "agent does not have to know the unset sentinel. Read-only: the settings cannot be "
+            "changed through this server."
         ),
     )
     async def ipsec_remote_access_settings_get(
@@ -372,7 +379,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "List the SSL VPN remote-access policies one page at a time, with optional name "
             "filters. Each policy carries its members, full-tunnel flag, permitted IPv4/IPv6 "
-            "networks and idle-peer-detection settings. Read-only."
+            "networks and idle-peer-detection settings. Pagination: `page` is 1-based and "
+            "`page_size` is 1-100 (default 10). Read-only."
         ),
     )
     async def sslvpn_remote_access_policy_list(
@@ -409,7 +417,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="List SSL VPN bookmark groups",
         description=(
             "List the clientless SSL VPN bookmark groups one page at a time, with optional name "
-            "filters. Bookmark groups and bookmarks are separate resources. Read-only."
+            "filters. Bookmark groups and bookmarks are separate resources. Pagination: `page` "
+            "is 1-based and `page_size` is 1-100 (default 10). Read-only."
         ),
     )
     async def sslvpn_bookmark_group_list(
@@ -442,7 +451,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "List the clientless SSL VPN bookmarks one page at a time, with optional name "
             "filters. The contract models eight protocol variants (rdp, telnet, ssh, ftp, ftps, "
             "sftp, smb, vnc); each item is projected with its protocol and the variant's target "
-            "fields. Credentials are never returned. Read-only."
+            "fields. Credentials are never returned. Pagination: `page` is 1-based and "
+            "`page_size` is 1-100 (default 10). Read-only."
         ),
     )
     async def sslvpn_bookmark_list(
@@ -479,7 +489,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "List the SSL VPN Web Access (clientless) policies one page at a time, with optional "
             "name filters. Each policy carries its member users/groups and the bookmarks and "
-            "bookmark groups it publishes. Read-only."
+            "bookmark groups it publishes. Pagination: `page` is 1-based and `page_size` "
+            "is 1-100 (default 10). Read-only."
         ),
     )
     async def sslvpn_clientless_policy_list(

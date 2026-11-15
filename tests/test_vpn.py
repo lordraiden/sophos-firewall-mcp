@@ -8,6 +8,7 @@ mutation exists, and that the whole surface is registered in read-only mode too.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -18,10 +19,19 @@ from mcp import Client
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.models.vpn import (
     FailoverGroupListInput,
+    IpsecConnection,
+    IpsecFailoverGroup,
     IpsecLiveConnection,
     IpsecProfile,
+    IpsecRemoteAccessSettings,
+    IpsecRouteBasedConnection,
     SslVpnBookmark,
+    SslVpnBookmarkGroup,
+    SslVpnClientlessPolicy,
+    SslVpnGlobalSettings,
+    SslVpnRemoteAccessPolicy,
     VpnFilteredPageInput,
+    VpnPageInput,
     VpnProfileRefInput,
 )
 from sophos_firewall_mcp.server import create_server
@@ -33,7 +43,7 @@ BASE = f"https://{HOST}:4444/api/firewall-config/v1"
 API_PREFIX = "/api/firewall-config/v1"
 
 PAGE = {"current": 1, "size": 50, "maxSize": 100}
-DEFAULT_PAGE_QUERY = {"page": "1", "pageSize": "50", "pageTotal": "false"}
+DEFAULT_PAGE_QUERY = {"page": "1", "pageSize": "10", "pageTotal": "false"}
 
 
 def make_settings(**overrides: Any) -> Settings:
@@ -317,6 +327,54 @@ async def test_live_connections_project_security_associations(router: Any) -> No
     assert association.bytesReceived == 2048
 
 
+async def test_live_connection_list_states_the_1000_item_ceiling() -> None:
+    """L9: the appliance caps the response at 1000 items and there is no way to page.
+
+    The operation declares no ``page``/``pageSize`` parameters, so the tool must not invent
+    them; it must state the ceiling so a full page is not read as a complete list.
+    """
+    tools = await tool_map()
+    tool = tools["ipsec_live_connection_list_ipv4"]
+
+    assert "1000" in tool.description
+    assert "truncated" in tool.description
+    assert tool.input_schema.get("properties", {}) == {}
+
+
+async def test_remote_access_settings_flag_an_unset_configuration(router: Any) -> None:
+    """L10: an all-null object with ``connectionState: "unset"`` must read as unconfigured."""
+    router.get(f"{BASE}/ipsec-vpn/remote-access/settings").mock(
+        return_value=httpx.Response(200, json={"connectionState": "unset"})
+    )
+
+    result = await call_tool("ipsec_remote_access_settings_get", {})
+
+    assert result.is_error is False
+    assert result.structured_content["configured"] is False
+    assert result.structured_content["connectionState"] == "unset"
+
+    tools = await tool_map()
+    assert "configured" in tools["ipsec_remote_access_settings_get"].description
+
+
+def test_configured_is_derived_from_the_connection_state() -> None:
+    """L10: ``configured`` is true only when a configuration exists (enabled or disabled)."""
+    assert (
+        IpsecRemoteAccessSettings.model_validate({"connectionState": "unset"}).configured is False
+    )
+    assert (
+        IpsecRemoteAccessSettings.model_validate({"connectionState": "enabled"}).configured is True
+    )
+    assert (
+        IpsecRemoteAccessSettings.model_validate({"connectionState": "disabled"}).configured is True
+    )
+    # A missing connectionState violates the contract: report unconfigured, never guess.
+    assert IpsecRemoteAccessSettings.model_validate({}).configured is False
+    # The flag is published in the output schema, so an agent can see it before calling.
+    schema = IpsecRemoteAccessSettings.model_json_schema()["properties"]
+    assert schema["configured"]["type"] == "boolean"
+
+
 # -- Discovery, annotations and the read-only guarantee --------------------------------
 
 
@@ -487,3 +545,120 @@ def test_vpn_ref_input_accepts_a_uuid_and_rejects_a_comma() -> None:
     assert VpnProfileRefInput(idOrName=uuid).id_or_name == uuid
     with pytest.raises(ValueError):
         VpnProfileRefInput(idOrName="a,b")
+
+
+# -- Phase-5 polish: the uniform default page size (M11) --------------------------------
+
+
+def test_vpn_page_input_defaults_to_ten() -> None:
+    """M11: the VPN list tools share the same small default as every other list tool."""
+    for model in (VpnPageInput, VpnFilteredPageInput):
+        parsed = model()
+
+        assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+        description = model.model_json_schema()["properties"]["page_size"]["description"]
+        assert "Defaults to 10" in description
+        # The bounds are unchanged: this is a default, not a schema break.
+        assert model(page_size=100).page_size == 100
+
+
+async def test_vpn_list_descriptions_state_the_default_page_size() -> None:
+    """M11: every VPN list tool documents the default it applies."""
+    tools = await tool_map()
+
+    for name in (
+        "ipsec_profile_list",
+        "ipsec_failover_group_list",
+        "sslvpn_remote_access_policy_list",
+        "sslvpn_bookmark_group_list",
+        "sslvpn_bookmark_list",
+        "sslvpn_clientless_policy_list",
+    ):
+        assert "default 10" in tools[name].description, name
+
+
+# -- Phase-5 review, Medium finding 2: the epoch sentinel in the VPN outputs (L6) -------
+
+
+VPN_EPOCH_MODELS: list[tuple[str, type[Any]]] = [
+    ("IpsecProfile", IpsecProfile),
+    ("IpsecFailoverGroup", IpsecFailoverGroup),
+    ("IpsecConnection", IpsecConnection),
+    ("IpsecRouteBasedConnection", IpsecRouteBasedConnection),
+    ("IpsecRemoteAccessSettings", IpsecRemoteAccessSettings),
+    ("SslVpnRemoteAccessPolicy", SslVpnRemoteAccessPolicy),
+    ("SslVpnBookmark", SslVpnBookmark),
+    ("SslVpnBookmarkGroup", SslVpnBookmarkGroup),
+    ("SslVpnClientlessPolicy", SslVpnClientlessPolicy),
+    ("SslVpnGlobalSettings", SslVpnGlobalSettings),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "model"), VPN_EPOCH_MODELS, ids=[case[0] for case in VPN_EPOCH_MODELS]
+)
+def test_vpn_epoch_sentinel_is_published_as_null(name: str, model: type[Any]) -> None:
+    """L6: every VPN output model publishes the epoch "never" sentinel as null.
+
+    The shared serializer was added to the other output bases but not to ``vpn._Output``,
+    so the VPN projections still published ``1970-01-01T00:00:00Z`` (phase-5 review,
+    Medium finding 2). Only the exact sentinel is mapped, and the parsed value stays
+    available to server-side logic.
+    """
+    fields = model.model_fields
+    timestamped = [field for field in ("createdAt", "updatedAt") if field in fields]
+    assert timestamped, name
+
+    payload: dict[str, Any] = {"name": "DefaultHeadOffice"}
+    payload.update({field: "1970-01-01T00:00:00Z" for field in timestamped})
+    parsed = model.model_validate(payload)
+
+    # The parsed value stays available: the audit heuristic detects built-in objects from
+    # the epoch stamp, so hiding it from the model would silently disable it.
+    for field in timestamped:
+        assert getattr(parsed, field) == datetime(1970, 1, 1, tzinfo=UTC), (name, field)
+
+    published = parsed.model_dump(mode="json", by_alias=True)
+    for field in timestamped:
+        assert published[field] is None, (name, field)
+
+    # A real timestamp is preserved, and one second past the epoch is not the sentinel.
+    real = model.model_validate(
+        {"name": "DefaultHeadOffice", **{field: "2026-11-15T10:00:00Z" for field in timestamped}}
+    )
+    real_published = real.model_dump(mode="json", by_alias=True)
+    for field in timestamped:
+        assert real_published[field] == "2026-11-15T10:00:00Z", (name, field)
+
+    near = model.model_validate(
+        {"name": "DefaultHeadOffice", **{field: "1970-01-01T00:00:01Z" for field in timestamped}}
+    )
+    near_published = near.model_dump(mode="json", by_alias=True)
+    for field in timestamped:
+        assert near_published[field] == "1970-01-01T00:00:01Z", (name, field)
+
+
+async def test_ipsec_profile_get_publishes_the_epoch_sentinel_as_null(router: Any) -> None:
+    """L6 end-to-end: the real server publishes ``createdAt: null`` for the sentinel.
+
+    The review proved the leak through ``structuredContent``; this pins the same path so a
+    regression in the VPN output base is visible at the tool boundary, not only on the
+    model.
+    """
+    router.get(f"{BASE}/ipsec-vpn/profiles/DefaultHeadOffice").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "DefaultHeadOffice",
+                "createdAt": "1970-01-01T00:00:00Z",
+                "updatedAt": "2026-11-15T10:00:00Z",
+            },
+        )
+    )
+
+    result = await call_tool("ipsec_profile_get", {"request": {"idOrName": "DefaultHeadOffice"}})
+
+    assert result.is_error is False
+    assert result.structured_content is not None
+    assert result.structured_content["createdAt"] is None
+    assert result.structured_content["updatedAt"] == "2026-11-15T10:00:00Z"

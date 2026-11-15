@@ -24,6 +24,7 @@ from pydantic import ValidationError
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.models.objects import (
+    ListQuery,
     Service,
     ServiceCreate,
     ServiceGroup,
@@ -333,7 +334,7 @@ async def test_service_list_sends_the_type_filter(router: Any):
     assert result.is_error is False
     assert dict(route.calls.last.request.url.params) == {
         "page": "1",
-        "pageSize": "50",
+        "pageSize": "10",
         "pageTotal": "false",
         "nameContains": "web",
         "type": "tcpOrUdp",
@@ -869,3 +870,29 @@ def test_nested_service_detail_models_publish_snake_case_and_serialize_to_the_wi
     ).model_dump(mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
         "services": [{"protocol": "tcp", "sourcePort": {"from": 80, "to": 80}}]
     }
+
+
+# -- Phase-5 polish: default page size and the output size ------------------------------
+
+
+def test_list_query_defaults_to_ten() -> None:
+    """M11: the service list tools share the small default page size."""
+    parsed = ListQuery()
+
+    assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
+    description = ListQuery.model_json_schema()["properties"]["page_size"]["description"]
+    assert "Defaults to 10" in description
+
+
+async def test_service_list_descriptions_state_the_page_size_and_the_output_size() -> None:
+    """M11/L7: the default, the size of a full page and the double payload are documented."""
+    tools = await tools_by_name(make_server())
+
+    service = tools["service_list"].description
+    assert "default 10" in service
+    assert "~28 KB" in service
+    assert "structuredContent" in service
+    assert "read one of them, not both" in service
+
+    group = tools["service_group_list"].description
+    assert "default 10" in group

@@ -12,7 +12,7 @@ Design rules encoded here:
   evidence fields, missing-evidence entries). No raw Sophos payload is ever returned.
 * **Evidence or silence.** A finding carries the rule name/id, the 1-based evaluation
   position, the IP family, the projected fields that support it and a short detail. When
-  the projection cannot support a claim the tool reports ``not_verifiable`` instead of
+  the projection cannot support a claim the tool reports ``notVerifiable`` instead of
   guessing; :class:`UnverifiableCheck` is that channel.
 * **Explicit truncation.** :class:`ScanReport` says which collections were read, how many
   items and pages were scanned, which collections were cut short and what the per-collection
@@ -21,8 +21,12 @@ Design rules encoded here:
   ``method="config-analysis"``: the REST contract exposes no ping, traceroute, packet
   capture or live flow simulation, so the tool explains configuration, not observed packets.
 
-Field names are snake_case because these are MCP-facing models; the appliance's camelCase
-wire names stay inside the domain models of the owning domains.
+Naming (phase 5, D1): the **inputs** are snake_case because the model writes them, and the
+**outputs** keep the Sophos wire names (camelCase) because they are projections of the
+appliance payload, exactly like every other domain. These three composites add no Sophos
+operation, so their output members are camelCase by the same convention rather than by a
+wire name of their own; the two conventions meet only in the tool layer, which maps one onto
+the other explicitly.
 """
 
 from __future__ import annotations
@@ -158,15 +162,15 @@ class ScanReport(_Output):
         max_length=32,
         description="Collections the walk read, in the order they were first read.",
     )
-    items_scanned: int = Field(default=0, ge=0, description="Items read across every collection.")
-    pages_read: int = Field(default=0, ge=0, description="Pages requested across every collection.")
-    item_limit_per_collection: int = Field(
+    itemsScanned: int = Field(default=0, ge=0, description="Items read across every collection.")
+    pagesRead: int = Field(default=0, ge=0, description="Pages requested across every collection.")
+    itemLimitPerCollection: int = Field(
         default=500, ge=1, description="Maximum items read from one collection."
     )
     truncated: bool = Field(
         default=False, description="True when at least one collection was cut short."
     )
-    truncated_collections: list[str] = Field(
+    truncatedCollections: list[str] = Field(
         default_factory=list,
         max_length=32,
         description="Collections that were cut short by the item or page limit.",
@@ -176,25 +180,23 @@ class ScanReport(_Output):
 class FindingEvidence(_Output):
     """The projected facts that support one finding.
 
-    ``rule_name``/``rule_id``/``position``/``ip_family`` identify a rule-scoped finding;
-    ``object_name``/``object_type`` identify an object- or NAT-scoped one. ``fields`` names
+    ``ruleName``/``ruleId``/``position``/``ipFamily`` identify a rule-scoped finding;
+    ``objectName``/``objectType`` identify an object- or NAT-scoped one. ``fields`` names
     the projected members the finding rests on and ``detail`` states the observation.
     """
 
-    rule_name: str | None = Field(
+    ruleName: str | None = Field(
         default=None, max_length=60, description="Rule name, when applicable."
     )
-    rule_id: str | None = Field(
-        default=None, max_length=64, description="Rule UUID, when returned."
-    )
+    ruleId: str | None = Field(default=None, max_length=64, description="Rule UUID, when returned.")
     position: int | None = Field(
         default=None, ge=1, description="1-based evaluation position in the family's rule base."
     )
-    ip_family: IpFamily | None = Field(default=None, description="IP family of the rule or object.")
-    object_name: str | None = Field(
+    ipFamily: IpFamily | None = Field(default=None, description="IP family of the rule or object.")
+    objectName: str | None = Field(
         default=None, max_length=64, description="Object or NAT-rule name, when applicable."
     )
-    object_type: str | None = Field(
+    objectType: str | None = Field(
         default=None, max_length=32, description="Object kind, for example 'address' or 'nat-rule'."
     )
     fields: list[str] = Field(
@@ -230,7 +232,7 @@ class UnverifiableCheck(_Output):
         max_length=10,
         description="Up to ten rules or objects the missing evidence concerns.",
     )
-    subject_count: int = Field(
+    subjectCount: int = Field(
         default=0, ge=0, description="How many subjects the missing evidence affects."
     )
 
@@ -288,21 +290,21 @@ class AuditFirewallRulesOutput(_Output):
             "max_findings."
         ),
     )
-    findings_truncated: bool = Field(
+    findingsTruncated: bool = Field(
         default=False, description="True only when more findings existed than were returned."
     )
-    checks_run: list[AuditCheck] = Field(
+    checksRun: list[AuditCheck] = Field(
         default_factory=list,
         max_length=len(ALL_CHECKS),
         description="The checks that were run, in canonical order.",
     )
-    not_verifiable: list[UnverifiableCheck] = Field(
+    notVerifiable: list[UnverifiableCheck] = Field(
         default_factory=list,
         max_length=20,
         description="Checks the configuration could not support, with the missing evidence.",
     )
-    rules_examined: int = Field(default=0, ge=0, description="Firewall rules read and evaluated.")
-    nat_rules_examined: int = Field(
+    rulesExamined: int = Field(default=0, ge=0, description="Firewall rules read and evaluated.")
+    natRulesExamined: int = Field(
         default=0, ge=0, description="NAT rules read for the linkage checks."
     )
     scan: ScanReport = Field(..., description="The bounded scan the findings are based on.")
@@ -402,7 +404,7 @@ class EndpointSummary(_Output):
     ip: str | None = Field(default=None, description="IP address, when the endpoint was an IP.")
     zone: str | None = Field(default=None, description="Zone name, when the endpoint was a zone.")
     fqdn: str | None = Field(default=None, description="FQDN, when the endpoint was an FQDN.")
-    resolved_zones: list[str] = Field(
+    resolvedZones: list[str] = Field(
         default_factory=list, max_length=16, description="Zones the endpoint resolves to."
     )
     interfaces: list[str] = Field(
@@ -439,7 +441,7 @@ class InterfaceMatch(_Output):
 
     name: str = Field(..., max_length=58)
     zone: str | None = Field(default=None, max_length=60)
-    ip_family: IpFamily
+    ipFamily: IpFamily
     address: str | None = Field(
         default=None, max_length=64, description="Interface address that matched."
     )
@@ -449,7 +451,7 @@ class InterfaceMatch(_Output):
 class RuleEvaluation(_Output):
     """One firewall rule the scan examined, in evaluation order.
 
-    ``matched_fields`` names the criteria that matched. ``unresolved_fields`` names the
+    ``matchedFields`` names the criteria that matched. ``unresolvedFields`` names the
     criteria whose object membership the analysis could not resolve; such a rule is a
     candidate, not a decision. ``decisive`` marks the first enabled matching rule: its action
     decides the verdict. ``applied`` is false for a disabled rule that matches the criteria
@@ -459,22 +461,22 @@ class RuleEvaluation(_Output):
     name: str = Field(..., max_length=60)
     id: str | None = Field(default=None, max_length=64)
     position: int = Field(..., ge=1, description="1-based evaluation position.")
-    ip_family: IpFamily
+    ipFamily: IpFamily
     enabled: bool | None = Field(default=None, description="Projected enabled state.")
     action: str | None = Field(default=None, max_length=16, description="accept, drop or reject.")
     decisive: bool = Field(default=False, description="True for the first enabled matching rule.")
     applied: bool = Field(default=False, description="True when the rule is enabled and decisive.")
-    matched_fields: list[str] = Field(
+    matchedFields: list[str] = Field(
         default_factory=list,
         max_length=MAX_EVIDENCE_FIELDS,
         description="Rule criteria that matched the flow.",
     )
-    unresolved_fields: list[str] = Field(
+    unresolvedFields: list[str] = Field(
         default_factory=list,
         max_length=MAX_EVIDENCE_FIELDS,
         description="Criteria whose object membership could not be resolved.",
     )
-    log_traffic: bool | None = Field(default=None, description="Projected logging flag.")
+    logTraffic: bool | None = Field(default=None, description="Projected logging flag.")
     note: str | None = Field(
         default=None, max_length=MAX_TEXT, description="Why the rule did not apply."
     )
@@ -486,22 +488,22 @@ class NatEvaluation(_Output):
     name: str = Field(..., max_length=60)
     id: str | None = Field(default=None, max_length=64)
     position: int = Field(..., ge=1, description="1-based position in the NAT rule base.")
-    ip_family: IpFamily
+    ipFamily: IpFamily
     enabled: bool = Field(..., description="Projected enabled state.")
-    matched_fields: list[str] = Field(
+    matchedFields: list[str] = Field(
         default_factory=list,
         max_length=MAX_EVIDENCE_FIELDS,
         description="NAT criteria that matched the flow.",
     )
-    linked_firewall_rule: str | None = Field(
+    linkedFirewallRule: str | None = Field(
         default=None, max_length=60, description="Name of the linked firewall rule, when returned."
     )
-    linked_rule_exists: bool | None = Field(
+    linkedRuleExists: bool | None = Field(
         default=None,
         description="True when the linked firewall rule exists in the scanned rule base.",
     )
-    translated_source: str | None = Field(default=None, max_length=64)
-    translated_destination: str | None = Field(default=None, max_length=64)
+    translatedSource: str | None = Field(default=None, max_length=64)
+    translatedDestination: str | None = Field(default=None, max_length=64)
     note: str | None = Field(default=None, max_length=MAX_TEXT)
 
 
@@ -518,13 +520,13 @@ class RoutingDecision(_Output):
     destination: str | None = Field(
         default=None, max_length=64, description="Destination that was routed."
     )
-    route_name: str | None = Field(
+    routeName: str | None = Field(
         default=None, max_length=64, description="Matched static route name."
     )
     gateway: str | None = Field(
         default=None, max_length=50, description="Matched gateway name, if known."
     )
-    gateway_ip: str | None = Field(
+    gatewayIp: str | None = Field(
         default=None, max_length=64, description="Matched gateway address."
     )
     interface: str | None = Field(
@@ -544,8 +546,8 @@ class ExplainConnectivityOutput(_Output):
     """Output of ``explain_connectivity``: an ordered, evidence-based explanation.
 
     ``method`` is always ``config-analysis``: this is not a packet test. ``verdict`` is the
-    policy verdict, ``verdict_reason`` says exactly which rule, routing decision or missing
-    evidence produced it, and ``missing_evidence`` lists every fact the analysis lacked.
+    policy verdict, ``verdictReason`` says exactly which rule, routing decision or missing
+    evidence produced it, and ``missingEvidence`` lists every fact the analysis lacked.
     """
 
     method: Literal["config-analysis"] = Field(
@@ -553,13 +555,13 @@ class ExplainConnectivityOutput(_Output):
         description="This is configuration analysis, not a packet test.",
     )
     verdict: Verdict = Field(..., description="Policy verdict for the described flow.")
-    verdict_reason: str = Field(
+    verdictReason: str = Field(
         ..., min_length=1, max_length=MAX_TEXT, description="What produced the verdict."
     )
     source: EndpointSummary = Field(..., description="Resolved source endpoint.")
     destination: EndpointSummary = Field(..., description="Resolved destination endpoint.")
     service: ServiceSummary = Field(..., description="Service side of the flow.")
-    ip_families: list[IpFamily] = Field(
+    ipFamilies: list[IpFamily] = Field(
         ..., min_length=1, max_length=2, description="IP families that were analysed."
     )
     zones: list[ZoneMatch] = Field(
@@ -568,26 +570,26 @@ class ExplainConnectivityOutput(_Output):
     interfaces: list[InterfaceMatch] = Field(
         default_factory=list, max_length=32, description="Local interfaces involved in the flow."
     )
-    firewall_rules: list[RuleEvaluation] = Field(
+    firewallRules: list[RuleEvaluation] = Field(
         default_factory=list,
         max_length=MAX_RULES_REPORTED,
         description="Matching firewall rules in evaluation order, including the decisive one.",
     )
-    decisive_rule: RuleEvaluation | None = Field(
+    decisiveRule: RuleEvaluation | None = Field(
         default=None, description="The first enabled matching rule; its action decides the verdict."
     )
-    nat_rules: list[NatEvaluation] = Field(
+    natRules: list[NatEvaluation] = Field(
         default_factory=list,
         max_length=MAX_RULES_REPORTED,
         description="NAT rules that definitely match the flow.",
     )
     routing: RoutingDecision = Field(..., description="Routing decision for the destination.")
-    missing_evidence: list[str] = Field(
+    missingEvidence: list[str] = Field(
         default_factory=list,
         max_length=20,
         description="Facts the configuration did not provide; each one blocks a claim.",
     )
-    rules_examined: int = Field(default=0, ge=0, description="Firewall rules evaluated.")
+    rulesExamined: int = Field(default=0, ge=0, description="Firewall rules evaluated.")
     truncated: bool = Field(
         default=False, description="True only when a scan or evaluation limit affected the result."
     )
@@ -634,7 +636,7 @@ class ObjectReference(_Output):
     id: str | None = Field(
         default=None, max_length=64, description="UUID of the referencing object."
     )
-    ip_family: IpFamily | None = Field(
+    ipFamily: IpFamily | None = Field(
         default=None, description="IP family of the referencing object."
     )
     position: int | None = Field(
@@ -649,16 +651,16 @@ class FindObjectUsageOutput(_Output):
     """Output of ``find_object_usage``: every reference found, bounded and explicit.
 
     ``found`` says whether the object itself exists in the scanned collections.
-    ``reference_count`` is the number of references found before ``max_references`` cut the
+    ``referenceCount`` is the number of references found before ``max_references`` cut the
     list; ``truncated`` is true only when that cut or a scan limit actually happened.
     """
 
-    object_type: ObjectType = Field(..., description="Kind of object that was searched for.")
+    objectType: ObjectType = Field(..., description="Kind of object that was searched for.")
     identifier: str = Field(..., max_length=64, description="Identifier the search was issued for.")
-    resolved_name: str | None = Field(
+    resolvedName: str | None = Field(
         default=None, max_length=64, description="Canonical name of the object, when it was found."
     )
-    resolved_id: str | None = Field(
+    resolvedId: str | None = Field(
         default=None, max_length=64, description="UUID of the object, if found."
     )
     found: bool = Field(..., description="True when the object exists in the scanned collections.")
@@ -667,7 +669,7 @@ class FindObjectUsageOutput(_Output):
         max_length=MAX_REFERENCES,
         description="References in firewall rules, NAT rules and groups.",
     )
-    reference_count: int = Field(default=0, ge=0, description="References found before truncation.")
+    referenceCount: int = Field(default=0, ge=0, description="References found before truncation.")
     truncated: bool = Field(
         default=False,
         description="True only when a reference or scan limit actually cut the result.",

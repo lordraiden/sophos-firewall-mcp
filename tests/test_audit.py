@@ -263,16 +263,16 @@ async def test_any_any_reports_an_enabled_accept_all_rule(router: Any) -> None:
     finding = output["findings"][0]
     assert finding["check"] == "any-any"
     assert finding["severity"] == "high"
-    assert finding["evidence"]["rule_name"] == "allow-all"
+    assert finding["evidence"]["ruleName"] == "allow-all"
     assert finding["evidence"]["position"] == 1
-    assert finding["evidence"]["ip_family"] == "ipv4"
+    assert finding["evidence"]["ipFamily"] == "ipv4"
     assert finding["evidence"]["fields"] == [
         "sourceZones.any",
         "destinationZones.any",
         "servicesOrGroups.any",
     ]
-    assert output["checks_run"] == ["any-any"]
-    assert output["rules_examined"] == 1
+    assert output["checksRun"] == ["any-any"]
+    assert output["rulesExamined"] == 1
     assert output["scan"]["collections"] == ["firewall-rules-ipv4"]
     assert output["scan"]["truncated"] is False
 
@@ -349,7 +349,7 @@ async def test_disabled_reports_a_disabled_rule_and_ignores_an_enabled_one(
     result = await call_tool("audit_firewall_rules", {"checks": ["disabled"], "ip_family": "ipv4"})
 
     findings = result.structured_content["findings"]
-    assert [finding["evidence"]["rule_name"] for finding in findings] == ["disabled-rule"]
+    assert [finding["evidence"]["ruleName"] for finding in findings] == ["disabled-rule"]
     assert findings[0]["evidence"]["position"] == 2
     assert findings[0]["evidence"]["fields"] == ["enabled"]
 
@@ -363,8 +363,8 @@ async def test_disabled_is_not_verifiable_without_an_enabled_state(router: Any) 
 
     output = result.structured_content
     assert output["findings"] == []
-    assert output["not_verifiable"][0]["check"] == "disabled"
-    assert output["not_verifiable"][0]["subjects"] == ["unknown-state"]
+    assert output["notVerifiable"][0]["check"] == "disabled"
+    assert output["notVerifiable"][0]["subjects"] == ["unknown-state"]
 
 
 async def test_shadowed_reports_the_earlier_covering_rule(router: Any) -> None:
@@ -390,7 +390,7 @@ async def test_shadowed_reports_the_earlier_covering_rule(router: Any) -> None:
     findings = result.structured_content["findings"]
     assert len(findings) == 1
     assert findings[0]["check"] == "shadowed"
-    assert findings[0]["evidence"]["rule_name"] == "allow-web"
+    assert findings[0]["evidence"]["ruleName"] == "allow-web"
     assert findings[0]["evidence"]["position"] == 2
     assert "allow-all" in findings[0]["evidence"]["detail"]
     assert "position 1" in findings[0]["evidence"]["detail"]
@@ -476,7 +476,7 @@ async def test_no_logging_reports_an_unlogged_accept_rule(router: Any) -> None:
     )
 
     findings = result.structured_content["findings"]
-    assert [finding["evidence"]["rule_name"] for finding in findings] == ["unlogged"]
+    assert [finding["evidence"]["ruleName"] for finding in findings] == ["unlogged"]
     assert findings[0]["evidence"]["fields"] == ["logTraffic"]
 
 
@@ -504,7 +504,7 @@ async def test_no_logging_is_not_verifiable_without_the_flag(router: Any) -> Non
 
     output = result.structured_content
     assert output["findings"] == []
-    assert output["not_verifiable"][0]["check"] == "no-logging"
+    assert output["notVerifiable"][0]["check"] == "no-logging"
 
 
 async def test_unused_object_reports_an_unreferenced_address(router: Any) -> None:
@@ -533,10 +533,10 @@ async def test_unused_object_reports_an_unreferenced_address(router: Any) -> Non
     )
 
     findings = result.structured_content["findings"]
-    assert [finding["evidence"]["object_name"] for finding in findings] == ["orphan"]
+    assert [finding["evidence"]["objectName"] for finding in findings] == ["orphan"]
     assert findings[0]["check"] == "unused-object"
-    assert findings[0]["evidence"]["object_type"] == "address"
-    assert findings[0]["evidence"]["ip_family"] == "ipv4"
+    assert findings[0]["evidence"]["objectType"] == "address"
+    assert findings[0]["evidence"]["ipFamily"] == "ipv4"
 
 
 async def test_unused_object_counts_a_group_membership_as_a_reference(router: Any) -> None:
@@ -640,7 +640,7 @@ async def test_unused_object_scans_both_families_when_ip_family_is_set(router: A
     )
 
     output = result.structured_content
-    assert [finding["evidence"]["object_name"] for finding in output["findings"]] == [
+    assert [finding["evidence"]["objectName"] for finding in output["findings"]] == [
         "orphan-service"
     ]
     assert RULES_V4 in called_paths(router)
@@ -678,7 +678,7 @@ async def test_unused_object_excludes_built_in_objects(router: Any) -> None:
     )
 
     output = result.structured_content
-    assert [finding["evidence"]["object_name"] for finding in output["findings"]] == [
+    assert [finding["evidence"]["objectName"] for finding in output["findings"]] == [
         "orphan",
         "orphan-service",
     ]
@@ -736,7 +736,7 @@ async def test_unused_object_is_not_verifiable_when_the_rule_scan_is_truncated(
 
     output = result.structured_content
     assert output["findings"] == []
-    assert output["not_verifiable"][0]["check"] == "unused-object"
+    assert output["notVerifiable"][0]["check"] == "unused-object"
     assert output["scan"]["truncated"] is True
 
 
@@ -758,8 +758,8 @@ async def test_nat_without_rule_reports_a_missing_link(router: Any) -> None:
     findings = result.structured_content["findings"]
     assert len(findings) == 1
     assert findings[0]["check"] == "nat-without-rule"
-    assert findings[0]["evidence"]["object_name"] == "dnat"
-    assert findings[0]["evidence"]["object_type"] == "nat-rule"
+    assert findings[0]["evidence"]["objectName"] == "dnat"
+    assert findings[0]["evidence"]["objectType"] == "nat-rule"
     assert findings[0]["evidence"]["fields"] == ["linkedFirewallRule"]
 
 
@@ -825,7 +825,7 @@ async def test_unrestricted_service_reports_lan_to_wan_with_any_service(
     assert len(findings) == 1
     assert findings[0]["check"] == "unrestricted-service"
     assert findings[0]["severity"] == "high"
-    assert findings[0]["evidence"]["rule_name"] == "allow-egress"
+    assert findings[0]["evidence"]["ruleName"] == "allow-egress"
 
 
 async def test_unrestricted_service_ignores_wan_to_wan(router: Any) -> None:
@@ -905,7 +905,7 @@ async def test_unrestricted_service_is_not_verifiable_for_an_unknown_zone(
 
     output = result.structured_content
     assert output["findings"] == []
-    assert output["not_verifiable"][0]["check"] == "unrestricted-service"
+    assert output["notVerifiable"][0]["check"] == "unrestricted-service"
 
 
 async def test_all_checks_run_together_without_an_output_bound_error(router: Any) -> None:
@@ -945,7 +945,7 @@ async def test_all_checks_run_together_without_an_output_bound_error(router: Any
         "nat-without-rule",
         "unrestricted-service",
     }
-    assert output["checks_run"] == [
+    assert output["checksRun"] == [
         "any-any",
         "disabled",
         "shadowed",
@@ -954,8 +954,8 @@ async def test_all_checks_run_together_without_an_output_bound_error(router: Any
         "nat-without-rule",
         "unrestricted-service",
     ]
-    assert output["rules_examined"] == 3
-    assert output["nat_rules_examined"] == 1
+    assert output["rulesExamined"] == 3
+    assert output["natRulesExamined"] == 1
 
 
 async def test_checks_filter_limits_the_work_and_the_output(router: Any) -> None:
@@ -964,7 +964,7 @@ async def test_checks_filter_limits_the_work_and_the_output(router: Any) -> None
     result = await call_tool("audit_firewall_rules", {"checks": ["disabled"], "ip_family": "ipv4"})
 
     output = result.structured_content
-    assert output["checks_run"] == ["disabled"]
+    assert output["checksRun"] == ["disabled"]
     assert [finding["check"] for finding in output["findings"]] == ["disabled"]
     # Only the rule collection was read: no NAT, zone or object scan happened.
     assert called_paths(router) == {RULES_V4}
@@ -989,7 +989,7 @@ async def test_rule_name_filter_selects_reported_findings(router: Any) -> None:
     )
 
     findings = result.structured_content["findings"]
-    assert [finding["evidence"]["rule_name"] for finding in findings] == ["web-disabled"]
+    assert [finding["evidence"]["ruleName"] for finding in findings] == ["web-disabled"]
     assert any("rule_name_contains" in note for note in result.structured_content["notes"])
 
 
@@ -1008,8 +1008,8 @@ async def test_rule_name_filter_skips_non_rule_scoped_checks(router: Any) -> Non
 
     output = result.structured_content
     assert output["findings"] == []
-    assert "unused-object" not in output["checks_run"]
-    assert "nat-without-rule" not in output["checks_run"]
+    assert "unused-object" not in output["checksRun"]
+    assert "nat-without-rule" not in output["checksRun"]
     assert any("non-rule-scoped" in note for note in output["notes"])
 
 
@@ -1034,7 +1034,7 @@ async def test_findings_are_bounded_and_truncation_is_explicit(router: Any) -> N
 
     output = result.structured_content
     assert len(output["findings"]) == 2
-    assert output["findings_truncated"] is True
+    assert output["findingsTruncated"] is True
 
 
 async def test_findings_are_sorted_by_severity_before_truncation(router: Any) -> None:
@@ -1072,7 +1072,7 @@ async def test_findings_are_sorted_by_severity_before_truncation(router: Any) ->
     )
 
     output = result.structured_content
-    assert output["findings_truncated"] is True
+    assert output["findingsTruncated"] is True
     assert [finding["check"] for finding in output["findings"]] == ["shadowed", "disabled"]
     assert output["findings"][0]["severity"] == "medium"
 
@@ -1084,9 +1084,9 @@ async def test_a_truncated_scan_is_reported_with_its_collection(router: Any) -> 
 
     scan = result.structured_content["scan"]
     assert scan["truncated"] is True
-    assert scan["truncated_collections"] == ["firewall-rules-ipv4"]
-    assert scan["pages_read"] == 5
-    assert scan["item_limit_per_collection"] == 500
+    assert scan["truncatedCollections"] == ["firewall-rules-ipv4"]
+    assert scan["pagesRead"] == 5
+    assert scan["itemLimitPerCollection"] == 500
 
 
 async def test_audit_reads_the_audited_paths_with_the_documented_pagination(
@@ -1171,17 +1171,17 @@ async def test_explain_connectivity_allows_a_flow(router: Any) -> None:
     output = result.structured_content
     assert output["method"] == "config-analysis"
     assert output["verdict"] == "allowed"
-    assert "allow-web" in output["verdict_reason"]
-    assert output["decisive_rule"]["name"] == "allow-web"
-    assert output["decisive_rule"]["position"] == 1
-    assert output["decisive_rule"]["applied"] is True
-    assert output["source"]["resolved_zones"] == ["LAN"]
+    assert "allow-web" in output["verdictReason"]
+    assert output["decisiveRule"]["name"] == "allow-web"
+    assert output["decisiveRule"]["position"] == 1
+    assert output["decisiveRule"]["applied"] is True
+    assert output["source"]["resolvedZones"] == ["LAN"]
     assert output["source"]["interfaces"] == ["Port1"]
-    assert output["destination"]["resolved_zones"] == ["WAN"]
+    assert output["destination"]["resolvedZones"] == ["WAN"]
     assert output["routing"]["decision"] == "default-route"
     assert output["routing"]["gateway"] == "wan-gateway"
     assert output["routing"]["interface"] == "Port2"
-    assert output["ip_families"] == ["ipv4"]
+    assert output["ipFamilies"] == ["ipv4"]
     assert output["truncated"] is False
 
 
@@ -1202,7 +1202,7 @@ async def test_explain_connectivity_denies_a_flow(router: Any) -> None:
 
     output = result.structured_content
     assert output["verdict"] == "denied"
-    assert output["decisive_rule"]["action"] == "drop"
+    assert output["decisiveRule"]["action"] == "drop"
 
 
 async def test_explain_connectivity_reports_no_matching_rule(router: Any) -> None:
@@ -1219,8 +1219,8 @@ async def test_explain_connectivity_reports_no_matching_rule(router: Any) -> Non
 
     output = result.structured_content
     assert output["verdict"] == "no-matching-rule"
-    assert output["decisive_rule"] is None
-    assert output["firewall_rules"] == []
+    assert output["decisiveRule"] is None
+    assert output["firewallRules"] == []
 
 
 # B1: a rule whose service criterion does not match must never be decisive. The matrix is
@@ -1273,11 +1273,11 @@ async def test_explain_connectivity_never_decides_on_a_mismatched_service(
     matches = source_zone == "LAN" and destination_zone == "WAN" and service_name == "DNS"
     if matches:
         assert output["verdict"] == "denied"
-        assert output["decisive_rule"]["name"] == "DNS to WAN - BLOCK"
+        assert output["decisiveRule"]["name"] == "DNS to WAN - BLOCK"
     else:
         assert output["verdict"] == "no-matching-rule"
-        assert output["decisive_rule"] is None
-        assert output["firewall_rules"] == []
+        assert output["decisiveRule"] is None
+        assert output["firewallRules"] == []
 
 
 async def test_explain_connectivity_does_not_allow_on_a_mismatched_service(
@@ -1305,7 +1305,7 @@ async def test_explain_connectivity_does_not_allow_on_a_mismatched_service(
 
     output = result.structured_content
     assert output["verdict"] == "no-matching-rule"
-    assert output["decisive_rule"] is None
+    assert output["decisiveRule"] is None
 
 
 async def test_explain_connectivity_does_not_report_a_nat_rule_with_a_mismatched_service(
@@ -1327,7 +1327,7 @@ async def test_explain_connectivity_does_not_report_a_nat_rule_with_a_mismatched
         },
     )
 
-    assert result.structured_content["nat_rules"] == []
+    assert result.structured_content["natRules"] == []
 
 
 async def test_explain_connectivity_is_not_verifiable_for_object_criteria(
@@ -1352,9 +1352,9 @@ async def test_explain_connectivity_is_not_verifiable_for_object_criteria(
 
     output = result.structured_content
     assert output["verdict"] == "not-verifiable"
-    assert output["decisive_rule"] is None
-    assert any("allow-object" in item for item in output["missing_evidence"])
-    assert any("sourceNetworks" in item for item in output["missing_evidence"])
+    assert output["decisiveRule"] is None
+    assert any("allow-object" in item for item in output["missingEvidence"])
+    assert any("sourceNetworks" in item for item in output["missingEvidence"])
 
 
 async def test_explain_connectivity_reports_the_candidate_rule_when_not_verifiable(
@@ -1380,15 +1380,15 @@ async def test_explain_connectivity_reports_the_candidate_rule_when_not_verifiab
 
     output = result.structured_content
     assert output["verdict"] == "not-verifiable"
-    assert output["decisive_rule"] is None
-    candidates = output["firewall_rules"]
+    assert output["decisiveRule"] is None
+    candidates = output["firewallRules"]
     assert [candidate["name"] for candidate in candidates] == ["allow-object"]
     candidate = candidates[0]
     assert candidate["position"] == 1
     assert candidate["decisive"] is False
     assert candidate["applied"] is False
-    assert candidate["unresolved_fields"] == ["sourceNetworks"]
-    assert candidate["matched_fields"] == [
+    assert candidate["unresolvedFields"] == ["sourceNetworks"]
+    assert candidate["matchedFields"] == [
         "sourceZones",
         "destinationZones",
         "destinationNetworks",
@@ -1431,20 +1431,20 @@ async def test_explain_connectivity_reports_every_indeterminate_rule(router: Any
 
     output = result.structured_content
     assert output["verdict"] == "not-verifiable"
-    assert output["decisive_rule"] is None
-    candidates = output["firewall_rules"]
+    assert output["decisiveRule"] is None
+    candidates = output["firewallRules"]
     assert [candidate["name"] for candidate in candidates] == [
         "allow-object-a",
         "allow-object-b",
         "allow-web",
     ]
     assert [candidate["position"] for candidate in candidates] == [1, 2, 3]
-    assert candidates[0]["unresolved_fields"] == ["sourceNetworks"]
-    assert candidates[1]["unresolved_fields"] == ["destinationNetworks"]
+    assert candidates[0]["unresolvedFields"] == ["sourceNetworks"]
+    assert candidates[1]["unresolvedFields"] == ["destinationNetworks"]
     assert candidates[2]["decisive"] is False
     assert candidates[2]["applied"] is False
     assert "preempt" in candidates[2]["note"]
-    evidence = [item for item in output["missing_evidence"] if "allow-object" in item]
+    evidence = [item for item in output["missingEvidence"] if "allow-object" in item]
     assert len(evidence) == 1
     assert "allow-object-a" in evidence[0]
     assert "allow-object-b" in evidence[0]
@@ -1476,12 +1476,12 @@ async def test_explain_connectivity_bounds_the_indeterminate_evidence(router: An
 
     output = result.structured_content
     assert output["verdict"] == "not-verifiable"
-    assert len(output["firewall_rules"]) == 12
-    evidence = next(item for item in output["missing_evidence"] if "rule(s)" in item)
+    assert len(output["firewallRules"]) == 12
+    evidence = next(item for item in output["missingEvidence"] if "rule(s)" in item)
     assert len(evidence) <= 400
     assert "12 rule(s)" in evidence
     assert "more" in evidence
-    assert len(output["verdict_reason"]) <= 400
+    assert len(output["verdictReason"]) <= 400
 
 
 async def test_explain_connectivity_is_not_verifiable_for_an_fqdn(router: Any) -> None:
@@ -1499,7 +1499,7 @@ async def test_explain_connectivity_is_not_verifiable_for_an_fqdn(router: Any) -
     output = result.structured_content
     assert output["verdict"] == "not-verifiable"
     assert output["method"] == "config-analysis"
-    assert any("FQDN" in item for item in output["missing_evidence"])
+    assert any("FQDN" in item for item in output["missingEvidence"])
 
 
 async def test_explain_connectivity_reports_a_disabled_matching_rule(router: Any) -> None:
@@ -1517,9 +1517,9 @@ async def test_explain_connectivity_reports_a_disabled_matching_rule(router: Any
 
     output = result.structured_content
     assert output["verdict"] == "no-matching-rule"
-    assert output["firewall_rules"][0]["name"] == "allow-web-disabled"
-    assert output["firewall_rules"][0]["applied"] is False
-    assert output["firewall_rules"][0]["decisive"] is False
+    assert output["firewallRules"][0]["name"] == "allow-web-disabled"
+    assert output["firewallRules"][0]["applied"] is False
+    assert output["firewallRules"][0]["decisive"] is False
 
 
 async def test_explain_connectivity_reports_nat_linkage(router: Any) -> None:
@@ -1541,11 +1541,11 @@ async def test_explain_connectivity_reports_nat_linkage(router: Any) -> None:
     )
 
     output = result.structured_content
-    assert len(output["nat_rules"]) == 1
-    nat = output["nat_rules"][0]
+    assert len(output["natRules"]) == 1
+    nat = output["natRules"][0]
     assert nat["name"] == "dnat"
-    assert nat["linked_firewall_rule"] == "allow-web"
-    assert nat["linked_rule_exists"] is True
+    assert nat["linkedFirewallRule"] == "allow-web"
+    assert nat["linkedRuleExists"] is True
 
 
 async def test_explain_connectivity_reports_a_nat_rule_without_a_link(router: Any) -> None:
@@ -1562,9 +1562,9 @@ async def test_explain_connectivity_reports_a_nat_rule_without_a_link(router: An
         },
     )
 
-    nat = result.structured_content["nat_rules"][0]
-    assert nat["linked_firewall_rule"] is None
-    assert nat["linked_rule_exists"] is None
+    nat = result.structured_content["natRules"][0]
+    assert nat["linkedFirewallRule"] is None
+    assert nat["linkedRuleExists"] is None
 
 
 async def test_explain_connectivity_reports_a_static_route(router: Any) -> None:
@@ -1587,7 +1587,7 @@ async def test_explain_connectivity_reports_a_static_route(router: Any) -> None:
 
     routing = result.structured_content["routing"]
     assert routing["decision"] == "static-route"
-    assert routing["route_name"] == "web-route"
+    assert routing["routeName"] == "web-route"
 
 
 async def test_explain_connectivity_reports_no_route(router: Any) -> None:
@@ -1604,7 +1604,7 @@ async def test_explain_connectivity_reports_no_route(router: Any) -> None:
 
     output = result.structured_content
     assert output["routing"]["decision"] == "no-route"
-    assert any("route" in item for item in output["missing_evidence"])
+    assert any("route" in item for item in output["missingEvidence"])
 
 
 async def test_explain_connectivity_does_not_conclude_no_route_from_a_truncated_scan(
@@ -1630,7 +1630,7 @@ async def test_explain_connectivity_does_not_conclude_no_route_from_a_truncated_
     assert routing["truncated"] is True
     assert "truncated" in routing["note"]
     assert "no-route cannot be concluded" in routing["note"]
-    assert any("truncated" in item for item in output["missing_evidence"])
+    assert any("truncated" in item for item in output["missingEvidence"])
     assert output["truncated"] is True
 
 
@@ -1655,10 +1655,10 @@ async def test_explain_connectivity_marks_a_truncated_route_scan(router: Any) ->
     output = result.structured_content
     routing = output["routing"]
     assert routing["decision"] == "static-route"
-    assert routing["route_name"] == "web-route"
+    assert routing["routeName"] == "web-route"
     assert routing["truncated"] is True
     assert "truncated" in routing["note"]
-    assert any("truncated" in item for item in output["missing_evidence"])
+    assert any("truncated" in item for item in output["missingEvidence"])
 
 
 async def test_explain_connectivity_marks_a_truncated_default_route(router: Any) -> None:
@@ -1684,7 +1684,7 @@ async def test_explain_connectivity_marks_a_truncated_default_route(router: Any)
     assert routing["truncated"] is True
     assert "truncated" in routing["note"]
     assert len(routing["note"]) <= 400
-    assert any("truncated" in item for item in output["missing_evidence"])
+    assert any("truncated" in item for item in output["missingEvidence"])
 
 
 async def test_explain_connectivity_uses_the_wan_gateway_as_the_default_route(
@@ -1706,7 +1706,7 @@ async def test_explain_connectivity_uses_the_wan_gateway_as_the_default_route(
     routing = result.structured_content["routing"]
     assert routing["decision"] == "default-route"
     assert routing["gateway"] == "wan-gateway"
-    assert routing["gateway_ip"] == "203.0.113.1"
+    assert routing["gatewayIp"] == "203.0.113.1"
     assert routing["interface"] == "Port2"
     assert "WAN gateway" in routing["note"]
 
@@ -1736,7 +1736,7 @@ async def test_explain_connectivity_analyses_both_families_for_a_zone_flow(
     )
 
     output = result.structured_content
-    assert output["ip_families"] == ["ipv4", "ipv6"]
+    assert output["ipFamilies"] == ["ipv4", "ipv6"]
     assert output["verdict"] == "allowed"
     assert output["routing"]["decision"] == "not-verified"
 
@@ -1768,7 +1768,7 @@ async def test_explain_connectivity_infers_the_family_when_one_rule_base_is_empt
     )
 
     output = result.structured_content
-    assert output["ip_families"] == ["ipv4"]
+    assert output["ipFamilies"] == ["ipv4"]
     assert output["verdict"] == "allowed"
     assert any("ipv6 rule base is empty" in note for note in output["notes"])
 
@@ -1802,7 +1802,7 @@ async def test_explain_connectivity_is_not_verifiable_when_the_rule_scan_is_trun
     output = result.structured_content
     assert output["verdict"] == "not-verifiable"
     assert output["truncated"] is True
-    assert any("truncated" in item for item in output["missing_evidence"])
+    assert any("truncated" in item for item in output["missingEvidence"])
 
 
 async def test_explain_connectivity_states_it_is_not_a_packet_test(router: Any) -> None:
@@ -1861,8 +1861,8 @@ async def test_find_object_usage_reports_rules_nat_and_groups(router: Any) -> No
     assert result.is_error is False
     output = result.structured_content
     assert output["found"] is True
-    assert output["resolved_name"] == "web-server"
-    assert output["reference_count"] == 3
+    assert output["resolvedName"] == "web-server"
+    assert output["referenceCount"] == 3
     kinds = {reference["kind"] for reference in output["references"]}
     assert kinds == {"firewall-rule", "nat-rule", "group"}
     rule_reference = next(
@@ -1898,9 +1898,9 @@ async def test_find_object_usage_resolves_a_uuid_to_its_name(router: Any) -> Non
 
     output = result.structured_content
     assert output["found"] is True
-    assert output["resolved_name"] == "web-server"
-    assert output["resolved_id"] == UUID
-    assert output["reference_count"] == 1
+    assert output["resolvedName"] == "web-server"
+    assert output["resolvedId"] == UUID
+    assert output["referenceCount"] == 1
 
 
 async def test_find_object_usage_reports_an_unknown_object(router: Any) -> None:
@@ -1910,7 +1910,7 @@ async def test_find_object_usage_reports_an_unknown_object(router: Any) -> None:
 
     output = result.structured_content
     assert output["found"] is False
-    assert output["resolved_name"] is None
+    assert output["resolvedName"] is None
     assert output["references"] == []
     assert any("not found" in note for note in output["notes"])
 
@@ -1942,7 +1942,7 @@ async def test_find_object_usage_bounds_the_references(router: Any) -> None:
 
     output = result.structured_content
     assert len(output["references"]) == 1
-    assert output["reference_count"] == 2
+    assert output["referenceCount"] == 2
     assert output["truncated"] is True
 
 
@@ -1962,7 +1962,7 @@ async def test_find_object_usage_scans_service_groups(router: Any) -> None:
 
     output = result.structured_content
     assert output["found"] is True
-    assert output["reference_count"] == 2
+    assert output["referenceCount"] == 2
     assert {reference["kind"] for reference in output["references"]} == {
         "firewall-rule",
         "group",
@@ -2091,7 +2091,7 @@ async def test_audit_tool_descriptions_state_their_limits() -> None:
     tools = await tool_map()
 
     audit = tools["audit_firewall_rules"].description
-    assert "not_verifiable" in audit
+    assert "notVerifiable" in audit
     assert "never mutates" in audit
     explain = tools["explain_connectivity"].description
     assert "config-analysis" in explain
@@ -2101,3 +2101,33 @@ async def test_audit_tool_descriptions_state_their_limits() -> None:
     for name in AUDIT_TOOLS:
         assert tools[name].title
         assert tools[name].description
+
+
+async def test_audit_description_states_the_two_finding_shapes(router: Any) -> None:
+    """L3: object-scoped findings carry the object, not the rule, and the description says so."""
+    tools = await tool_map()
+    description = tools["audit_firewall_rules"].description
+    assert "rule-scoped finding" in description
+    assert "object- or NAT-scoped finding" in description
+    assert "leaves the rule fields null" in description
+
+    # The published shape matches the description: an unused-object finding has no rule.
+    install(
+        router,
+        {
+            RULES_V4: page([firewall_rule(name="r1")]),
+            ADDR_V4: page([ipv4_address(name="orphan")]),
+            SERVICES: page([]),
+        },
+    )
+
+    result = await call_tool(
+        "audit_firewall_rules", {"checks": ["unused-object"], "ip_family": "ipv4"}
+    )
+
+    finding = result.structured_content["findings"][0]
+    assert finding["check"] == "unused-object"
+    assert finding["evidence"]["ruleName"] is None
+    assert finding["evidence"]["ruleId"] is None
+    assert finding["evidence"]["position"] is None
+    assert finding["evidence"]["objectName"] == "orphan"

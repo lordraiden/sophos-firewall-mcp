@@ -49,7 +49,7 @@ from pydantic import ValidationError
 
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
-from sophos_firewall_mcp.models.common import ListPage
+from sophos_firewall_mcp.models.common import ListPage, ObjectRef
 from sophos_firewall_mcp.models.nat import (
     NatRuleCreateIpv4Input,
     NatRuleCreateIpv6Input,
@@ -122,7 +122,11 @@ class NatAdapter(DomainAdapter):
     async def list_rules(
         self, collection_path: str, request: NatRuleListInput
     ) -> ListPage[NatRuleOutput]:
-        """Read one page of a NAT rule base (``getAllNatRulesIpv4``/``Ipv6``)."""
+        """Read one page of a NAT rule base (``getAllNatRulesIpv4``/``Ipv6``).
+
+        Each projected rule carries its 1-based evaluation ``position``, derived from the
+        requested page and the item index (M12).
+        """
         params: dict[str, Any] = {}
         if request.name_contains is not None:
             params["nameContains"] = request.name_contains
@@ -138,10 +142,20 @@ class NatAdapter(DomainAdapter):
             )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return _project(payload, project_nat_rule_page, collection_path)
+        return _project(
+            payload,
+            lambda body: project_nat_rule_page(
+                body, page=request.page, page_size=request.page_size
+            ),
+            collection_path,
+        )
 
     async def get_rule(self, collection_path: str, id_or_name: str) -> NatRuleOutput:
-        """Read one NAT rule by name or UUID (``getNatRule*ByIdOrName``)."""
+        """Read one NAT rule by name or UUID (``getNatRule*ByIdOrName``).
+
+        ``position`` is ``None``: the get operation does not return the rule's evaluation
+        position, and the contract exposes no way to obtain it for a single rule.
+        """
         try:
             payload = await self.client.get(_rule_path(collection_path, id_or_name))
         except SophosAPIError as exc:
@@ -196,7 +210,7 @@ class NatAdapter(DomainAdapter):
             await self.client.delete(_rule_path(collection_path, id_or_name))
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return NatRuleDeleteOutput(deleted=True, id_or_name=id_or_name)
+        return NatRuleDeleteOutput(deleted=True, idOrName=id_or_name)
 
     async def move_rule(self, move_path: str, request: NatRuleMoveInput) -> NatRuleMoveOutput:
         """Move one NAT rule (``moveNatRuleIpv4``/``Ipv6``).
@@ -211,8 +225,10 @@ class NatAdapter(DomainAdapter):
         return NatRuleMoveOutput(
             name=request.name,
             position=request.position,
-            reference_item=(
-                request.reference_item.name if request.reference_item is not None else None
+            referenceItem=(
+                ObjectRef(name=request.reference_item.name)
+                if request.reference_item is not None
+                else None
             ),
         )
 
@@ -236,9 +252,13 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="List IPv4 NAT rules",
         description=(
             "List one page of IPv4 NAT rules (operationId getAllNatRulesIpv4). Returns the "
-            "rules with their match and translation fields projected to object names, plus "
-            "the page metadata. Use page/page_size to walk the rule base; one page per call. "
-            "name_contains and name_not_equals are mutually exclusive."
+            "rules with their match and translation fields projected to object references, "
+            "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
+            "plus the page metadata. Use page/page_size to walk the rule base; one page per "
+            "call, and page_size defaults to 10. name_contains and name_not_equals are "
+            "mutually exclusive. Size: the lab appliance's 28-rule base is ~44 KB of JSON, "
+            "so keep page_size small. The MCP SDK returns the payload both as a text block "
+            "and as structuredContent; read one of them, not both."
         ),
     )
     async def nat_rule_list_ipv4(
@@ -255,8 +275,9 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "Read one IPv4 NAT rule by name or UUID (operationId "
             "getNatRuleIpv4ByIdOrName). Returns the rule's match and translation fields "
-            "projected to object names. Use nat_rule_list_ipv4 when the identifier is "
-            "unknown."
+            "projected to object references, plus a derived kind (snat/dnat/unknown). "
+            "position is null: the get operation does not return the rule's evaluation "
+            "position; use nat_rule_list_ipv4 to obtain it."
         ),
     )
     async def nat_rule_get_ipv4(
@@ -351,9 +372,13 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="List IPv6 NAT rules",
         description=(
             "List one page of IPv6 NAT rules (operationId getAllNatRulesIpv6). Returns the "
-            "rules with their match and translation fields projected to object names, plus "
-            "the page metadata. Use page/page_size to walk the rule base; one page per call. "
-            "name_contains and name_not_equals are mutually exclusive."
+            "rules with their match and translation fields projected to object references, "
+            "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
+            "plus the page metadata. Use page/page_size to walk the rule base; one page per "
+            "call, and page_size defaults to 10. name_contains and name_not_equals are "
+            "mutually exclusive. Size: the lab appliance's 28-rule base is ~44 KB of JSON, "
+            "so keep page_size small. The MCP SDK returns the payload both as a text block "
+            "and as structuredContent; read one of them, not both."
         ),
     )
     async def nat_rule_list_ipv6(
@@ -370,8 +395,9 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "Read one IPv6 NAT rule by name or UUID (operationId "
             "getNatRuleIpv6ByIdOrName). Returns the rule's match and translation fields "
-            "projected to object names. Use nat_rule_list_ipv6 when the identifier is "
-            "unknown."
+            "projected to object references, plus a derived kind (snat/dnat/unknown). "
+            "position is null: the get operation does not return the rule's evaluation "
+            "position; use nat_rule_list_ipv6 to obtain it."
         ),
     )
     async def nat_rule_get_ipv6(
