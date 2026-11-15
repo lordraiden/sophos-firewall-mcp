@@ -1266,3 +1266,123 @@ def test_dscp_marking_enum_matches_the_contract() -> None:
     expected = schema["properties"]["qos"]["allOf"][0]["properties"]["dscpMarking"]["enum"]
 
     assert list(get_args(DscpMarking)) == expected
+
+
+# -- M1: nested input naming -----------------------------------------------------------
+
+
+def test_nested_input_models_publish_snake_case_and_serialize_to_the_wire_names() -> None:
+    """M1: the nested request-body models publish snake_case and dump the contract names.
+
+    The published schema is what an agent reads, so every nested property must be
+    snake_case; the wire body must still be the contract's camelCase document. The
+    camelCase spelling stays accepted on input, so an existing caller keeps working.
+    """
+    request = CreateFirewallRuleIpv4Input(
+        name="allow-lan-to-wan",
+        source_zones={"zones": [{"name": "LAN"}]},
+        destination_zones={"any": True},
+        source_networks={"ipv4_addresses": [{"name": "LAN-10.0.0.0/8"}]},
+        destination_networks={"any": True},
+        services_or_groups={
+            "services": [{"name": "HTTP"}],
+            "service_groups": [{"name": "WEB"}],
+        },
+        user_authentication={
+            "users_or_groups": {"user_groups": [{"name": "staff"}]},
+            "exclude_users_from_accounting": True,
+            "web_authentication_for_unknown_users": True,
+        },
+        exclusions={
+            "source_zones": {"zones": [{"name": "DMZ"}]},
+            "source_networks": {"ipv4_groups": [{"name": "EXCLUDED"}]},
+            "services_or_groups": {"service_groups": [{"name": "EXCLUDED-SVC"}]},
+        },
+        synchronized_security_heartbeat={
+            "source": {"block_clients_with_no_heartbeat": True, "minimum_level": "green"}
+        },
+        security_features={
+            "application_based_qos_policy": True,
+            "block_quic_protocol": True,
+            "decrypt_https_web_proxy_mode": True,
+            "scan_ftp": True,
+            "scan_http_and_decrypted_https": True,
+            "scan_with_ndr_active_threat_intelligence": True,
+            "web_category_based_qos_policy": True,
+            "web_proxy": True,
+            "zero_day_protection": True,
+        },
+        qos={"traffic_shaping_policy": {"name": "SHAPE"}, "dscp_marking": "55"},
+        log_traffic=True,
+        position="bottom",
+    )
+
+    body = request.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    assert body["sourceNetworks"] == {"ipv4Addresses": [{"name": "LAN-10.0.0.0/8"}]}
+    assert body["servicesOrGroups"] == {
+        "services": [{"name": "HTTP"}],
+        "serviceGroups": [{"name": "WEB"}],
+    }
+    assert body["userAuthentication"] == {
+        "usersOrGroups": {"userGroups": [{"name": "staff"}]},
+        "excludeUsersFromAccounting": True,
+        "webAuthenticationForUnknownUsers": True,
+    }
+    assert body["exclusions"]["sourceNetworks"] == {"ipv4Groups": [{"name": "EXCLUDED"}]}
+    assert body["exclusions"]["servicesOrGroups"] == {"serviceGroups": [{"name": "EXCLUDED-SVC"}]}
+    assert body["synchronizedSecurityHeartbeat"]["source"] == {
+        "blockClientsWithNoHeartbeat": True,
+        "minimumLevel": "green",
+    }
+    assert body["securityFeatures"]["scanFtp"] is True
+    assert body["securityFeatures"]["decryptHTTPSWebProxyMode"] is True
+    assert body["securityFeatures"]["scanWithNdrActiveThreatIntelligence"] is True
+    assert body["qos"] == {"trafficShapingPolicy": {"name": "SHAPE"}, "dscpMarking": "55"}
+
+    definitions = CreateFirewallRuleIpv4Input.model_json_schema(by_alias=True)["$defs"]
+    assert set(definitions["Ipv4Networks"]["properties"]) == {
+        "countries",
+        "country_groups",
+        "fqdn_addresses",
+        "fqdn_groups",
+        "ipv4_addresses",
+        "ipv4_groups",
+        "mac_addresses",
+    }
+    assert set(definitions["Services"]["properties"]) == {"services", "service_groups"}
+    assert set(definitions["SelectedUsers"]["properties"]) == {"users", "user_groups"}
+    assert set(definitions["UserAuthentication"]["properties"]) == {
+        "users_or_groups",
+        "exclude_users_from_accounting",
+        "web_authentication_for_unknown_users",
+    }
+    assert set(definitions["ExclusionsIpv4"]["properties"]) == {
+        "source_zones",
+        "destination_zones",
+        "source_networks",
+        "destination_networks",
+        "services_or_groups",
+    }
+    assert set(definitions["HeartbeatEndpoint"]["properties"]) == {
+        "block_clients_with_no_heartbeat",
+        "minimum_level",
+    }
+    assert set(definitions["SecurityFeaturesIpv4"]["properties"]) == {
+        "application_based_qos_policy",
+        "application_policy",
+        "block_quic_protocol",
+        "decrypt_https_web_proxy_mode",
+        "ips_policy",
+        "scan_ftp",
+        "scan_http_and_decrypted_https",
+        "scan_with_ndr_active_threat_intelligence",
+        "web_category_based_qos_policy",
+        "web_policy",
+        "web_proxy",
+        "zero_day_protection",
+    }
+    assert set(definitions["Qos"]["properties"]) == {"traffic_shaping_policy", "dscp_marking"}
+
+    # The camelCase spelling is still accepted on input, so the alias is a choice.
+    assert CreateFirewallRuleIpv4Input(**MINIMAL_CREATE).position == "bottom"

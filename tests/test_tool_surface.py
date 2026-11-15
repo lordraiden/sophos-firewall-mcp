@@ -10,7 +10,8 @@ the invariants that only the whole surface can prove:
   exactly those, leaving 98 read-only tools and zero mutations;
 * every tool publishes an object-rooted output schema, a non-empty input schema and
   ``openWorldHint=true``;
-* every published input parameter name is snake_case (M1, the 0.5.0 breaking change).
+* every published input property name, at every depth of the request body, is snake_case
+  (M1, the 0.5.0 breaking change).
 
 The curated file is read directly: it is the human decision record the server is built from,
 and ``tests/test_coverage.py`` already validates its structure against the contract.
@@ -18,6 +19,7 @@ and ``tests/test_coverage.py`` already validates its structure against the contr
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +42,17 @@ EXPECTED_READ_ONLY_TOOL_COUNT = 98
 EXPECTED_MUTATION_COUNT = 54
 EXPECTED_TOOL_MAP_COUNT = 145
 EXPECTED_COMPOSITE_COUNT = 7
+
+#: Tools whose operation declares no request parameters: they publish no ``request``.
+EXPECTED_NO_ARGUMENT_TOOL_COUNT = 8
+
+#: The published input surface, pinned: property occurrences at every depth and the number
+#: of distinct names. A change here means the input schema changed.
+EXPECTED_INPUT_PROPERTY_COUNT = 1495
+EXPECTED_INPUT_PROPERTY_NAME_COUNT = 167
+
+#: The published input naming convention (M1): lowercase words joined by underscores.
+SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 
 def make_settings(*, read_only: bool = False) -> Settings:
@@ -150,44 +163,89 @@ async def test_every_tool_publishes_an_input_schema_and_an_open_world_hint() -> 
         assert annotations.open_world_hint is True, name
 
 
-def resolve_ref(schema: dict[str, Any], node: dict[str, Any]) -> dict[str, Any]:
-    """Follow a local ``$ref`` to the definition it names."""
-    while "$ref" in node:
-        node = schema["$defs"][node["$ref"].rsplit("/", 1)[-1]]
-    return node
+def _walk_input_properties(
+    schema: dict[str, Any],
+    node: dict[str, Any],
+    path: str,
+    found: list[tuple[str, str]],
+    seen: frozenset[str],
+) -> None:
+    """Collect every property name reachable from ``node``, at every depth.
+
+    Local ``$ref`` targets, array ``items`` and every ``allOf``/``oneOf``/``anyOf`` branch
+    are followed, so a union request body is scanned variant by variant instead of being
+    skipped. A ``$ref`` already on the current path is not followed again, which keeps a
+    recursive model from looping.
+    """
+    if "$ref" in node:
+        target = node["$ref"].rsplit("/", 1)[-1]
+        if target in seen:
+            return
+        seen = seen | {target}
+        node = schema["$defs"][target]
+    for keyword in ("allOf", "oneOf", "anyOf"):
+        for branch in node.get(keyword) or ():
+            _walk_input_properties(schema, branch, path, found, seen)
+    items = node.get("items")
+    if isinstance(items, dict):
+        _walk_input_properties(schema, items, f"{path}[]", found, seen)
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        for name, child in properties.items():
+            found.append((f"{path}.{name}", name))
+            _walk_input_properties(schema, child, f"{path}.{name}", found, seen)
 
 
-async def test_every_published_input_property_is_snake_case() -> None:
-    """M1 (0.5.0): the published MCP input names use one convention, snake_case.
+def input_properties(schema: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every published input property of one tool as ``(path, name)``, at every depth."""
+    found: list[tuple[str, str]] = []
+    _walk_input_properties(schema, schema, "input", found, frozenset())
+    return found
 
-    The convention applies to the tool's own parameters -- the properties of the
-    ``request`` object the caller sends. The counting method is the one recorded in
-    ``PHASE-3-REVIEW.md``: classify each tool's ``request`` object's own ``properties``
-    (camelCase = any uppercase letter). Nested request-body models keep the Sophos
-    contract's field names and are serialized with ``by_alias=True``; they are the wire
-    body, not tool parameters.
 
-    There is no exception list: every published input property must be snake_case.
+async def test_every_published_input_property_is_snake_case_at_every_depth() -> None:
+    """M1 (0.5.0): every published MCP input property, at every depth, is snake_case.
+
+    The scan starts at each tool's published input schema and walks the whole request
+    body: local ``$ref`` targets, array ``items`` and every ``allOf``/``oneOf``/``anyOf``
+    branch. The union-request tools (the address and MAC create payloads) are therefore
+    covered variant by variant rather than skipped. Every property name the walk reaches
+    is a name a caller can send, so every one of them must be snake_case -- a camelCase
+    name one level down is exactly the split M1 removes.
+
+    ``snake_case`` is checked as ``^[a-z][a-z0-9_]*$``: no uppercase letter, no leading
+    digit or underscore. A single lowercase word such as ``from`` or ``to`` is identical
+    in both conventions and passes.
+
+    The counts are pinned deliberately. 144 tools publish a ``request`` object (152 minus
+    the 8 tools whose operation declares no parameters), and the walk reaches 1,495
+    property occurrences over 167 distinct names, to a maximum depth of five. A change to
+    any of those numbers means the published input surface changed and must be
+    acknowledged here rather than silently shrinking the scan.
     """
     tools = await tools_by_name()
 
-    camel_case: dict[str, list[str]] = {}
-    scanned = 0
+    scanned: dict[str, list[tuple[str, str]]] = {}
+    offending: dict[str, list[str]] = {}
     for name, tool in tools.items():
-        schema = tool.input_schema
-        request = schema.get("properties", {}).get("request")
-        if request is None:
-            continue
-        properties = resolve_ref(schema, request).get("properties", {})
-        if not properties:
-            # A union request (for example the address/MAC create payloads) publishes no
-            # own properties; its variants are nested request-body models.
-            continue
-        scanned += 1
-        offending = [prop for prop in properties if any(ch.isupper() for ch in prop)]
-        if offending:
-            camel_case[name] = offending
+        properties = input_properties(tool.input_schema)
+        scanned[name] = properties
+        bad = [path for path, prop in properties if not SNAKE_CASE_PATTERN.match(prop)]
+        if bad:
+            offending[name] = bad
 
-    # Guard against a schema-shape change that would make the assertion vacuous.
-    assert scanned > 0
-    assert camel_case == {}
+    occurrences = sum(len(properties) for properties in scanned.values())
+    distinct = {prop for properties in scanned.values() for _, prop in properties}
+
+    # The scan must reach the whole surface, not a subset of it.
+    assert sum(1 for properties in scanned.values() if properties) == (
+        EXPECTED_TOOL_COUNT - EXPECTED_NO_ARGUMENT_TOOL_COUNT
+    )
+    assert occurrences == EXPECTED_INPUT_PROPERTY_COUNT
+    assert len(distinct) == EXPECTED_INPUT_PROPERTY_NAME_COUNT
+
+    # The union-request tools are the ones a top-level-only scan skipped; prove they are in.
+    for name in ("address_create_ipv4", "address_create_ipv6", "mac_address_create"):
+        assert scanned[name], name
+
+    assert offending == {}

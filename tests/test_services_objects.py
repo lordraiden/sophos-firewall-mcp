@@ -795,3 +795,77 @@ def test_service_update_body_omits_unset_fields_and_keeps_an_explicit_null():
 
     assert omitted_body == {"name": "renamed"}
     assert cleared_body == {"description": None}
+
+
+# -- M1: nested input naming -----------------------------------------------------------
+
+
+def test_nested_service_detail_models_publish_snake_case_and_serialize_to_the_wire_names():
+    """M1: the service detail entries publish snake_case, dump the contract names.
+
+    The published schema is what an agent reads, so every nested property must be
+    snake_case; the wire body must still be the contract's camelCase document. The
+    response projections keep the contract's camelCase names.
+    """
+    request = ServiceCreate(
+        name="mcp-test-svc",
+        type="tcpOrUdp",
+        services=[
+            {
+                "protocol": "tcp",
+                "source_port": {"from_port": 1024, "to_port": 65535},
+                "destination_port": {"from_port": 80, "to_port": 80},
+            },
+            {"ip_protocol": "gre"},
+            {"icmp_type": "echoRequest", "icmp_code": "noCode"},
+            {"icmpv6_type": "echoRequest", "icmpv6_code": "noCode"},
+        ],
+    )
+
+    body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
+    assert body["services"] == [
+        {
+            "protocol": "tcp",
+            "sourcePort": {"from": 1024, "to": 65535},
+            "destinationPort": {"from": 80, "to": 80},
+        },
+        {"ipProtocol": "gre"},
+        {"icmpType": "echoRequest", "icmpCode": "noCode"},
+        {"icmpv6Type": "echoRequest", "icmpv6Code": "noCode"},
+    ]
+
+    definitions = ServiceCreate.model_json_schema(by_alias=True)["$defs"]
+    assert set(definitions["TcpUdpServiceDetail"]["properties"]) == {
+        "protocol",
+        "source_port",
+        "destination_port",
+    }
+    assert set(definitions["IpProtocolServiceDetail"]["properties"]) == {"ip_protocol"}
+    assert set(definitions["Icmpv4ServiceDetail"]["properties"]) == {"icmp_type", "icmp_code"}
+    assert set(definitions["Icmpv6ServiceDetail"]["properties"]) == {"icmpv6_type", "icmpv6_code"}
+
+    # The response projections keep the contract's camelCase names.
+    output_definitions = Service.model_json_schema(by_alias=True)["$defs"]
+    assert set(output_definitions["TcpUdpServiceDetailOutput"]["properties"]) == {
+        "protocol",
+        "sourcePort",
+        "destinationPort",
+    }
+    assert set(output_definitions["IpProtocolServiceDetailOutput"]["properties"]) == {"ipProtocol"}
+    assert set(output_definitions["Icmpv4ServiceDetailOutput"]["properties"]) == {
+        "icmpType",
+        "icmpCode",
+    }
+    assert set(output_definitions["Icmpv6ServiceDetailOutput"]["properties"]) == {
+        "icmpv6Type",
+        "icmpv6Code",
+    }
+
+    # The camelCase spelling is still accepted on input, so the alias is a choice.
+    assert ServiceUpdateInput(
+        id_or_name="web",
+        services=[{"protocol": "tcp", "sourcePort": {"from": 80, "to": 80}}],
+    ).model_dump(mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
+        "services": [{"protocol": "tcp", "sourcePort": {"from": 80, "to": 80}}]
+    }

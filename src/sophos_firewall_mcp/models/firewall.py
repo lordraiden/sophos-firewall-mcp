@@ -268,18 +268,42 @@ class Ipv4Networks(_ClosedModel):
     """The selected-network members of an IPv4 match (no ``any`` variant)."""
 
     countries: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    countryGroups: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    country_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("country_groups", "countryGroups"),
+        serialization_alias="countryGroups",
     )
-    fqdnAddresses: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    fqdn_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("fqdn_addresses", "fqdnAddresses"),
+        serialization_alias="fqdnAddresses",
     )
-    fqdnGroups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    ipv4Addresses: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    fqdn_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("fqdn_groups", "fqdnGroups"),
+        serialization_alias="fqdnGroups",
     )
-    ipv4Groups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    macAddresses: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
+    ipv4_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
+    ipv4_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv4_groups", "ipv4Groups"),
+        serialization_alias="ipv4Groups",
+    )
+    mac_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
+    )
 
     @model_validator(mode="after")
     def _require_at_least_one_member(self) -> Self:
@@ -291,11 +315,24 @@ class Ipv4Networks(_ClosedModel):
 class Ipv6Networks(_ClosedModel):
     """The selected-network members of an IPv6 match (no ``any`` variant)."""
 
-    ipv6Addresses: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    ipv6_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
     )
-    ipv6Groups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    macAddresses: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
+    ipv6_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv6_groups", "ipv6Groups"),
+        serialization_alias="ipv6Groups",
+    )
+    mac_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
+    )
 
     @model_validator(mode="after")
     def _require_at_least_one_member(self) -> Self:
@@ -308,8 +345,11 @@ class Services(_ClosedModel):
     """The selected service members of a match (no ``any`` variant)."""
 
     services: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    serviceGroups: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    service_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("service_groups", "serviceGroups"),
+        serialization_alias="serviceGroups",
     )
 
     @model_validator(mode="after")
@@ -333,18 +373,39 @@ ServiceMatch = AnySelection | Services
 
 
 class SelectedUsers(_ClosedModel):
-    """An explicit user/user-group selection for ``userAuthentication.usersOrGroups``."""
+    """An explicit user/user-group selection for ``user_authentication.users_or_groups``."""
 
     users: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    userGroups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
+    user_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("user_groups", "userGroups"),
+        serialization_alias="userGroups",
+    )
 
 
 class UserAuthentication(_ClosedModel):
     """The rule's user-authentication settings."""
 
-    usersOrGroups: AnySelection | SelectedUsers | None = None
-    excludeUsersFromAccounting: bool = False
-    webAuthenticationForUnknownUsers: bool = False
+    users_or_groups: AnySelection | SelectedUsers | None = Field(
+        default=None,
+        validation_alias=AliasChoices("users_or_groups", "usersOrGroups"),
+        serialization_alias="usersOrGroups",
+    )
+    exclude_users_from_accounting: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "exclude_users_from_accounting", "excludeUsersFromAccounting"
+        ),
+        serialization_alias="excludeUsersFromAccounting",
+    )
+    web_authentication_for_unknown_users: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "web_authentication_for_unknown_users", "webAuthenticationForUnknownUsers"
+        ),
+        serialization_alias="webAuthenticationForUnknownUsers",
+    )
 
 
 class ExclusionZones(_ClosedModel):
@@ -356,28 +417,78 @@ class ExclusionZones(_ClosedModel):
 class ExclusionsIpv4(_ClosedModel):
     """IPv4 exclusions: traffic that matches the rule but is excluded from it."""
 
-    sourceZones: ExclusionZones | None = None
-    destinationZones: ExclusionZones | None = None
-    sourceNetworks: Ipv4Networks | None = None
-    destinationNetworks: Ipv4Networks | None = None
-    servicesOrGroups: Services | None = None
+    source_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    source_networks: Ipv4Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv4Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
+    services_or_groups: Services | None = Field(
+        default=None,
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
 
 
 class ExclusionsIpv6(_ClosedModel):
     """IPv6 exclusions: traffic that matches the rule but is excluded from it."""
 
-    sourceZones: ExclusionZones | None = None
-    destinationZones: ExclusionZones | None = None
-    sourceNetworks: Ipv6Networks | None = None
-    destinationNetworks: Ipv6Networks | None = None
-    servicesOrGroups: Services | None = None
+    source_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    source_networks: Ipv6Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv6Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
+    services_or_groups: Services | None = Field(
+        default=None,
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
 
 
 class HeartbeatEndpoint(_ClosedModel):
     """One side of a synchronized-security heartbeat configuration."""
 
-    blockClientsWithNoHeartbeat: bool = False
-    minimumLevel: Literal["green", "noRestriction", "yellow"] | None = None
+    block_clients_with_no_heartbeat: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "block_clients_with_no_heartbeat", "blockClientsWithNoHeartbeat"
+        ),
+        serialization_alias="blockClientsWithNoHeartbeat",
+    )
+    minimum_level: Literal["green", "noRestriction", "yellow"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("minimum_level", "minimumLevel"),
+        serialization_alias="minimumLevel",
+    )
 
 
 class SynchronizedSecurityHeartbeat(_ClosedModel):
@@ -388,36 +499,132 @@ class SynchronizedSecurityHeartbeat(_ClosedModel):
 
 
 class SecurityFeaturesIpv4(_ClosedModel):
-    """The IPv4 rule's security-feature settings (includes ``scanFtp``)."""
+    """The IPv4 rule's security-feature settings (includes ``scan_ftp``)."""
 
-    applicationBasedQosPolicy: bool = False
-    applicationPolicy: ObjectReference | None = None
-    blockQuicProtocol: bool = False
-    decryptHTTPSWebProxyMode: bool = False
-    ipsPolicy: ObjectReference | None = None
-    scanFtp: bool = False
-    scanHttpAndDecryptedHttps: bool = False
-    scanWithNdrActiveThreatIntelligence: bool = False
-    webCategoryBasedQosPolicy: bool = False
-    webPolicy: ObjectReference | None = None
-    webProxy: bool = False
-    zeroDayProtection: bool = False
+    application_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("application_based_qos_policy", "applicationBasedQosPolicy"),
+        serialization_alias="applicationBasedQosPolicy",
+    )
+    application_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_policy", "applicationPolicy"),
+        serialization_alias="applicationPolicy",
+    )
+    block_quic_protocol: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("block_quic_protocol", "blockQuicProtocol"),
+        serialization_alias="blockQuicProtocol",
+    )
+    decrypt_https_web_proxy_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("decrypt_https_web_proxy_mode", "decryptHTTPSWebProxyMode"),
+        serialization_alias="decryptHTTPSWebProxyMode",
+    )
+    ips_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ips_policy", "ipsPolicy"),
+        serialization_alias="ipsPolicy",
+    )
+    scan_ftp: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_ftp", "scanFtp"),
+        serialization_alias="scanFtp",
+    )
+    scan_http_and_decrypted_https: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_http_and_decrypted_https", "scanHttpAndDecryptedHttps"),
+        serialization_alias="scanHttpAndDecryptedHttps",
+    )
+    scan_with_ndr_active_threat_intelligence: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "scan_with_ndr_active_threat_intelligence", "scanWithNdrActiveThreatIntelligence"
+        ),
+        serialization_alias="scanWithNdrActiveThreatIntelligence",
+    )
+    web_category_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_category_based_qos_policy", "webCategoryBasedQosPolicy"),
+        serialization_alias="webCategoryBasedQosPolicy",
+    )
+    web_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("web_policy", "webPolicy"),
+        serialization_alias="webPolicy",
+    )
+    web_proxy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_proxy", "webProxy"),
+        serialization_alias="webProxy",
+    )
+    zero_day_protection: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("zero_day_protection", "zeroDayProtection"),
+        serialization_alias="zeroDayProtection",
+    )
 
 
 class SecurityFeaturesIpv6(_ClosedModel):
-    """The IPv6 rule's security-feature settings (the IPv6 schema has no ``scanFtp``)."""
+    """The IPv6 rule's security-feature settings (the IPv6 schema has no ``scan_ftp``)."""
 
-    applicationBasedQosPolicy: bool = False
-    applicationPolicy: ObjectReference | None = None
-    blockQuicProtocol: bool = False
-    decryptHTTPSWebProxyMode: bool = False
-    ipsPolicy: ObjectReference | None = None
-    scanHttpAndDecryptedHttps: bool = False
-    scanWithNdrActiveThreatIntelligence: bool = False
-    webCategoryBasedQosPolicy: bool = False
-    webPolicy: ObjectReference | None = None
-    webProxy: bool = False
-    zeroDayProtection: bool = False
+    application_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("application_based_qos_policy", "applicationBasedQosPolicy"),
+        serialization_alias="applicationBasedQosPolicy",
+    )
+    application_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_policy", "applicationPolicy"),
+        serialization_alias="applicationPolicy",
+    )
+    block_quic_protocol: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("block_quic_protocol", "blockQuicProtocol"),
+        serialization_alias="blockQuicProtocol",
+    )
+    decrypt_https_web_proxy_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("decrypt_https_web_proxy_mode", "decryptHTTPSWebProxyMode"),
+        serialization_alias="decryptHTTPSWebProxyMode",
+    )
+    ips_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ips_policy", "ipsPolicy"),
+        serialization_alias="ipsPolicy",
+    )
+    scan_http_and_decrypted_https: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_http_and_decrypted_https", "scanHttpAndDecryptedHttps"),
+        serialization_alias="scanHttpAndDecryptedHttps",
+    )
+    scan_with_ndr_active_threat_intelligence: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "scan_with_ndr_active_threat_intelligence", "scanWithNdrActiveThreatIntelligence"
+        ),
+        serialization_alias="scanWithNdrActiveThreatIntelligence",
+    )
+    web_category_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_category_based_qos_policy", "webCategoryBasedQosPolicy"),
+        serialization_alias="webCategoryBasedQosPolicy",
+    )
+    web_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("web_policy", "webPolicy"),
+        serialization_alias="webPolicy",
+    )
+    web_proxy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_proxy", "webProxy"),
+        serialization_alias="webProxy",
+    )
+    zero_day_protection: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("zero_day_protection", "zeroDayProtection"),
+        serialization_alias="zeroDayProtection",
+    )
 
 
 class EmailScanning(_ClosedModel):
@@ -434,8 +641,16 @@ class EmailScanning(_ClosedModel):
 class Qos(_ClosedModel):
     """The rule's traffic-shaping and DSCP settings."""
 
-    trafficShapingPolicy: ObjectReference | None = None
-    dscpMarking: DscpMarking | None = None
+    traffic_shaping_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("traffic_shaping_policy", "trafficShapingPolicy"),
+        serialization_alias="trafficShapingPolicy",
+    )
+    dscp_marking: DscpMarking | None = Field(
+        default=None,
+        validation_alias=AliasChoices("dscp_marking", "dscpMarking"),
+        serialization_alias="dscpMarking",
+    )
 
 
 # -- Create requests -------------------------------------------------------------------
