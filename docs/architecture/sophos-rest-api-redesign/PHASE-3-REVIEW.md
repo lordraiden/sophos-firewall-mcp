@@ -244,7 +244,7 @@ verdict and findings above are kept exactly as issued.
 
 | # | Severity | Status | Evidence |
 |---|---|---|---|
-| 1 | Critical | **Partially closed — publication still blocked** | The full key is gone from the working tree (`grep -rn "sfos_9a506adf_lFCcCZMhrG1LimJzy"` → no match outside `.git`), replaced by `<REDACTED — ask the owner>` at `LAB-ACCESS.md:32,33,43`, and the new notice at `LAB-ACCESS.md:3-8` is accurate: it states the value was removed from the working tree, remains in git history (`cb8dbe3`) and that **rotation, not deletion, is the remediation**. The key is still valid until the owner rotates it, so the exposure is not remediated. |
+| 1 | Critical | **Partially closed — publication still blocked** | The full key is gone from the working tree (`grep -rn "sfos_9a506adf_"` → no match outside `.git`), replaced by `<REDACTED — ask the owner>` at `LAB-ACCESS.md:32,33,43`, and the new notice at `LAB-ACCESS.md:3-8` is accurate: it states the value was removed from the working tree, remains in git history (`cb8dbe3`) and that **rotation, not deletion, is the remediation**. The key is still valid until the owner rotates it, so the exposure is not remediated. |
 | 2 | High | **Closed** | `gh workflow list --all` → `Security active`; the workflow now runs on the PR and both jobs are green on `8d1f002`: `Dependency audit (locked resolution)` pass (17 s) and `SAST (Semgrep)` pass (39 s). |
 | 3 | High | **Partially closed** | `gh workflow list --all` → `Publish Docker image active`. But `docker-publish.yml` triggers only on `push` (`main`, `v*`) and has no `pull_request` trigger, so a PR run does **not** exercise it (`…/docker-publish.yml/runs` → `total_count: 0`). It is first exercised by the merge to `main` (development job) or the `v*` tag (release job); the release checklist should say so. |
 | 4 | Medium | **Closed** | `live.yml:55-79` now requires `SOPHOS_HOST`, `SOPHOS_PORT` and one of `SOPHOS_API_KEY`/`SOPHOS_API_KEY_FILE`; `live.yml:91-121` parses `--junitxml` and fails on zero collected tests or zero executed tests. I simulated the gate with three fixtures: normal → OK, all-skipped → FAIL, zero-tests → FAIL. |
@@ -295,3 +295,28 @@ verdict and findings above are kept exactly as issued.
 
 No new Critical or High finding was introduced by the fixes. The code, the tests, the CI pipeline and
 the container are unchanged in substance and remain green.
+
+---
+
+## Final confirmation
+
+Re-checked `8cddb8e` (docs-only: `README.md`, `LAB-ACCESS.md`, `RELEASE-0.4.0.md`). **#11 is closed** —
+`README.md:293-295` now reads "No example in this README disables verification; the lab runbooks under
+`docs/architecture/` use `SOPHOS_VERIFY_SSL=false` only for the self-signed lab appliance and say so",
+which matches the two runbooks. **#12 is closed and reproduces exactly**: enumerating `tools/list` and
+classifying each tool's `request` object's own `properties` (camelCase = any uppercase letter,
+snake_case = any underscore, no `oneOf` resolution) yields **74 camelCase-only, 55 snake_case-only, 5
+mixed, 6 single-word-only, 12 no-parameter (8 with no `request` property + 4 with an empty request
+model) = 152**, identical to the documented figures; my earlier 75/57/3/8/9 was my own measurement
+error — my camelCase regex `[a-z][A-Z]` missed digit-prefixed names such as `ipv4Addresses`, and I
+resolved `oneOf`, which moves the three address/MAC create tools into camelCase. **#13 is closed** —
+`RELEASE-0.4.0.md:274-277` now says "if one exists", states that a first release has no `latest` and
+uses the pre-promotion commit as the rollback target, and `:269-271` records that `docker-publish.yml`
+has no `pull_request` trigger and first runs on the merge to `main` or the `v*` tag. **N1 is closed** —
+`LAB-ACCESS.md:11,93,96` now say the credential is **not** stored in the repository and that the
+previous key must be rotated **now**, consistent with the notice at `:3-8`. Gates re-run on `8cddb8e`:
+`pytest -q` **962 passed / 100 skipped**, mypy clean (26 files), flake8 clean, black 50 unchanged,
+`generate_coverage.py --check` up to date, `uv lock --check` 55 packages; CI on the PR is fully green
+(Tests 3.11–3.14, Lint, Docker build, Dependency audit, SAST). No finding remains open. **The only
+remaining blocker is the owner's rotation of the exposed lab key** (it is still valid and still in
+public git history at `cb8dbe3`); publication stays blocked until that rotation is confirmed.
