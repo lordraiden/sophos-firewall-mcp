@@ -1,6 +1,6 @@
 # Plan de rediseño: Sophos Firewall MCP — REST API
 
-**Revisión técnica:** 14 de noviembre de 2026  
+**Revisión técnica:** 15 de noviembre de 2026  
 **Estado:** diseño revisado; la implementación todavía no está realizada.  
 **Repositorio:** [lordraiden/sophos-firewall-mcp](https://github.com/lordraiden/sophos-firewall-mcp)  
 **Especificación versionada:** [firewall_config_openapi.yaml](https://github.com/lordraiden/sophos-firewall-mcp/blob/main/firewall_config_openapi.yaml)  
@@ -71,7 +71,7 @@ Para habilitar la API no basta con disponer de una API Key:
 4. Crear un administrador dedicado con los permisos mínimos necesarios.
 5. Generar la API Key con ese administrador.
 
-Las API Keys heredan los permisos del administrador que las genera, tienen una validez de un año y dejan de mostrarse después de cerrar el diálogo de generación. La documentación también señala límites de claves por appliance y administrador. El valor de la clave solo se muestra durante su generación; después de cerrar la ventana no puede recuperarse. La rotación debe documentarse como una operación administrativa manual; no asumir que existe un endpoint de renovación automática. [R03] [R04]
+Las API Keys heredan los permisos del perfil de administrador que las genera. Los perfiles permiten permisos `None`, `Read-only` y `Read-write` por configuración/función, de modo que el mínimo privilegio debe definirse a nivel de perfil y no limitarse a crear un administrador separado. Sophos documenta un máximo de 10 claves por administrador y 1.024 por appliance; la allowlist admite hasta 64 entradas. Las claves caducan al año y el secreto solo se muestra al generarlo. La rotación/revocación debe tratarse como una tarea administrativa manual; no asumir un endpoint de renovación. [R03] [R04] [R21] [R22]
 
 ## Firmware y limitaciones
 
@@ -291,7 +291,8 @@ El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 14 de n
 ## Transporte inicial
 
 - Mantener stdio como transporte soportado para la integración local/CLI del proyecto.
-- No añadir Streamable HTTP ni un listener de red sin un requisito real de despliegue remoto.
+- En stdio local, la frontera de confianza es el proceso/usuario del sistema operativo que lanza el servidor. No añadir OAuth ni un sistema de identidad MCP que no resuelve un requisito de este despliegue; la API Key de Sophos autentica al servidor frente al appliance, no al host MCP.
+- No añadir Streamable HTTP ni un listener de red sin un requisito real de despliegue remoto. Si se aprueba posteriormente, esa será una superficie de seguridad distinta: exigir autenticación/autorización del transporte MCP y revisar el modelo OAuth vigente; no reutilizar la API Key de Sophos como credencial de cliente MCP.
 - En Docker, mantener el canal stdio limpio; no activar TTY.
 - No implementar manualmente un handshake MCP. En la revisión 2026-07-28 se retiraron initialize/initialized y las sesiones de transporte; el SDK gestiona la revisión de protocolo y compatibilidad. Las pruebas deben usar el cliente SDK y cubrir la revisión actual, no codificar un handshake antiguo. [R15]
 
@@ -304,7 +305,7 @@ Utilizar el lifespan oficial del SDK:
 3. Exponer un objeto AppContext tipado a los handlers.
 4. Cerrar el cliente HTTP en el bloque de salida/finally.
 
-Los handlers reciben el Context del SDK y acceden al objeto de lifespan a través del request context según la API pública de la versión fijada. No usar client: Any = None como parámetro visible del tool ni crear un pool HTTP por llamada. [R16]
+Los handlers reciben `Context[AppContext]` y acceden al objeto de lifespan mediante `ctx.request_context.lifespan_context`, tal como documenta la versión fijada. Ese parámetro es inyectado por el SDK y no forma parte del input schema. Para tools es válido `Context[AppContext]`; recursos/prompts usan la forma de Context documentada para esos handlers. No usar `client: Any = None` como parámetro visible ni crear un pool HTTP por llamada. [R16]
 
 ## Herramientas e input schemas
 
@@ -318,13 +319,15 @@ Los handlers reciben el Context del SDK y acceden al objeto de lifespan a travé
 
 ## Output schemas y resultados
 
-El SDK v2 puede inferir output_schema del tipo de retorno y validar el resultado; devuelve content para el modelo y structured_content para la aplicación. Usar modelos Pydantic/dataclasses/TypedDict de salida para los objetos estables del dominio. Normalizar y filtrar la respuesta Sophos; no devolver indiscriminadamente JSON crudo ni campos sensibles. Optar por salida de texto únicamente cuando un esquema estable no tenga sentido. [R17]
+El SDK v2 infiere `outputSchema` del tipo de retorno y valida el resultado. El cliente recibe `content` orientado al modelo y `structuredContent` orientado a la aplicación. Usar DTOs Pydantic tipados para objetos de salida estables y comprobar el esquema publicado a través de un cliente MCP real. No devolver JSON Sophos crudo ni campos sensibles. [R17]
 
-Para colecciones potencialmente grandes, devolver una página tipada con metadatos de paginación o una respuesta agregada acotada con truncated/continuation explícitos.
+**Forma de salida:** usar siempre un objeto raíz tipado (`items`, `item`, `page`, `pages`, `total`, `truncated` solo cuando el contrato permita afirmarlo, etc.). No diseñar herramientas cuya salida principal sea una lista, escalar o `null` desnudo. Esto mantiene compatibilidad con clientes de revisiones MCP anteriores a `2026-07-28`, que imponían restricciones más estrechas a `structuredContent`; la versión moderna permite cualquier valor JSON, pero un objeto sigue siendo la forma interoperable más sólida. No duplicar manualmente datos en `content` y `structuredContent`: seguir el comportamiento del SDK fijado y probar ambos canales. [R15] [R17]
+
+**Tamaño y paginación:** no hacer auto-pagination ilimitada ni recuperar todas las páginas en una sola llamada MCP. Exponer `page`/`pageSize` solo cuando el endpoint Sophos los defina, aplicar límites de tamaño razonables y devolver una página por llamada. Para endpoints que no admiten paginación de petición, devolver exactamente la metadata que Sophos proporciona y documentar límites conocidos; no inventar `cursor`, `total` o `truncated`. Proyectar solo los campos de dominio útiles, manteniendo IDs y referencias necesarias para posteriores operaciones. Esto evita resultados MCP enormes y duplicación innecesaria entre canales. [R17]
 
 ## Anotaciones y riesgo
 
-Definir title, readOnlyHint y openWorldHint según el comportamiento real de cada herramienta. Para herramientas no read-only, definir además destructiveHint e idempotentHint; esos dos hints describen operaciones de escritura y no aportan semántica útil a herramientas de solo lectura. No copiar un set uniforme sin pensar. Las anotaciones son pistas para el cliente, no controles de autorización ni una barrera de confirmación garantizada. La seguridad efectiva se obtiene mediante API Key de mínimo privilegio, red/allowlist, implementación y políticas de aprobación del host. [R18]
+Definir `title`, `readOnlyHint` y `openWorldHint` de forma deliberada. En principio, `openWorldHint=false` es correcto porque cada herramienta opera sobre el conjunto acotado de recursos de un único appliance configurado; cambiarlo solo si una herramienta realmente interactúa con un mundo externo/abierto. Para herramientas de escritura, definir además `destructiveHint` e `idempotentHint` según los efectos reales; no inferir idempotencia del verbo HTTP. No incluir hints de escritura en herramientas read-only. Las anotaciones son metadatos consultivos: no autentican, no autorizan y no fuerzan confirmaciones. La seguridad efectiva reside en permisos del perfil Sophos, allowlist/red, herramientas limitadas y políticas de aprobación del host. No añadir un parámetro `confirm=true` como falsa barrera de seguridad. [R18]
 
 ## Errores MCP
 
@@ -339,12 +342,22 @@ Definir title, readOnlyHint y openWorldHint según el comportamiento real de cad
 
 Eliminar FastEmbed y las herramientas meta route_tools/call_routed_tool en la primera versión. Utilizar la lista nativa de herramientas y descripciones bien escritas. Reconsiderarlo solo si una evaluación reproducible con los modelos MCP de destino muestra una mejora clara frente al coste de tokens, latencia y mantenimiento.
 
+## Esquemas MCP y límites de entrada
+
+- No publicar directamente los 700 operation schemas Sophos como 700 tools MCP ni generar herramientas MCP mecánicamente desde OpenAPI. La selección de capacidades y el modelado de dominio deben permanecer explícitos.
+- Construir input schemas MCP específicos por herramienta con tipos Pydantic/Annotated, descripciones, enums y restricciones. El schema raíz de cada tool debe ser un objeto; rechazar propiedades extra por defecto en contratos cerrados (`extra=forbid`) y permitir estructuras abiertas únicamente cuando el request real de Sophos las necesite.
+- El SDK y el protocolo actual soportan JSON Schema 2020-12, pero no asumir que todos los clientes MCP/hosts aplican todos los keywords con idéntica fidelidad. Mantener los schemas publicados simples, interoperables y comprobados desde `tools/list`.
+- Modelar únicamente los campos que la operación requiera; separar DTOs MCP de los schemas de transporte Sophos cuando sus propósitos difieran. No exponer headers, URL, host, path, API Key o `Context`.
+- Cada herramienta debe tener nombre estable, título legible, descripción accionable, campos requeridos explícitos, unidades/formato de valores y efectos laterales explicados. No confiar en los defaults de Python para ocultar decisiones importantes de firewall.
+
 # 8. Seguridad operativa y semántica de escritura
 
 - API Key en secreto de despliegue, nunca en repo, imagen, salida, trazas o logs.
 - Un administrador dedicado por automatización/servidor y permisos mínimos; no usar admin por conveniencia.
 - Documentar expiración de un año y rotación/revocación manual de la clave.
 - Respetar API Access allowlist y Device Access del firewall.
+- Usar permisos `None`/`Read-only`/`Read-write` por módulo en el perfil de administrador de Sophos cuando estén disponibles; no asumir que la granularidad de permisos del servidor MCP reemplaza las ACL del appliance.
+- Evaluar un modo de servidor `SOPHOS_READ_ONLY_MODE=true` que no registre herramientas de mutación como defensa adicional para despliegues de consulta. Este modo no sustituye el perfil read-only de Sophos ni debe usarse como única barrera.
 - No ofrecer raw REST, arbitrary path ni operaciones que permitan saltarse schemas de herramientas.
 - En operaciones de escritura, validar referencias antes de mutar y devolver los IDs reales.
 - No hacer read-modify-write si PATCH permite modificar de forma segura los campos solicitados. Si es necesario, preservar las propiedades no modificadas y probarlo.
@@ -466,7 +479,9 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 6. **Status codes/errors:** endpoint-specific. No codificar 429 u otros status como contrato sin documentación o evidencia.
 7. **Rule defaults:** comportamiento del Firewall AI Assistant no se debe extrapolar al REST POST.
 8. **Administrators:** la API puede exponer operaciones de administradores; el primer release las excluye por seguridad, no porque el API carezca de ellas.
-9. **System information:** no reconstruir información no expuesta; seleccionar health checks/status endpoints realmente documentados.
+9. **System information:** no reconstruir información no expuesta; seleccionar health/status endpoints realmente documentados.
+10. **Tamaño de resultados MCP:** no exponer dumps completos ni auto-pagination ilimitada; los outputs estructurados y las listas deben tener límites y ser útiles para el siguiente paso del agente.
+11. **Compatibilidad MCP:** la revisión `2026-07-28` es la versión moderna, pero el SDK v2 puede atender clientes anteriores. No codificar un servidor que funcione solo con un handshake heredado ni un payload que dependa de listas JSON raíz.
 
 # 13. Decisión definitiva
 
@@ -492,5 +507,7 @@ Las pruebas destructivas deben usar un appliance/lab de pruebas y objetos creado
 | Organización | 9 issues, 3 bloques |
 
 **La prioridad no es reproducir las 28 herramientas XML. Es construir una integración REST fiel a la especificación del appliance y una superficie MCP reducida, tipada, segura y verificable.**
+
+La seguridad se debe diseñar en capas: permisos mínimos en el perfil Sophos (control efectivo en el firewall), restricción de IP de origen y HTTPS, secreto Bearer protegido en el proceso, schemas/tool surface mínimos y aprobación de mutaciones en el host cuando este la soporte. Las anotaciones MCP nunca deben tratarse como una ACL.
 
 La auditoría completa del YAML y la verificación del firmware deben preceder a cualquier implementación de dominio. No se debe ocultar una función no soportada ni declarar una operación válida por semejanza con XML, la Web Admin Console u otro API de Sophos.
