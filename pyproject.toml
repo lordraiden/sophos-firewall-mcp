@@ -1,7 +1,7 @@
 [project]
 name = "sophos-firewall-mcp-server"
-version = "0.3.1"
-description = "MCP server for Sophos Firewall (SFOS) network security & infrastructure management"
+version = "0.4.0"
+description = "MCP server for the Sophos Firewall Configuration REST API (SFOS): typed, bounded administration tools over STDIO"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
@@ -18,6 +18,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Security",
     "Topic :: System :: Networking :: Firewalls",
 ]
@@ -27,14 +28,6 @@ dependencies = [
     "mcp>=2.3.0,<3",
     "httpx>=0.20.0",
     "pydantic>=2.0.0",
-]
-
-[project.optional-dependencies]
-# Legacy FastEmbed router extra. The router was removed in the REST migration; this extra and the
-# Dockerfile step that installs it are removed by #32 (packaging/release), not by the foundation.
-router = [
-    "fastembed>=0.4.0",
-    "numpy>=1.26.0",
 ]
 
 [dependency-groups]
