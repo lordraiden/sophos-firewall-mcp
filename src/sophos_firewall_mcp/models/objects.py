@@ -249,10 +249,18 @@ class Ipv4AddressIpRange(_Ipv4AddressBase):
 
 
 class Ipv4AddressIpList(_Ipv4AddressBase):
-    """A list of IPv4 addresses (``type: ipv4List``)."""
+    """A list of IPv4 addresses (``type: ipv4List``).
+
+    The contract declares ``ipv4Addresses`` with ``minItems: 1``, but the lab appliance
+    (15 Nov 2026, ``GET /network/addresses/ipv4``) returns ``"ipv4Addresses": []`` for the
+    built-in internal objects ``##ALL_RW``, ``##ALL_IPSEC_RW`` and ``##ALL_SSLVPN_RW``.
+    The *output* model therefore accepts an empty list: one built-in object must not make
+    the whole page unreadable. The create/update *input* models keep ``min_length=1``
+    because creating an empty list is still invalid.
+    """
 
     type: Literal["ipv4List"]
-    ipv4_addresses: list[IPv4Address] = Field(alias="ipv4Addresses", min_length=1)
+    ipv4_addresses: list[IPv4Address] = Field(alias="ipv4Addresses")
 
 
 Ipv4Address = Annotated[
@@ -382,10 +390,17 @@ class Ipv6AddressIpRange(_Ipv6AddressBase):
 
 
 class Ipv6AddressIpList(_Ipv6AddressBase):
-    """A list of IPv6 addresses (``type: ipv6List``)."""
+    """A list of IPv6 addresses (``type: ipv6List``).
+
+    Same live deviation as :class:`Ipv4AddressIpList`: the contract declares
+    ``ipv6Addresses`` with ``minItems: 1``, but the lab appliance (15 Nov 2026,
+    ``GET /network/addresses/ipv6``) returns ``"ipv6Addresses": []`` for its built-in
+    internal objects. The output model accepts an empty list; the create/update input
+    models keep ``min_length=1``.
+    """
 
     type: Literal["ipv6List"]
-    ipv6_addresses: list[IPv6Address] = Field(alias="ipv6Addresses", min_length=1)
+    ipv6_addresses: list[IPv6Address] = Field(alias="ipv6Addresses")
 
 
 Ipv6Address = Annotated[

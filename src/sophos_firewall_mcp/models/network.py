@@ -35,7 +35,7 @@ from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Generic, Literal, Self, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .common import ObjectName, ObjectNameOrId, ObjectRef
 
@@ -1165,7 +1165,13 @@ class DnsOverHttpsSettings(_Output):
 
 
 class DnsSettings(_Output):
-    """The firewall's DNS settings (configuration, not the live resolver state)."""
+    """The firewall's DNS settings (configuration, not the live resolver state).
+
+    ``updatedAt`` is declared ``format: date-time`` in the contract, but the lab appliance
+    (15 Nov 2026, ``GET /network/dns/settings``) returns ``"updatedAt": ""``. An empty
+    string is mapped to ``None`` so the documented settings stay readable; any other
+    non-date-time value still fails validation, so a real schema mismatch is not hidden.
+    """
 
     dnsProtection: DnsProtectionSettings | None = None
     dnsSecProtection: bool | None = None
@@ -1173,6 +1179,12 @@ class DnsSettings(_Output):
     unencryptedDns: DnsUnencryptedSettings | None = None
     dnsOverHttps: DnsOverHttpsSettings | None = None
     updatedAt: datetime | None = None
+
+    @field_validator("updatedAt", mode="before")
+    @classmethod
+    def _empty_timestamp_is_absent(cls, value: object) -> object:
+        """Treat the appliance's empty-string timestamp as an absent value."""
+        return None if value == "" else value
 
 
 class DnsHostEntryRecord(_Output):
