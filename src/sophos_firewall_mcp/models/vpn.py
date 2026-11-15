@@ -25,9 +25,10 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal, Self
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from .common import ObjectNameOrId, ObjectRef
+from .objects import serialize_epoch_sentinel
 
 __all__ = [
     "BookmarkProtocol",
@@ -189,9 +190,20 @@ SslVpnAuthenticationAlgorithm = Literal["sha512", "sha384", "sha256", "sha1", "m
 
 
 class _Output(BaseModel):
-    """Base for response projections: unknown server fields are ignored, never echoed."""
+    """Base for response projections: unknown server fields are ignored, never echoed.
+
+    The epoch "never" sentinel is published as ``null`` (L6); see
+    :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
+    """
 
     model_config = ConfigDict(extra="ignore")
+
+    @field_serializer(
+        "createdAt", "updatedAt", "created_at", "updated_at", check_fields=False, when_used="json"
+    )
+    def _epoch_sentinel_is_absent(self, value: datetime | None) -> datetime | None:
+        """Publish the appliance's epoch "never" sentinel as ``None`` (L6)."""
+        return serialize_epoch_sentinel(value)
 
 
 class _Input(BaseModel):

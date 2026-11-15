@@ -8,6 +8,7 @@ mutation exists, and that the whole surface is registered in read-only mode too.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
@@ -18,10 +19,17 @@ from mcp import Client
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.models.vpn import (
     FailoverGroupListInput,
+    IpsecConnection,
+    IpsecFailoverGroup,
     IpsecLiveConnection,
     IpsecProfile,
     IpsecRemoteAccessSettings,
+    IpsecRouteBasedConnection,
     SslVpnBookmark,
+    SslVpnBookmarkGroup,
+    SslVpnClientlessPolicy,
+    SslVpnGlobalSettings,
+    SslVpnRemoteAccessPolicy,
     VpnFilteredPageInput,
     VpnPageInput,
     VpnProfileRefInput,
@@ -567,3 +575,90 @@ async def test_vpn_list_descriptions_state_the_default_page_size() -> None:
         "sslvpn_clientless_policy_list",
     ):
         assert "default 10" in tools[name].description, name
+
+
+# -- Phase-5 review, Medium finding 2: the epoch sentinel in the VPN outputs (L6) -------
+
+
+VPN_EPOCH_MODELS: list[tuple[str, type[Any]]] = [
+    ("IpsecProfile", IpsecProfile),
+    ("IpsecFailoverGroup", IpsecFailoverGroup),
+    ("IpsecConnection", IpsecConnection),
+    ("IpsecRouteBasedConnection", IpsecRouteBasedConnection),
+    ("IpsecRemoteAccessSettings", IpsecRemoteAccessSettings),
+    ("SslVpnRemoteAccessPolicy", SslVpnRemoteAccessPolicy),
+    ("SslVpnBookmark", SslVpnBookmark),
+    ("SslVpnBookmarkGroup", SslVpnBookmarkGroup),
+    ("SslVpnClientlessPolicy", SslVpnClientlessPolicy),
+    ("SslVpnGlobalSettings", SslVpnGlobalSettings),
+]
+
+
+@pytest.mark.parametrize(
+    ("name", "model"), VPN_EPOCH_MODELS, ids=[case[0] for case in VPN_EPOCH_MODELS]
+)
+def test_vpn_epoch_sentinel_is_published_as_null(name: str, model: type[Any]) -> None:
+    """L6: every VPN output model publishes the epoch "never" sentinel as null.
+
+    The shared serializer was added to the other output bases but not to ``vpn._Output``,
+    so the VPN projections still published ``1970-01-01T00:00:00Z`` (phase-5 review,
+    Medium finding 2). Only the exact sentinel is mapped, and the parsed value stays
+    available to server-side logic.
+    """
+    fields = model.model_fields
+    timestamped = [field for field in ("createdAt", "updatedAt") if field in fields]
+    assert timestamped, name
+
+    payload: dict[str, Any] = {"name": "DefaultHeadOffice"}
+    payload.update({field: "1970-01-01T00:00:00Z" for field in timestamped})
+    parsed = model.model_validate(payload)
+
+    # The parsed value stays available: the audit heuristic detects built-in objects from
+    # the epoch stamp, so hiding it from the model would silently disable it.
+    for field in timestamped:
+        assert getattr(parsed, field) == datetime(1970, 1, 1, tzinfo=UTC), (name, field)
+
+    published = parsed.model_dump(mode="json", by_alias=True)
+    for field in timestamped:
+        assert published[field] is None, (name, field)
+
+    # A real timestamp is preserved, and one second past the epoch is not the sentinel.
+    real = model.model_validate(
+        {"name": "DefaultHeadOffice", **{field: "2026-11-15T10:00:00Z" for field in timestamped}}
+    )
+    real_published = real.model_dump(mode="json", by_alias=True)
+    for field in timestamped:
+        assert real_published[field] == "2026-11-15T10:00:00Z", (name, field)
+
+    near = model.model_validate(
+        {"name": "DefaultHeadOffice", **{field: "1970-01-01T00:00:01Z" for field in timestamped}}
+    )
+    near_published = near.model_dump(mode="json", by_alias=True)
+    for field in timestamped:
+        assert near_published[field] == "1970-01-01T00:00:01Z", (name, field)
+
+
+async def test_ipsec_profile_get_publishes_the_epoch_sentinel_as_null(router: Any) -> None:
+    """L6 end-to-end: the real server publishes ``createdAt: null`` for the sentinel.
+
+    The review proved the leak through ``structuredContent``; this pins the same path so a
+    regression in the VPN output base is visible at the tool boundary, not only on the
+    model.
+    """
+    router.get(f"{BASE}/ipsec-vpn/profiles/DefaultHeadOffice").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "DefaultHeadOffice",
+                "createdAt": "1970-01-01T00:00:00Z",
+                "updatedAt": "2026-11-15T10:00:00Z",
+            },
+        )
+    )
+
+    result = await call_tool("ipsec_profile_get", {"request": {"idOrName": "DefaultHeadOffice"}})
+
+    assert result.is_error is False
+    assert result.structured_content is not None
+    assert result.structured_content["createdAt"] is None
+    assert result.structured_content["updatedAt"] == "2026-11-15T10:00:00Z"
