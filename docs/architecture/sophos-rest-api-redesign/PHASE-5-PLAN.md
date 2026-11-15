@@ -44,6 +44,14 @@ surface, extend live coverage to the 24 SKIPs, and make the SFOS 23 support unmi
 The Lead owns the branch, the board, integration, the version bump, coverage regeneration, the GitHub
 repository metadata (description/topics) and the merge decision.
 
+## Live-run deviation (recorded)
+
+The phase-5 SKIP run used the contract's bulk-delete endpoint (`deleteDhcpRelaysIpv4`,
+`POST /network/dhcp/relays/ipv4/delete`) with a **single-item** body to remove the disposable DHCP
+relay, because the single-object DELETE returns 401 on this firmware. It is not a bulk operation, but
+it is a deviation from "no bulk delete" and is recorded here and in
+`docs/live-evidence/phase-5-skip-coverage.md`.
+
 ## Acceptance
 
 - One output convention, 0 off-convention tools; the wire body unchanged.
