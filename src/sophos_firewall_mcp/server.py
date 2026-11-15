@@ -142,8 +142,10 @@ INSTRUCTIONS = (
     "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
     "rules, address and service objects, users and live sessions. Read-only tools never "
     "modify the appliance. When the server runs in read-only mode, mutation tools are "
-    "not registered at all. Every tool that takes arguments takes them inside a single "
-    '`request` object, for example `{"request": {...}}`, not at the top level. Every '
+    "not registered at all. Every tool that takes arguments takes them flat: the fields "
+    "its `inputSchema` lists are the fields the call sends, with no wrapper object. A tool "
+    "whose request is a union of shapes publishes a root `oneOf` instead, and its "
+    "discriminator (`ip_family` or `type`) selects the variant. Every "
     "successful result carries the same payload twice, as `content` text and as "
     "`structuredContent`; read one of them, not both."
 )

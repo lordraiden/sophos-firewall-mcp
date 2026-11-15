@@ -259,8 +259,16 @@ async def test_input_schemas_are_closed_and_hide_the_context():
     for tool in tools.values():
         schema = tool.input_schema
         assert schema["type"] == "object"
-        assert schema["required"] == ["request"]
-        assert "ctx" not in schema["properties"]
+        # Arguments are flat: the request model's fields are the root properties, and the
+        # root is closed. A discriminated-union request publishes a root ``oneOf`` of
+        # closed variants instead of one closed object.
+        branches = schema.get("oneOf") or schema.get("anyOf") or [schema]
+        for branch in branches:
+            target = (
+                schema["$defs"][branch["$ref"].rsplit("/", 1)[-1]] if "$ref" in branch else branch
+            )
+            assert target["additionalProperties"] is False
+        assert "ctx" not in schema.get("properties", {})
         for definition in schema.get("$defs", {}).values():
             assert definition.get("additionalProperties") is False
 
@@ -296,12 +304,10 @@ async def test_list_operations_build_the_documented_request(
         result = await client.call_tool(
             tool,
             {
-                "request": {
-                    "page": 2,
-                    "page_size": 10,
-                    "page_total": True,
-                    "name_contains": "web",
-                }
+                "page": 2,
+                "page_size": 10,
+                "page_total": True,
+                "name_contains": "web",
             },
         )
 
@@ -328,7 +334,7 @@ async def test_service_list_sends_the_type_filter(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "service_list", {"request": {"type": "tcpOrUdp", "name_contains": "web"}}
+            "service_list", {"type": "tcpOrUdp", "name_contains": "web"}
         )
 
     assert result.is_error is False
@@ -367,7 +373,7 @@ async def test_service_list_filters_the_returned_page_by_type(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_list", {"request": {"type": "icmp"}})
+        result = await client.call_tool("service_list", {"type": "icmp"})
 
     assert result.is_error is False
     assert [item["name"] for item in result.structured_content["items"]] == ["ping"]
@@ -390,7 +396,7 @@ async def test_service_list_without_type_returns_the_whole_page(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_list", {"request": {}})
+        result = await client.call_tool("service_list", {})
 
     assert [item["name"] for item in result.structured_content["items"]] == ["ping", "web"]
 
@@ -401,7 +407,7 @@ async def test_service_list_type_filter_can_empty_the_page(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_list", {"request": {"type": "icmpv6"}})
+        result = await client.call_tool("service_list", {"type": "icmpv6"})
 
     assert result.is_error is False
     assert result.structured_content["items"] == []
@@ -427,7 +433,7 @@ async def test_get_operations_build_the_documented_request(
     route = router.get(f"{BASE}{path}/web").mock(return_value=httpx.Response(200, json=item))
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": {"id_or_name": "web"}})
+        result = await client.call_tool(tool, {"id_or_name": "web"})
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -443,7 +449,7 @@ async def test_get_percent_encodes_the_identifier(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_get", {"request": {"id_or_name": "web server"}})
+        result = await client.call_tool("service_get", {"id_or_name": "web server"})
 
     assert result.is_error is False
     assert (
@@ -472,7 +478,7 @@ async def test_create_operations_build_the_documented_request(
     route = router.post(f"{BASE}{path}").mock(return_value=httpx.Response(201, json=response_body))
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": request_body})
+        result = await client.call_tool(tool, request_body)
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -507,7 +513,7 @@ async def test_update_operations_build_the_documented_request(
     )
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": request_body})
+        result = await client.call_tool(tool, request_body)
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -529,7 +535,7 @@ async def test_delete_operations_build_the_documented_request(router: Any, tool:
     )
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": {"id_or_name": "web"}})
+        result = await client.call_tool(tool, {"id_or_name": "web"})
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -550,7 +556,7 @@ async def test_get_not_found_maps_to_a_clear_tool_error(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_get", {"request": {"id_or_name": "missing"}})
+        result = await client.call_tool("service_get", {"id_or_name": "missing"})
 
     assert result.is_error is True
     assert "does not exist" in result.content[0].text
@@ -562,7 +568,7 @@ async def test_delete_in_use_conflict_maps_to_a_clear_tool_error(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_delete", {"request": {"id_or_name": "in-use"}})
+        result = await client.call_tool("service_delete", {"id_or_name": "in-use"})
 
     assert result.is_error is True
     assert "conflicts with the current firewall state" in result.content[0].text
@@ -579,11 +585,9 @@ async def test_validation_error_never_echoes_the_raw_body(router: Any):
         result = await client.call_tool(
             "service_create",
             {
-                "request": {
-                    "name": "web",
-                    "type": "tcpOrUdp",
-                    "services": [{"protocol": "tcp", "destinationPort": {"to": 443}}],
-                }
+                "name": "web",
+                "type": "tcpOrUdp",
+                "services": [{"protocol": "tcp", "destinationPort": {"to": 443}}],
             },
         )
 
@@ -599,7 +603,7 @@ async def test_a_malformed_service_payload_is_a_sanitized_tool_error(router: Any
     )
 
     async with open_client() as client:
-        result = await client.call_tool("service_get", {"request": {"id_or_name": "web"}})
+        result = await client.call_tool("service_get", {"id_or_name": "web"})
 
     assert result.is_error is True
     text = result.content[0].text

@@ -138,7 +138,7 @@ async def call(server: Any, name: str, request: dict[str, Any], *, family: str =
     if name in MERGED_TOOLS:
         request = {"ip_family": family, **request}
     async with Client(server) as client:
-        return await client.call_tool(name, {"request": request})
+        return await client.call_tool(name, request)
 
 
 def body_of(route: Any) -> dict[str, Any]:

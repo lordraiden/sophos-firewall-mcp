@@ -65,24 +65,46 @@ instead of silently dropped and the model only sees the field path and the rule.
 replacement reaches the registered tool through the SDK's private registry; see the seam
 note above :func:`_registered_tool` for the pinned version and the exact attributes.
 
-The same registration step documents the ``request`` wrapper: the SDK's single-argument
-convention is unusual for MCP, where flat arguments are the norm, and the domain
-descriptions only describe the inner fields. :func:`register_tool` appends one sentence to
-the description of every tool whose published input schema declares the wrapper, so the
-convention is explained once instead of in every domain module.
+Flat arguments
+--------------
+The SDK derives one argument field per handler parameter, so a handler that takes a single
+``request`` model publishes a ``request`` wrapper. MCP's own examples are flat and a model's
+prior is flat, so the wrapper is a per-call failure mode that has to be explained in prose.
+
+:func:`register_tool` publishes the request model's own fields at the top level instead. The
+argument model becomes the request model itself -- closed and sanitized as above -- and its
+``model_dump_one_level`` hands the validated instance back under the ``request`` key, which
+is the key the handler already declares. The handler, its signature and the wire body are
+unchanged; only the published ``inputSchema`` and the accepted argument shape are flat. A
+tool whose request is a discriminated union publishes a root ``oneOf`` of the closed
+variants, because flattening a union into one object would lose the per-variant required
+fields.
 """
 
 from __future__ import annotations
 
 import re
+import types
 from enum import Enum
-from typing import Any, Callable, Protocol, Self, TypeVar, cast
+from typing import (
+    Annotated,
+    Any,
+    Callable,
+    Protocol,
+    Self,
+    TypeVar,
+    Union,
+    cast,
+    get_args,
+    get_origin,
+)
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.mcpserver.tools import Tool
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
+from pydantic.fields import FieldInfo
 
 from sophos_firewall_mcp.client import SophosRestClient
 from sophos_firewall_mcp.context import AppContext
@@ -157,27 +179,17 @@ _ARGUMENT_RULES: dict[str, str] = {
     "less_than": "must be less than {lt}",
     "string_too_short": "must be at least {min_length} characters long",
     "string_too_long": "must be at most {max_length} characters long",
+    # A model-level validator raises ``ValueError``; pydantic prefixes its message with
+    # "Value error, ". ``ctx["error"]`` is the exception itself, so formatting it drops the
+    # prefix and keeps the validator's own wording.
+    "value_error": "{error}",
 }
 
-#: Sentence appended to the description of every tool whose input schema declares the
-#: ``request`` wrapper. The wrapper is the SDK's single-argument convention and is unusual
-#: for MCP, where flat arguments are the norm, so a model that follows a description such
-#: as "Inputs: optional ip_family" calls the tool with flat arguments and is rejected with
-#: a bare "request is required". Explaining it once, centrally, keeps every domain
-#: description free of boilerplate and cannot drift from the published schema.
-#:
-#: The example is deliberately neutral -- ``{"request": {...}}`` -- and names no field.
-#: The sentence is shared by 144 tools whose request models have different fields, so any
-#: single named field is wrong for most of them: the previous hard-coded
-#: ``{"request": {"page": 1}}`` named a field only 41 tools accept and told the model to
-#: send an argument the other 103 reject. The inner fields are already documented by each
-#: tool's own description and published schema, so this sentence only has to show the
-#: nesting. ``tests/test_server.py`` sweeps every wrapped tool and fails if the example
-#: ever names a field that tool does not accept.
-_REQUEST_WRAPPER_NOTE = (
-    "Arguments are passed inside a `request` object, for example "
-    '`{"request": {...}}`, not at the top level.'
-)
+#: The single parameter name the SDK's argument model gives a handler that takes one
+#: pydantic model. The published schema is flattened away from it, but the handler keeps
+#: the parameter, so the flat argument model still hands the validated instance back under
+#: this key (see :func:`_flat_argument_model`).
+_REQUEST_FIELD = "request"
 
 ToolHandlerT = TypeVar("ToolHandlerT", bound=Callable[..., Any])
 """A registered tool function: a typed ``async def`` with an optional ``Context``."""
@@ -295,10 +307,9 @@ def register_tool(
     sanitized, so a misspelled argument is reported instead of silently ignored and the
     model never sees the internal model name or a pydantic URL.
 
-    A tool that takes arguments also gets one sentence appended to its published
-    description explaining the ``request`` wrapper (see :data:`_REQUEST_WRAPPER_NOTE`).
-    The caller's ``description`` is not modified in place and no domain has to repeat the
-    sentence.
+    A tool that takes arguments publishes them flat: the request model's own fields are the
+    top-level arguments, not a nested ``request`` object (see :func:`_flatten_arguments`).
+    The handler signature is unchanged, so the domain modules are unaffected.
 
     Raises:
         ValueError: The metadata is invalid or the annotations contradict the kind.
@@ -321,8 +332,7 @@ def register_tool(
             description=description,
             annotations=resolved_annotations,
         )
-        tool = _close_argument_model(server, name)
-        _document_request_wrapper(tool)
+        _flatten_arguments(server, name)
         return fn
 
     return decorator
@@ -438,47 +448,159 @@ def _registered_tool(server: MCPServer[AppContext], name: str) -> Tool | None:
     return cast(Tool | None, manager.get_tool(name))
 
 
-def _close_argument_model(server: MCPServer[AppContext], name: str) -> Tool | None:
-    """Replace a registered tool's argument model with the closed, sanitized subclass.
+def _flatten_arguments(server: MCPServer[AppContext], name: str) -> Tool | None:
+    """Publish a registered tool's arguments flat instead of inside a ``request`` object.
 
-    The SDK derives one argument model per tool from the handler signature and validates
-    every call against it before the handler runs. That model is the only seam: it accepts
-    unknown top-level arguments (``extra`` defaults to ``ignore``) and renders a failure as
-    the raw pydantic dump. Swapping it changes both behaviours without touching the
-    published input schema, which was derived from the original model at registration.
+    The SDK derives one argument field per handler parameter, so a handler that takes a
+    single ``request`` model publishes a ``request`` wrapper. MCP's own examples are flat
+    and a model's prior is flat, so the wrapper costs a round trip on the first call of
+    every session. mcp 2.3.0 has no public way to register flat arguments for such a
+    handler (see the seam note above :func:`_registered_tool`), but ``Tool.run`` only
+    depends on two mutable attributes -- ``fn_metadata.arg_model`` and ``parameters`` -- so
+    replacing both publishes flat arguments while keeping the closed model and the
+    sanitized errors.
+
+    The handler is not touched. ``FuncMetadata.validate_arguments`` returns
+    ``arg_model.model_dump_one_level()`` and ``call_fn`` splats that into the handler, so a
+    flat argument model only has to validate the flat arguments and hand the validated
+    request instance back under the ``request`` key the handler already declares. That also
+    keeps ``model_fields_set`` exact, which the partial-PATCH adapters depend on through
+    ``exclude_unset``.
+
+    A request that is a union cannot become one flat object without losing the per-variant
+    required fields, so it publishes a root union of the closed variants instead
+    (:func:`_union_argument_model`).
 
     ``add_tool`` returns nothing, so the registered tool is read back through the SDK's
     private tool manager (:func:`_registered_tool`, the single accessor for that seam).
-    The access is deliberate and pinned: the argument-validation tests fail if a future
-    SDK stops exposing the model there.
 
     Returns:
-        The registered tool, so the caller can apply the remaining description-level
-        documentation without reading the seam twice.
+        The registered tool, or ``None`` if the SDK did not keep it.
     """
     tool = _registered_tool(server, name)
     if tool is None:  # pragma: no cover - add_tool registered it immediately above
         return None
-    tool.fn_metadata.arg_model = _sanitized_argument_model(tool.fn_metadata.arg_model)
-    # The published schema must say what the runtime now enforces.
-    tool.parameters = {**tool.parameters, "additionalProperties": False}
+
+    arg_model = tool.fn_metadata.arg_model
+    request_field = arg_model.model_fields.get(_REQUEST_FIELD)
+    if request_field is None:
+        # No-argument tool: only the closed, sanitized contract applies.
+        tool.fn_metadata.arg_model = _sanitized_argument_model(arg_model)
+        tool.parameters = {**tool.parameters, "additionalProperties": False}
+        return tool
+
+    annotation = request_field.annotation
+    variants = _union_variants(annotation)
+    if variants:
+        tool.fn_metadata.arg_model = cast(Any, _union_argument_model(annotation, variants))
+        schema = _union_schema(annotation, request_field.discriminator)
+    elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        tool.fn_metadata.arg_model = cast(Any, _flat_argument_model(annotation))
+        schema = _flat_schema(annotation)
+    else:  # pragma: no cover - every request parameter is annotated with a model
+        raise RuntimeError(
+            f"tool {name!r} declares a request parameter that is not a pydantic model; "
+            "flat arguments need a model or a union of models"
+        )
+    schema["title"] = f"{name}Arguments"
+    tool.parameters = schema
     return tool
 
 
-def _document_request_wrapper(tool: Tool | None) -> None:
-    """Explain the ``request`` wrapper in the description of a tool that takes arguments.
+def _flat_argument_model(request_model: type[ModelT]) -> type[ModelT]:
+    """Return the request model itself, closed and sanitized, as the argument model.
 
-    The sentence is added centrally, from the published input schema, so no domain
-    description repeats it and it cannot drift from the schema: a tool whose schema
-    declares a ``request`` property gets the note, and a no-argument tool (whose schema
-    has no properties) is left alone. The wrapper itself is unchanged -- it is the SDK's
-    single-argument convention, not something this project can flatten.
+    Subclassing the request model (rather than copying its fields) keeps every constraint,
+    alias and ``model_validator`` exactly as the domain declared them, and makes the
+    validated instance a real request model for the handler. ``model_dump_one_level`` is
+    the one behaviour that changes: the SDK splats its result into the handler, so it hands
+    the instance back under the ``request`` key instead of dumping the fields.
     """
-    if tool is None:  # pragma: no cover - add_tool registered it immediately above
-        return
-    if "request" not in tool.parameters.get("properties", {}):
-        return
-    tool.description = f"{tool.description} {_REQUEST_WRAPPER_NOTE}"
+
+    class Flat(_sanitized_argument_model(request_model)):  # type: ignore[misc, valid-type]
+        def model_dump_one_level(self) -> dict[str, Any]:
+            return {_REQUEST_FIELD: self}
+
+    # The request model's docstring is its published schema description; a subclass does
+    # not inherit ``__doc__``, so carry it over explicitly.
+    Flat.__doc__ = request_model.__doc__
+    return cast(type[ModelT], Flat)
+
+
+def _union_argument_model(
+    annotation: Any, variants: tuple[type[BaseModel], ...]
+) -> type[BaseModel]:
+    """Return an argument model for a tool whose request is a union of models.
+
+    The union cannot be flattened into one object without losing the per-variant required
+    fields, so the arguments stay a union: this class validates the flat arguments against
+    the union and hands the chosen variant back under the ``request`` key.
+    It is deliberately not a pydantic model -- a union has no single field set -- but it
+    implements the three attributes ``FuncMetadata`` reads: ``model_validate``,
+    ``model_fields`` (for JSON pre-parsing and the accepted-argument hint) and
+    ``model_dump_one_level``.
+    """
+    adapter = TypeAdapter(annotation)
+    fields: dict[str, FieldInfo] = {}
+    for variant in variants:
+        for field_name, field_info in variant.model_fields.items():
+            fields.setdefault(field_name, field_info)
+
+    class UnionArguments:
+        """Flat arguments validated against the request's union of models."""
+
+        model_config = ConfigDict(extra="forbid")
+        model_fields = fields
+
+        def __init__(self, request: BaseModel) -> None:
+            self._request = request
+
+        def model_dump_one_level(self) -> dict[str, Any]:
+            return {_REQUEST_FIELD: self._request}
+
+        @classmethod
+        def model_validate(cls, obj: Any, **kwargs: Any) -> "UnionArguments":
+            try:
+                return cls(adapter.validate_python(obj))
+            except ValidationError as exc:
+                raise _sanitized_argument_error(exc, cast(Any, cls)) from None
+
+    return cast(type[BaseModel], UnionArguments)
+
+
+def _union_variants(annotation: Any) -> tuple[type[BaseModel], ...]:
+    """Return the model variants of a (possibly ``Annotated``) union, or ``()``."""
+    base = get_args(annotation)[0] if get_origin(annotation) is Annotated else annotation
+    if get_origin(base) not in (Union, types.UnionType):
+        return ()
+    return tuple(
+        variant
+        for variant in get_args(base)
+        if isinstance(variant, type) and issubclass(variant, BaseModel)
+    )
+
+
+def _flat_schema(request_model: type[BaseModel]) -> dict[str, Any]:
+    """The published input schema for a flat request model."""
+    return {**request_model.model_json_schema(by_alias=True), "additionalProperties": False}
+
+
+def _union_schema(annotation: Any, discriminator: Any) -> dict[str, Any]:
+    """The published input schema for a union request.
+
+    The variants stay under a root union, which keeps each one's own ``required`` list and
+    its own ``additionalProperties: false``; a root ``additionalProperties: false`` would
+    reject every variant's fields, so it is deliberately absent. ``type: object`` is added
+    because every variant is an object and some clients expect the root to say so.
+
+    pydantic emits ``anyOf`` for a union. A discriminated union matches exactly one
+    variant, so it is published as the stricter ``oneOf``; an undiscriminated union keeps
+    ``anyOf``, where ``oneOf`` would be wrong.
+    """
+    schema = TypeAdapter(annotation).json_schema(by_alias=True)
+    if discriminator is not None and "anyOf" in schema:
+        schema["oneOf"] = schema.pop("anyOf")
+    return {**schema, "type": "object"}
 
 
 def _sanitized_argument_model(model: type[ModelT]) -> type[ModelT]:
@@ -519,15 +641,29 @@ def _argument_error_message(exc: ValidationError, model: type[BaseModel]) -> str
     """
     details: list[str] = []
     for error in exc.errors():
-        location = ".".join(str(part) for part in error.get("loc", ())) or "arguments"
+        location = _display_location(model, error.get("loc", ()))
         rule = _argument_rule(error)
-        detail = f"{location} {rule}"
+        detail = f"{location} {rule}" if location else rule
         if error.get("type") == "extra_forbidden":
             accepted = _accepted_arguments(model, error.get("loc", ()))
             if accepted:
                 detail = f"{detail}; {accepted}"
         details.append(detail)
     return _sanitize("invalid arguments: " + "; ".join(details))
+
+
+def _display_location(model: type[BaseModel], location: tuple[Any, ...]) -> str:
+    """Render a pydantic error location without the tags a union adds to it.
+
+    A discriminated union reports ``("ipv4", "bogus")``: the first part is the tag pydantic
+    used to name the chosen variant, not an argument the caller sent. Dropping a leading
+    part that is not a field of the model keeps the message about the caller's own input.
+    A single-part location is never dropped -- there it is the caller's argument name.
+    """
+    parts = [str(part) for part in location]
+    while len(parts) > 1 and _field_annotation(model, parts[0]) is None:
+        parts.pop(0)
+    return ".".join(parts)
 
 
 def _argument_rule(error: Any) -> str:
@@ -546,6 +682,9 @@ def _accepted_arguments(model: type[BaseModel], location: tuple[Any, ...]) -> st
     parent: type[BaseModel] = model
     for part in location[:-1]:
         annotation = _field_annotation(parent, str(part))
+        if annotation is None:
+            # A discriminated-union tag, not a field: the level does not change.
+            continue
         if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
             return ""
         parent = annotation

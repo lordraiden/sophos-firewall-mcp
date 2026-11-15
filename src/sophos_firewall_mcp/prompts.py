@@ -4,7 +4,7 @@ A prompt is a template a *user* selects, not an action a model chooses: the clie
 it into one user message and the model then calls the tools the message names. The three
 prompts here are the workflows this server exists for -- audit the rule base, explain a
 flow, find unused objects -- and each one is a self-contained instruction that names the
-real tools, the exact ``request`` shape and the argument values, so a client that renders
+real tools, the exact argument shape and the argument values, so a client that renders
 it needs no other context.
 
 The prompts are read-only by construction: they only name read-only tools, and the audit
@@ -52,10 +52,11 @@ AUDIT_IP_FAMILIES: tuple[str, ...] = ("ipv4", "ipv6")
 def _request(payload: dict[str, object]) -> str:
     """Render a tool call's ``arguments`` object as compact JSON.
 
-    The wrapper is shown literally rather than described, because the single most common
-    first-call failure is a flat argument object.
+    The arguments are shown literally rather than described, because a rendered call is
+    what the model copies: it must be the exact object the tool accepts, which since 0.7 is
+    the flat argument object (no ``request`` wrapper).
     """
-    return json.dumps({"request": payload}, ensure_ascii=False)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _audit_message(

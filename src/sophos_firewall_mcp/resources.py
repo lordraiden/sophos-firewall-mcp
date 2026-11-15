@@ -38,6 +38,7 @@ __all__ = [
     "API_OPERATIONS_BY_METHOD",
     "API_PAGINATED_GET_OPERATIONS",
     "API_PATHS",
+    "ARGUMENT_TOOL_COUNT",
     "COMPOSITE_TOOL_COUNT",
     "COMPOSITE_TOOLS",
     "COVERAGE_DOMAINS",
@@ -46,7 +47,6 @@ __all__ = [
     "READ_ONLY_TOOL_COUNT",
     "TOOL_MAP_COUNT",
     "TOTAL_TOOL_COUNT",
-    "WRAPPED_TOOL_COUNT",
     "CoverageDomain",
     "register_resources",
 ]
@@ -99,18 +99,24 @@ COMPOSITE_TOOLS: tuple[str, ...] = (
     "find_object_usage",
 )
 
-#: Tools that publish no ``request`` wrapper because they take no arguments.
+#: Tools that take no arguments and publish an empty ``arguments`` object.
+#:
+#: ``live_user_list`` belongs here because its request model is deliberately empty: the
+#: API declares no parameters for ``/authentication/live-users``. Before 0.7 it published a
+#: ``request`` wrapper around that empty model, so it looked like an argument-taking tool;
+#: with flat arguments it publishes no properties at all, like the other six.
 NO_ARGUMENT_TOOLS: tuple[str, ...] = (
     "dns_settings_get",
     "ipsec_live_connection_list_ipv4",
     "ipsec_remote_access_settings_get",
+    "live_user_list",
     "network_status_cellular_wan",
     "network_status_dns_protection",
     "sslvpn_global_settings_get",
 )
 
-#: Tools that publish the ``request`` wrapper: every tool except the no-argument ones.
-WRAPPED_TOOL_COUNT = TOTAL_TOOL_COUNT - len(NO_ARGUMENT_TOOLS)
+#: Tools that take arguments: every tool except the no-argument ones.
+ARGUMENT_TOOL_COUNT = TOTAL_TOOL_COUNT - len(NO_ARGUMENT_TOOLS)
 
 
 def _method_count(method: str) -> int:
@@ -347,28 +353,34 @@ def _conventions_document() -> str:
     no_argument = "\n".join(f"- `{name}`" for name in NO_ARGUMENT_TOOLS)
     return f"""# Calling conventions
 
-## The `request` wrapper
+## Flat arguments
 
-Every tool that takes arguments publishes exactly one top-level property, `request`, whose
-value is the real argument object. This is the MCP SDK's single-argument convention, not
-the flat-argument shape most MCP examples use, so a call that puts the fields at the top
-level is rejected.
+Every tool that takes arguments publishes those arguments at the top level of `arguments`,
+exactly as the MCP specification's own examples do. There is no wrapper object to unwrap:
+the fields the tool's `inputSchema` lists are the fields the call sends.
 
 ```json
 {{"name": "firewall_rule_list",
- "arguments": {{"request": {{"ip_family": "ipv4", "page": 1, "page_size": 10, "page_total": true}}}}}}
+ "arguments": {{"ip_family": "ipv4", "page": 1, "page_size": 10, "page_total": true}}}}
 ```
 
-{WRAPPED_TOOL_COUNT} of the {TOTAL_TOOL_COUNT} tools are wrapped. The other {len(NO_ARGUMENT_TOOLS)} take an empty `arguments` object
+{ARGUMENT_TOOL_COUNT} of the {TOTAL_TOOL_COUNT} tools take arguments. The other {len(NO_ARGUMENT_TOOLS)} take an empty `arguments` object
 because they declare no parameters:
 
 {no_argument}
 
-The rejection is actionable and names the accepted argument, so a model can self-correct
+A tool whose request is a union of shapes (`address_create`, `firewall_rule_create`,
+`nat_rule_create` and the other create/update tools that exist for both IP families)
+publishes a root `oneOf` instead of one flat object, because each variant has its own
+required fields; `mac_address_create` publishes `anyOf` because the API declares no
+discriminator for it. Send the variant's own fields at the top level and let its
+discriminator (`ip_family` or `type`) select it.
+
+The rejection is actionable and names the accepted arguments, so a model can self-correct
 on the next call:
 
 ```
-invalid arguments: request is required; id_or_name is not an accepted argument; accepted arguments are request
+invalid arguments: bogus is not an accepted argument; accepted arguments are ip_family, id_or_name
 ```
 
 ## Names
@@ -388,7 +400,7 @@ and omitting it means both.
 
 ## One page per call
 
-A paginated list publishes `page`, `page_size` and `page_total` inside `request`. `page` is
+A paginated list publishes `page`, `page_size` and `page_total` as top-level arguments. `page` is
 1-based, `page_size` defaults to 10 and is capped at 100, and `page_total=true` adds
 `pages.total` and `pages.items` to the result. There is no cursor: call the next page
 explicitly when you need it.
@@ -477,7 +489,7 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
         name="calling-conventions",
         title="Calling conventions",
         description=(
-            "How to call a tool: the request wrapper, input and output naming, pagination, "
+            "How to call a tool: flat arguments, input and output naming, pagination, "
             "reading one of content/structuredContent, and error semantics."
         ),
         mime_type="text/markdown",

@@ -449,7 +449,7 @@ async def test_read_operation_contract(
                 "ip_family": "ipv6" if "/ipv6" in path else "ipv4",
                 **request_payload,
             }
-        result = await call_tool(tool, {"request": request_payload})
+        result = await call_tool(tool, request_payload)
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -467,7 +467,7 @@ async def test_a_name_with_a_space_is_percent_encoded_in_the_path(router: Any) -
         return_value=httpx.Response(200, json={"name": "Port 1", "type": "physical"})
     )
 
-    result = await call_tool("network_interface_get", {"request": {"idOrName": "Port 1"}})
+    result = await call_tool("network_interface_get", {"idOrName": "Port 1"})
 
     assert result.is_error is False
     assert route.calls.last.request.url.raw_path == (
@@ -499,9 +499,7 @@ async def test_update_vlan_refuses_a_physical_interface_before_writing(router: A
         return_value=httpx.Response(200, json=_physical_interface())
     )
 
-    result = await call_tool(
-        "network_interface_update_vlan", {"request": {"idOrName": "Port 1", "mtu": 1500}}
-    )
+    result = await call_tool("network_interface_update_vlan", {"idOrName": "Port 1", "mtu": 1500})
 
     assert result.is_error is True
     assert "only writes interfaces of type 'vlan'" in result.content[0].text
@@ -527,11 +525,9 @@ async def test_update_vlan_proceeds_for_a_vlan_interface(router: Any) -> None:
     result = await call_tool(
         "network_interface_update_vlan",
         {
-            "request": {
-                "idOrName": "vlan10",
-                "mtu": 1500,
-                "ipv4": {"assignmentType": "static", "ipv4Address": "10.0.10.1", "cidr": 24},
-            }
+            "idOrName": "vlan10",
+            "mtu": 1500,
+            "ipv4": {"assignmentType": "static", "ipv4Address": "10.0.10.1", "cidr": 24},
         },
     )
 
@@ -554,7 +550,7 @@ async def test_delete_vlan_refuses_a_bridge_interface_before_deleting(router: An
         return_value=httpx.Response(200, json={"deleted": True})
     )
 
-    result = await call_tool("network_interface_delete_vlan", {"request": {"idOrName": "br0"}})
+    result = await call_tool("network_interface_delete_vlan", {"idOrName": "br0"})
 
     assert result.is_error is True
     assert "bridge" in result.content[0].text
@@ -569,7 +565,7 @@ async def test_delete_vlan_pre_reads_and_then_deletes(router: Any) -> None:
         return_value=httpx.Response(200, json={"deleted": True})
     )
 
-    result = await call_tool("network_interface_delete_vlan", {"request": {"idOrName": "vlan10"}})
+    result = await call_tool("network_interface_delete_vlan", {"idOrName": "vlan10"})
 
     assert result.is_error is False
     assert get.call_count == 1
@@ -589,13 +585,11 @@ async def test_create_vlan_pre_reads_the_parent_and_sends_the_vlan_body(router: 
     result = await call_tool(
         "network_interface_create_vlan",
         {
-            "request": {
-                "name": "vlan10",
-                "vlanId": 10,
-                "parentInterface": "Port 1",
-                "zone": "LAN",
-                "ipv4": {"assignmentType": "static", "ipv4Address": "10.0.10.1", "cidr": 24},
-            }
+            "name": "vlan10",
+            "vlanId": 10,
+            "parentInterface": "Port 1",
+            "zone": "LAN",
+            "ipv4": {"assignmentType": "static", "ipv4Address": "10.0.10.1", "cidr": 24},
         },
     )
 
@@ -623,7 +617,7 @@ async def test_create_vlan_refuses_a_cellular_parent_before_writing(router: Any)
 
     result = await call_tool(
         "network_interface_create_vlan",
-        {"request": {"name": "vlan10", "vlanId": 10, "parentInterface": "wwan0"}},
+        {"name": "vlan10", "vlanId": 10, "parentInterface": "wwan0"},
     )
 
     assert result.is_error is True
@@ -641,7 +635,7 @@ async def test_create_vlan_refuses_a_missing_parent_before_writing(router: Any) 
 
     result = await call_tool(
         "network_interface_create_vlan",
-        {"request": {"name": "vlan10", "vlanId": 10, "parentInterface": "missing"}},
+        {"name": "vlan10", "vlanId": 10, "parentInterface": "missing"},
     )
 
     assert result.is_error is True
@@ -657,7 +651,7 @@ async def test_page_size_above_100_is_rejected_without_a_request(router: Any) ->
         return_value=httpx.Response(200, json={"items": [], "pages": PAGE})
     )
 
-    result = await call_tool("zone_list", {"request": {"pageSize": 101}})
+    result = await call_tool("zone_list", {"pageSize": 101})
 
     assert result.is_error is True
     assert route.call_count == 0
@@ -668,7 +662,7 @@ async def test_page_zero_is_rejected_without_a_request(router: Any) -> None:
         return_value=httpx.Response(200, json={"items": [], "pages": PAGE})
     )
 
-    result = await call_tool("zone_list", {"request": {"page": 0}})
+    result = await call_tool("zone_list", {"page": 0})
 
     assert result.is_error is True
     assert route.call_count == 0
@@ -681,7 +675,7 @@ async def test_not_found_is_a_sanitized_tool_error(router: Any) -> None:
         )
     )
 
-    result = await call_tool("zone_get", {"request": {"idOrName": "Missing"}})
+    result = await call_tool("zone_get", {"idOrName": "Missing"})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -695,7 +689,7 @@ async def test_a_non_object_response_is_reported_as_a_tool_error(router: Any) ->
         return_value=httpx.Response(200, json=["not", "an", "object"])
     )
 
-    result = await call_tool("zone_get", {"request": {"idOrName": "LAN"}})
+    result = await call_tool("zone_get", {"idOrName": "LAN"})
 
     assert result.is_error is True
     assert "non-object body" in result.content[0].text
@@ -707,7 +701,7 @@ async def test_a_malformed_interface_payload_is_a_sanitized_tool_error(router: A
         return_value=httpx.Response(200, json={"id": "u-1", "name": "Port 1", "type": 123})
     )
 
-    result = await call_tool("network_interface_get", {"request": {"idOrName": "Port 1"}})
+    result = await call_tool("network_interface_get", {"idOrName": "Port 1"})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -721,7 +715,7 @@ async def test_a_dhcp_relay_name_is_rejected_before_any_request(router: Any) -> 
         return_value=httpx.Response(200, json={})
     )
 
-    result = await call_tool("dhcp_relay_get", {"request": {"id": "relay1"}})
+    result = await call_tool("dhcp_relay_get", {"id": "relay1"})
 
     assert result.is_error is True
     assert route.call_count == 0
@@ -1000,7 +994,7 @@ async def test_unpaginated_lists_render_pages_null(router: Any) -> None:
         return_value=httpx.Response(200, json={"items": [{"id": RELAY_UUID, "name": "relay1"}]})
     )
 
-    result = await call_tool("dhcp_relay_list", {"request": {"ip_family": "ipv4"}})
+    result = await call_tool("dhcp_relay_list", {"ip_family": "ipv4"})
 
     assert result.is_error is False
     assert set(result.structured_content) == {"items", "pages"}
@@ -1041,7 +1035,7 @@ async def test_dhcp_lease_list_documents_the_keyset_ceiling(router: Any) -> None
         )
     )
 
-    result = await call_tool("dhcp_lease_list", {"request": {"ip_family": "ipv4"}})
+    result = await call_tool("dhcp_lease_list", {"ip_family": "ipv4"})
 
     assert result.is_error is False
     # The appliance value is preserved, including the non-null nextKey.
@@ -1054,8 +1048,7 @@ async def test_dhcp_lease_list_documents_the_keyset_ceiling(router: Any) -> None
     assert "incomplete" in description
     # No undeclared pagination input is exposed; only the family selector is.
     schema = tools["dhcp_lease_list"].input_schema
-    assert set(schema["properties"]) == {"request"}
-    assert set(schema["$defs"]["DhcpLeaseListInput"]["properties"]) == {"ip_family"}
+    assert set(schema["properties"]) == {"ip_family"}
 
 
 def test_dhcp_lease_pages_max_size_is_documented_as_the_item_count() -> None:
@@ -1161,7 +1154,7 @@ async def test_dns_host_entry_projects_the_nested_address(router: Any) -> None:
         return_value=httpx.Response(200, json=payload)
     )
 
-    result = await call_tool("dns_host_entry_get", {"request": {"idOrName": "mcp-test-dns"}})
+    result = await call_tool("dns_host_entry_get", {"idOrName": "mcp-test-dns"})
 
     assert result.is_error is False
     entries = result.structured_content["hostEntries"]

@@ -186,7 +186,7 @@ async def test_address_list_ipv4_projects_a_page_with_an_empty_builtin_list(rout
     )
 
     async with open_client() as client:
-        result = await client.call_tool("address_list", {"request": {"ip_family": "ipv4"}})
+        result = await client.call_tool("address_list", {"ip_family": "ipv4"})
 
     assert result.is_error is False
     items = result.structured_content["items"]
@@ -215,7 +215,7 @@ async def test_address_list_ipv4_still_rejects_a_genuinely_malformed_payload(rou
     )
 
     async with open_client() as client:
-        result = await client.call_tool("address_list", {"request": {"ip_family": "ipv4"}})
+        result = await client.call_tool("address_list", {"ip_family": "ipv4"})
 
     assert result.is_error is True
     message = result.content[0].text

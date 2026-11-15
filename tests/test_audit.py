@@ -90,7 +90,7 @@ async def call_tool(name: str, arguments: dict[str, Any], *, read_only: bool = F
     """Call one audit tool through the official SDK client (full lifespan included)."""
     server = make_server(read_only=read_only)
     async with Client(server) as client:
-        return await client.call_tool(name, {"request": arguments})
+        return await client.call_tool(name, arguments)
 
 
 def page(items: list[dict[str, Any]], *, total: int | None = None) -> dict[str, Any]:
@@ -1102,7 +1102,7 @@ async def test_audit_reports_progress_for_every_page_it_reads(router: Any) -> No
     async with Client(server) as client:
         result = await client.call_tool(
             "audit_firewall_rules",
-            {"request": {"checks": ["disabled"], "ip_family": "ipv4"}},
+            {"checks": ["disabled"], "ip_family": "ipv4"},
             progress_callback=record,
         )
 
@@ -1133,7 +1133,7 @@ async def test_audit_reports_progress_across_collections(router: Any) -> None:
     async with Client(server) as client:
         result = await client.call_tool(
             "audit_firewall_rules",
-            {"request": {"checks": ["disabled"]}},
+            {"checks": ["disabled"]},
             progress_callback=record,
         )
 
@@ -1153,7 +1153,7 @@ async def test_audit_progress_does_not_change_the_output(router: Any) -> None:
     async with Client(server) as client:
         with_progress = await client.call_tool(
             "audit_firewall_rules",
-            {"request": {"checks": ["any-any"], "ip_family": "ipv4"}},
+            {"checks": ["any-any"], "ip_family": "ipv4"},
             progress_callback=record,
         )
     without_progress = await call_tool(
@@ -1179,11 +1179,9 @@ async def test_explain_connectivity_reports_progress_for_every_page_it_reads(
         result = await client.call_tool(
             "explain_connectivity",
             {
-                "request": {
-                    "source": {"ip": "10.0.0.5"},
-                    "destination": {"ip": "8.8.8.8"},
-                    "service": {"name": "HTTP"},
-                }
+                "source": {"ip": "10.0.0.5"},
+                "destination": {"ip": "8.8.8.8"},
+                "service": {"name": "HTTP"},
             },
             progress_callback=record,
         )
@@ -1217,7 +1215,7 @@ async def test_find_object_usage_reports_progress_for_every_page_it_reads(
     async with Client(server) as client:
         result = await client.call_tool(
             "find_object_usage",
-            {"request": {"object_type": "address", "identifier": "orphan"}},
+            {"object_type": "address", "identifier": "orphan"},
             progress_callback=record,
         )
 

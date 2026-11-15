@@ -528,8 +528,16 @@ async def test_input_schemas_are_closed_and_hide_the_context():
     for tool in tools.values():
         schema = tool.input_schema
         assert schema["type"] == "object"
-        assert schema["required"] == ["request"]
-        assert "ctx" not in schema["properties"]
+        # Arguments are flat: the request model's fields are the root properties, and the
+        # root is closed. A discriminated-union request publishes a root ``oneOf`` of
+        # closed variants instead of one closed object.
+        branches = schema.get("oneOf") or schema.get("anyOf") or [schema]
+        for branch in branches:
+            target = (
+                schema["$defs"][branch["$ref"].rsplit("/", 1)[-1]] if "$ref" in branch else branch
+            )
+            assert target["additionalProperties"] is False
+        assert "ctx" not in schema.get("properties", {})
         for definition in schema.get("$defs", {}).values():
             assert definition.get("additionalProperties") is False
 
@@ -564,18 +572,16 @@ async def test_list_operations_build_the_documented_request(
     async with open_client() as client:
         result = await client.call_tool(
             tool,
-            {
-                "request": with_family(
-                    tool,
-                    path,
-                    {
-                        "page": 2,
-                        "page_size": 10,
-                        "page_total": True,
-                        "name_contains": "web",
-                    },
-                )
-            },
+            with_family(
+                tool,
+                path,
+                {
+                    "page": 2,
+                    "page_size": 10,
+                    "page_total": True,
+                    "name_contains": "web",
+                },
+            ),
         )
 
     assert result.is_error is False
@@ -602,7 +608,7 @@ async def test_list_supports_name_not_equals_and_defaults(router: Any):
     async with open_client() as client:
         result = await client.call_tool(
             "address_list",
-            {"request": {"ip_family": "ipv4", "name_not_equals": "web"}},
+            {"ip_family": "ipv4", "name_not_equals": "web"},
         )
 
     assert result.is_error is False
@@ -633,9 +639,7 @@ async def test_get_operations_build_the_documented_request(
     route = router.get(f"{BASE}{path}/web").mock(return_value=httpx.Response(200, json=item))
 
     async with open_client() as client:
-        result = await client.call_tool(
-            tool, {"request": with_family(tool, path, {"id_or_name": "web"})}
-        )
+        result = await client.call_tool(tool, with_family(tool, path, {"id_or_name": "web"}))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -652,7 +656,7 @@ async def test_get_percent_encodes_the_identifier(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_get", {"request": {"ip_family": "ipv4", "id_or_name": "web server"}}
+            "address_get", {"ip_family": "ipv4", "id_or_name": "web server"}
         )
 
     assert result.is_error is False
@@ -683,7 +687,7 @@ async def test_get_accepts_builtin_and_slash_names(
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_get", {"request": {"ip_family": "ipv4", "id_or_name": identifier}}
+            "address_get", {"ip_family": "ipv4", "id_or_name": identifier}
         )
 
     assert result.is_error is False
@@ -714,7 +718,7 @@ async def test_create_operations_build_the_documented_request(
     route = router.post(f"{BASE}{path}").mock(return_value=httpx.Response(201, json=response_body))
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": with_family(tool, path, request_body)})
+        result = await client.call_tool(tool, with_family(tool, path, request_body))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -749,7 +753,7 @@ async def test_update_operations_build_the_documented_request(
     )
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": with_family(tool, path, request_body)})
+        result = await client.call_tool(tool, with_family(tool, path, request_body))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -771,9 +775,7 @@ async def test_delete_operations_build_the_documented_request(router: Any, tool:
     )
 
     async with open_client() as client:
-        result = await client.call_tool(
-            tool, {"request": with_family(tool, path, {"id_or_name": "web"})}
-        )
+        result = await client.call_tool(tool, with_family(tool, path, {"id_or_name": "web"}))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -795,7 +797,7 @@ async def test_get_not_found_maps_to_a_clear_tool_error(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_get", {"request": {"ip_family": "ipv4", "id_or_name": "missing"}}
+            "address_get", {"ip_family": "ipv4", "id_or_name": "missing"}
         )
 
     assert result.is_error is True
@@ -809,7 +811,7 @@ async def test_delete_in_use_conflict_maps_to_a_clear_tool_error(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_delete", {"request": {"ip_family": "ipv4", "id_or_name": "in-use"}}
+            "address_delete", {"ip_family": "ipv4", "id_or_name": "in-use"}
         )
 
     assert result.is_error is True
@@ -824,7 +826,7 @@ async def test_create_duplicate_name_conflict_maps_to_a_clear_tool_error(router:
     async with open_client() as client:
         result = await client.call_tool(
             "address_create_fqdn",
-            {"request": {"name": "example", "fqdn": "example.com"}},
+            {"name": "example", "fqdn": "example.com"},
         )
 
     assert result.is_error is True
@@ -841,7 +843,7 @@ async def test_validation_error_never_echoes_the_raw_body(router: Any):
     async with open_client() as client:
         result = await client.call_tool(
             "address_create_fqdn",
-            {"request": {"name": "example", "fqdn": "example.com"}},
+            {"name": "example", "fqdn": "example.com"},
         )
 
     assert result.is_error is True
@@ -856,9 +858,7 @@ async def test_a_malformed_address_payload_is_a_sanitized_tool_error(router: Any
     )
 
     async with open_client() as client:
-        result = await client.call_tool(
-            "address_get", {"request": {"ip_family": "ipv4", "id_or_name": "web"}}
-        )
+        result = await client.call_tool("address_get", {"ip_family": "ipv4", "id_or_name": "web"})
 
     assert result.is_error is True
     text = result.content[0].text

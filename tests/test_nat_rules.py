@@ -184,7 +184,7 @@ async def call_tool(
     if name in MERGED_TOOLS:
         request = {"ip_family": family, **request}
     async with Client(make_server(read_only=read_only)) as client:
-        return await client.call_tool(name, {"request": request})
+        return await client.call_tool(name, request)
 
 
 async def tools_by_name(*, read_only: bool = False) -> dict[str, Any]:
@@ -271,10 +271,16 @@ async def test_input_schema_is_closed_and_excludes_the_context_parameter():
 
     for name, tool in tools.items():
         schema = tool.input_schema
-        assert set(schema["properties"]) == {"request"}
-        assert "ctx" not in schema["properties"]
-        model_name = schema["$defs"].keys() - {"Pages", "ListPage"}
-        for definition in model_name:
+        # Arguments are flat. A tool whose request is a discriminated union publishes a
+        # root ``oneOf`` of closed variants instead of one closed object.
+        branches = schema.get("oneOf") or schema.get("anyOf") or [schema]
+        for branch in branches:
+            target = (
+                schema["$defs"][branch["$ref"].rsplit("/", 1)[-1]] if "$ref" in branch else branch
+            )
+            assert target["additionalProperties"] is False, name
+        assert "ctx" not in schema.get("properties", {})
+        for definition in schema.get("$defs", {}):
             if "additionalProperties" in schema["$defs"][definition]:
                 assert schema["$defs"][definition]["additionalProperties"] is False
         assert name.startswith("nat_rule_")

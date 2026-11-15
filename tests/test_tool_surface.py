@@ -49,13 +49,18 @@ EXPECTED_MUTATION_COUNT = 38
 EXPECTED_TOOL_MAP_COUNT = 145
 EXPECTED_COMPOSITE_COUNT = 5
 
-#: Tools whose operation declares no request parameters: they publish no ``request``.
+#: Tools whose operation declares no request parameters: they publish no arguments.
 EXPECTED_NO_ARGUMENT_TOOL_COUNT = 6
+
+#: Tools that publish no input properties at all. ``live_user_list`` is the seventh: its
+#: operation declares no parameters either, but it is not in ``NO_ARGUMENT_TOOLS`` because
+#: it still takes a (deliberately empty) request model.
+EXPECTED_EMPTY_INPUT_TOOL_COUNT = 7
 
 #: The published input surface, pinned: property occurrences at every depth and the number
 #: of distinct names. A change here means the input schema changed.
-EXPECTED_INPUT_PROPERTY_COUNT = 1428
-EXPECTED_INPUT_PROPERTY_NAME_COUNT = 167
+EXPECTED_INPUT_PROPERTY_COUNT = 1322
+EXPECTED_INPUT_PROPERTY_NAME_COUNT = 166
 
 #: The published output surface, pinned: property occurrences at every depth and the number
 #: of distinct names. A change here means the output schema changed.
@@ -192,8 +197,10 @@ async def test_every_tool_publishes_an_input_schema_and_an_open_world_hint() -> 
     for name, tool in tools.items():
         schema = tool.input_schema
         assert schema["type"] == "object", name
-        # Tools whose operation declares no request parameters accept no arguments.
-        assert set(schema["properties"]) <= {"request"}, name
+        # Arguments are flat: a tool whose operation declares no request parameters
+        # publishes no properties, and every other tool publishes its own fields.
+        assert "request" not in schema.get("properties", {}), name
+        assert "ctx" not in schema.get("properties", {}), name
 
         annotations = tool.annotations
         assert annotations is not None, name
@@ -265,11 +272,11 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
     digit or underscore. A single lowercase word such as ``from`` or ``to`` is identical
     in both conventions and passes.
 
-    The counts are pinned deliberately. 106 tools publish a ``request`` object (112 minus
-    the 8 tools whose operation declares no parameters), and the walk reaches 1,495
-    property occurrences over 167 distinct names, at every depth the schema nests. A
-    change to any of those numbers means the published input surface changed and must be
-    acknowledged here rather than silently shrinking the scan.
+    The counts are pinned deliberately. 105 of the 112 tools publish at least one input
+    property (the other 7 declare no parameters), and the walk reaches 1,322 property
+    occurrences over 166 distinct names, at every depth the schema nests. A change to any
+    of those numbers means the published input surface changed and must be acknowledged
+    here rather than silently shrinking the scan.
     """
     tools = await tools_by_name()
 
@@ -287,7 +294,7 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
 
     # The scan must reach the whole surface, not a subset of it.
     assert sum(1 for properties in scanned.values() if properties) == (
-        EXPECTED_TOOL_COUNT - EXPECTED_NO_ARGUMENT_TOOL_COUNT
+        EXPECTED_TOOL_COUNT - EXPECTED_EMPTY_INPUT_TOOL_COUNT
     )
     assert occurrences == EXPECTED_INPUT_PROPERTY_COUNT
     assert len(distinct) == EXPECTED_INPUT_PROPERTY_NAME_COUNT
