@@ -8,7 +8,7 @@ of them is safe to forward to a caller or a log line.
 The hierarchy is the contract consumed by the domain adapters and by #26:
 
 * :class:`SophosAPIError` -- base class, also used for unexpected statuses and malformed bodies.
-* :class:`SophosAuthError` -- 401 and 403.
+* :class:`SophosAuthError` -- 401 (authentication) and 403 (authorization).
 * :class:`SophosValidationError` -- 400.
 * :class:`SophosNotFoundError` -- 404.
 * :class:`SophosConflictError` -- 409.
@@ -49,7 +49,15 @@ class SophosAPIError(Exception):
 
 
 class SophosAuthError(SophosAPIError):
-    """Authentication or authorization failed (HTTP 401 or 403)."""
+    """Authentication or authorization failed (HTTP 401 or 403).
+
+    The two statuses are different failures with different fixes, so they share this class
+    but never a message: :attr:`~SophosAPIError.status` is the discriminator. A 401 means
+    the API key itself is missing, invalid or expired; a 403 means the key is valid but the
+    administrator profile behind it does not allow the operation. Callers that render a
+    model-facing message must branch on the status instead of assuming a permission
+    problem.
+    """
 
 
 class SophosValidationError(SophosAPIError):

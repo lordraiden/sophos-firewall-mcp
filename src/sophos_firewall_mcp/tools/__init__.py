@@ -54,17 +54,26 @@ Errors
 messages the model can act on. Unexpected exceptions are deliberately not caught: they
 propagate to the SDK, which logs the traceback on the server and reports only
 ``Error executing tool <name>`` to the model. ``CancelledError`` is never swallowed.
+
+Argument validation
+-------------------
+The SDK validates a call against an argument model it derives from the handler signature,
+before the handler runs, and renders a failure with the raw pydantic dump: the internal
+argument-model name, the rejected input values and a documentation URL. :func:`register_tool`
+replaces that model with a closed, sanitized subclass, so an unknown argument is rejected
+instead of silently dropped and the model only sees the field path and the rule.
 """
 
 from __future__ import annotations
 
 import re
 from enum import Enum
-from typing import Any, Callable, Protocol, Self, TypeVar
+from typing import Any, Callable, Protocol, Self, TypeVar, cast
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel, ConfigDict, ValidationError
 
 from sophos_firewall_mcp.client import SophosRestClient
 from sophos_firewall_mcp.context import AppContext
@@ -99,8 +108,53 @@ _ERROR_CODE_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]")
 #: appliance-supplied value as HTML.
 _UNSAFE_CHARACTERS = frozenset("<>")
 
+#: Model-facing text for HTTP 401: the key itself is the problem, not the profile.
+_AUTHENTICATION_DETAIL = (
+    "authentication failed: the API key is missing, invalid or expired; check "
+    "SOPHOS_API_KEY or SOPHOS_API_KEY_FILE"
+)
+
+#: Model-facing text for HTTP 403: the key is valid but the profile forbids the operation.
+_AUTHORIZATION_DETAIL = (
+    "the Sophos administrator associated with this API key is not allowed to perform "
+    "this operation; check its profile permissions"
+)
+
+#: Model-facing text for an auth failure whose status is neither 401 nor 403.
+_AUTH_DETAIL = (
+    "authentication or authorization failed; check the API key and the administrator "
+    "profile permissions"
+)
+
+#: Model-facing rule for the pydantic error types an argument model can raise. The
+#: pydantic ``msg`` is used for a type that is not listed; it never echoes the rejected
+#: value, only the rule.
+_ARGUMENT_RULES: dict[str, str] = {
+    "missing": "is required",
+    "extra_forbidden": "is not an accepted argument",
+    "literal_error": "must be one of {expected}",
+    "enum": "must be one of {expected}",
+    "int_parsing": "must be an integer",
+    "int_type": "must be an integer",
+    "int_from_float": "must be an integer",
+    "bool_parsing": "must be a boolean",
+    "bool_type": "must be a boolean",
+    "string_type": "must be a string",
+    "list_type": "must be a list",
+    "dict_type": "must be an object",
+    "greater_than_equal": "must be greater than or equal to {ge}",
+    "less_than_equal": "must be less than or equal to {le}",
+    "greater_than": "must be greater than {gt}",
+    "less_than": "must be less than {lt}",
+    "string_too_short": "must be at least {min_length} characters long",
+    "string_too_long": "must be at most {max_length} characters long",
+}
+
 ToolHandlerT = TypeVar("ToolHandlerT", bound=Callable[..., Any])
 """A registered tool function: a typed ``async def`` with an optional ``Context``."""
+
+ModelT = TypeVar("ModelT", bound=BaseModel)
+"""A pydantic model class, used to keep the argument-model swap type-preserving."""
 
 
 class ToolKind(Enum):
@@ -207,6 +261,11 @@ def register_tool(
         A decorator that registers the function and returns it unchanged, so the handler
         stays directly callable in tests.
 
+    The registered tool accepts exactly the arguments its signature declares: the SDK's
+    argument model is closed (``extra="forbid"``) and its validation failures are
+    sanitized, so a misspelled argument is reported instead of silently ignored and the
+    model never sees the internal model name or a pydantic URL.
+
     Raises:
         ValueError: The metadata is invalid or the annotations contradict the kind.
     """
@@ -228,9 +287,24 @@ def register_tool(
             description=description,
             annotations=resolved_annotations,
         )
+        _close_argument_model(server, name)
         return fn
 
     return decorator
+
+
+def _auth_detail(status: int | None) -> str:
+    """Pick the model-facing text for an auth failure from its HTTP status.
+
+    A 401 and a 403 are different failures with different fixes, so they must not share a
+    message: reporting a bad key as a permission problem sends the caller to change the
+    administrator profile instead of the key.
+    """
+    if status == 401:
+        return _AUTHENTICATION_DETAIL
+    if status == 403:
+        return _AUTHORIZATION_DETAIL
+    return _AUTH_DETAIL
 
 
 def tool_error(exc: SophosAPIError) -> ToolError:
@@ -252,10 +326,7 @@ def tool_error(exc: SophosAPIError) -> ToolError:
     if isinstance(exc, SophosNotFoundError):
         detail = "the requested Sophos object does not exist; check the name or id"
     elif isinstance(exc, SophosAuthError):
-        detail = (
-            "the Sophos administrator associated with this API key is not allowed to "
-            "perform this operation; check its profile permissions"
-        )
+        detail = _auth_detail(exc.status)
     elif isinstance(exc, SophosValidationError):
         detail = "the firewall rejected the request as invalid; check the field values"
     elif isinstance(exc, SophosConflictError):
@@ -280,6 +351,124 @@ def tool_error(exc: SophosAPIError) -> ToolError:
             error_code = f" [error: {sanitized_code}]"
 
     return ToolError(_sanitize(f"{detail}{status}{operation}{error_code}"))
+
+
+class _SanitizedArgumentError(ValidationError):
+    """A ``ValidationError`` whose ``str()`` is the sanitized, model-facing message.
+
+    The SDK renders an argument-validation failure with ``str(exc)`` and catches
+    ``ValidationError`` to report it as an anticipated failure. Subclassing keeps both
+    behaviours -- ``Tool.run`` still catches it and ``__cause__.errors()`` still works --
+    while the model only sees the sanitized line instead of the raw pydantic dump.
+    """
+
+    _sanitized_message: str = ""
+
+    def __str__(self) -> str:
+        return self._sanitized_message
+
+
+def _close_argument_model(server: MCPServer[AppContext], name: str) -> None:
+    """Replace a registered tool's argument model with the closed, sanitized subclass.
+
+    The SDK derives one argument model per tool from the handler signature and validates
+    every call against it before the handler runs. That model is the only seam: it accepts
+    unknown top-level arguments (``extra`` defaults to ``ignore``) and renders a failure as
+    the raw pydantic dump. Swapping it changes both behaviours without touching the
+    published input schema, which was derived from the original model at registration.
+
+    ``add_tool`` returns nothing, so the registered tool is read back through the SDK's
+    private tool manager. The access is deliberate and pinned: the argument-validation
+    tests fail if a future SDK stops exposing the model there.
+    """
+    tool = server._tool_manager.get_tool(name)
+    if tool is None:  # pragma: no cover - add_tool registered it immediately above
+        return
+    tool.fn_metadata.arg_model = _sanitized_argument_model(tool.fn_metadata.arg_model)
+    # The published schema must say what the runtime now enforces.
+    tool.parameters = {**tool.parameters, "additionalProperties": False}
+
+
+def _sanitized_argument_model(model: type[ModelT]) -> type[ModelT]:
+    """Return a subclass of the SDK's argument model with a closed, sanitized contract."""
+
+    class Sanitized(model):  # type: ignore[misc, valid-type]
+        model_config = ConfigDict(extra="forbid")
+
+        @classmethod
+        def model_validate(cls, obj: Any, **kwargs: Any) -> BaseModel:
+            try:
+                # ``super()`` keeps ``cls``, so the closed config above is the one applied.
+                return cast(BaseModel, super().model_validate(obj, **kwargs))
+            except ValidationError as exc:
+                raise _sanitized_argument_error(exc, cls) from None
+
+    return cast(type[ModelT], Sanitized)
+
+
+def _sanitized_argument_error(exc: ValidationError, model: type[BaseModel]) -> ValidationError:
+    """Build the sanitized ``ValidationError`` the SDK renders for the model."""
+    # ``errors()`` carries the same entries ``from_exception_data`` accepts; the extra
+    # ``msg``/``url`` keys are ignored by the constructor.
+    sanitized = _SanitizedArgumentError.from_exception_data(
+        "invalid arguments", cast(Any, exc.errors())
+    )
+    sanitized._sanitized_message = _argument_error_message(exc, model)
+    return sanitized
+
+
+def _argument_error_message(exc: ValidationError, model: type[BaseModel]) -> str:
+    """Render an argument-validation failure as one actionable line.
+
+    The raw pydantic dump names the internal argument model, echoes the rejected input and
+    links to the pydantic documentation; none of that helps a model correct its call. Only
+    the field path and the rule are kept, plus the accepted names when the caller used an
+    unknown one.
+    """
+    details: list[str] = []
+    for error in exc.errors():
+        location = ".".join(str(part) for part in error.get("loc", ())) or "arguments"
+        rule = _argument_rule(error)
+        detail = f"{location} {rule}"
+        if error.get("type") == "extra_forbidden":
+            accepted = _accepted_arguments(model, error.get("loc", ()))
+            if accepted:
+                detail = f"{detail}; {accepted}"
+        details.append(detail)
+    return _sanitize("invalid arguments: " + "; ".join(details))
+
+
+def _argument_rule(error: Any) -> str:
+    """Render one pydantic error as a rule, falling back to its (input-free) message."""
+    rule = _ARGUMENT_RULES.get(error.get("type", ""))
+    if rule is None:
+        return str(error.get("msg", "is invalid"))
+    try:
+        return rule.format(**(error.get("ctx") or {}))
+    except KeyError:
+        return str(error.get("msg", "is invalid"))
+
+
+def _accepted_arguments(model: type[BaseModel], location: tuple[Any, ...]) -> str:
+    """Name the arguments the caller could have used at the rejected field's level."""
+    parent: type[BaseModel] = model
+    for part in location[:-1]:
+        annotation = _field_annotation(parent, str(part))
+        if not (isinstance(annotation, type) and issubclass(annotation, BaseModel)):
+            return ""
+        parent = annotation
+    names = list(parent.model_fields)
+    if not names:
+        return "this tool accepts no arguments"
+    return f"accepted arguments are {', '.join(names)}"
+
+
+def _field_annotation(model: type[BaseModel], name: str) -> Any:
+    """Return the annotation of the field called ``name`` (or aliased to it), if any."""
+    for field_name, field in model.model_fields.items():
+        if field_name == name or field.alias == name:
+            return field.annotation
+    return None
 
 
 def _check_metadata(*, name: str, title: str, description: str) -> None:

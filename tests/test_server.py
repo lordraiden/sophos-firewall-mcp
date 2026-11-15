@@ -732,6 +732,124 @@ def test_tool_error_sanitizes_untrusted_text_and_bounds_the_length():
     assert len(message) <= 300
 
 
+def test_tool_error_reports_401_as_an_authentication_failure():
+    """H3: a 401 is a bad key, not a permission problem."""
+    exc = SophosAuthError(
+        "GET /x failed with HTTP 401",
+        method="GET",
+        path="/x",
+        status=401,
+        error_code="unauthenticated",
+    )
+
+    message = str(tool_error(exc))
+
+    assert "authentication failed" in message
+    assert "SOPHOS_API_KEY" in message
+    assert "SOPHOS_API_KEY_FILE" in message
+    assert "(HTTP 401)" in message
+    assert "[error: unauthenticated]" in message
+    # The old shared wording sent the caller to the administrator profile.
+    assert "not allowed" not in message
+    assert "profile permissions" not in message
+
+
+def test_tool_error_reports_403_as_an_authorization_failure():
+    """H3: a 403 is the profile, not the key."""
+    exc = SophosAuthError(
+        "GET /x failed with HTTP 403",
+        method="GET",
+        path="/x",
+        status=403,
+    )
+
+    message = str(tool_error(exc))
+
+    assert "not allowed" in message
+    assert "profile permissions" in message
+    assert "(HTTP 403)" in message
+    assert "authentication failed" not in message
+
+
+def test_tool_error_reports_an_auth_failure_without_a_status_neutrally():
+    """Neither message is safe to guess when the status is unknown."""
+    message = str(tool_error(SophosAuthError("GET /x failed")))
+
+    assert "authentication or authorization failed" in message
+    assert "not allowed" not in message
+    assert "authentication failed" not in message
+
+
+# -- Argument validation ---------------------------------------------------------------
+
+
+async def test_unknown_argument_is_rejected_with_a_sanitized_message():
+    """L4: the model sees the field and the rule, not the pydantic dump."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "sophos_synthetic_echo", {"request": {"name": "x", "bogus": 1}}
+        )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "request.bogus is not an accepted argument" in text
+    assert "accepted arguments are name" in text
+    # Nothing from the raw pydantic dump may reach the model.
+    assert "validation error for" not in text
+    assert "Arguments" not in text
+    assert "https://" not in text
+    assert "input_value" not in text
+
+
+async def test_argument_rule_violation_names_the_field_and_the_rule():
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_synthetic_echo", {"request": {"name": ""}})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "request.name must be at least 1 characters" in text
+    assert "https://" not in text
+
+
+async def test_missing_argument_is_reported_as_required():
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_synthetic_echo", {})
+
+    assert result.is_error is True
+    assert "request is required" in result.content[0].text
+
+
+async def test_no_argument_tool_rejects_unknown_arguments():
+    """L5: a typo on a no-argument tool is reported, not silently ignored."""
+    server = create_server(make_settings(), domains=[register_error_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_test_tool_error", {"bogus": 1})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "bogus is not an accepted argument" in text
+    assert "this tool accepts no arguments" in text
+    assert "https://" not in text
+
+
+async def test_published_input_schema_rejects_unknown_arguments():
+    """The published contract must say what the runtime enforces."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        tools = (await client.list_tools()).tools
+
+    echo = next(tool for tool in tools if tool.name == "sophos_synthetic_echo")
+    assert echo.input_schema["additionalProperties"] is False
+
+
 # -- STDIO transport -------------------------------------------------------------------
 
 
