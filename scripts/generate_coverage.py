@@ -1501,9 +1501,16 @@ def render_document(
     add(_cell(curated.firmware.get("status", "")))
     add("")
     live_evidence = str(curated.firmware.get("live_evidence", ""))
-    live_href = live_evidence[5:] if live_evidence.startswith("docs/") else live_evidence
+    evidence_links = []
+    for evidence_path in (part.strip() for part in live_evidence.split(",")):
+        if not evidence_path:
+            continue
+        evidence_href = (
+            evidence_path[5:] if evidence_path.startswith("docs/") else evidence_path
+        )
+        evidence_links.append(f"[`{evidence_path}`]({evidence_href})")
     add(
-        f"Live evidence: [`{live_evidence}`]({live_href}). "
+        f"Live evidence: {', '.join(evidence_links)}. "
         "The opt-in `pytest -m live` protocol and the `docs/live-evidence/<domain>.md` record "
         "format are documented in [`docs/live-evidence/README.md`](live-evidence/README.md)."
     )

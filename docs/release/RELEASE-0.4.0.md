@@ -98,12 +98,12 @@ placeholder tool is advertised:
 
 ### 1.6 Known limitations
 
-- **Input parameter naming is not yet uniform.** 79 tools (firewall, network, VPN) publish the Sophos
-  wire names (`pageSize`, `nameContains`, `idOrName`) and 61 tools (NAT, objects, users) publish
-  snake_case (`page_size`, `name_contains`, `id_or_name`); 12 tools take no parameters. Every tool
-  schema is self-describing, so this is an ergonomics inconsistency, not a functional defect. It will
-  be unified in **0.5.0** as a documented breaking change; callers that hard-code parameter names
-  should expect that change.
+- **Input parameter naming is not yet uniform.** Measured on the published schemas: 74 tools publish
+  camelCase-only inputs (firewall, network, VPN), 55 publish snake_case-only (NAT, objects, users), 5
+  mix both, 6 have only single-word fields and 12 take no parameters. Every tool schema is
+  self-describing, so this is an ergonomics inconsistency, not a functional defect. It will be unified
+  in **0.5.0** as a documented breaking change; callers that hard-code parameter names should expect
+  that change.
 - **Target firmware build is unknown.** The contract exposes no version endpoint, so this release makes
   **no firmware compatibility claim**. Verify against your own appliance before relying on a tool.
 - **No live write validation.** The shared lab credential is read-only; no POST, PATCH or DELETE has been

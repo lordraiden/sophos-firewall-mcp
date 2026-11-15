@@ -274,7 +274,7 @@ The REST contract does not expose every capability of the old XML tooling or the
 
 Unresolved. The contract exposes no version endpoint and `getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`. SFOS 23.0 GA Build 371 is the documented reference for the REST API, not a verified target build.
 
-Live evidence: [`docs/live-evidence/api-smoke-2026-11-15.md, docs/live-evidence/phase-3-live-matrix.md`](live-evidence/api-smoke-2026-11-15.md, docs/live-evidence/phase-3-live-matrix.md). The opt-in `pytest -m live` protocol and the `docs/live-evidence/<domain>.md` record format are documented in [`docs/live-evidence/README.md`](live-evidence/README.md).
+Live evidence: [`docs/live-evidence/api-smoke-2026-11-15.md`](live-evidence/api-smoke-2026-11-15.md), [`docs/live-evidence/phase-3-live-matrix.md`](live-evidence/phase-3-live-matrix.md). The opt-in `pytest -m live` protocol and the `docs/live-evidence/<domain>.md` record format are documented in [`docs/live-evidence/README.md`](live-evidence/README.md).
 
 ## 5. Operations by domain
 
