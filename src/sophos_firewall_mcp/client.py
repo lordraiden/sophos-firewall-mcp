@@ -205,7 +205,9 @@ class SophosRestClient:
             params: Additional query parameters (for example ``nameContains``).
 
         Returns:
-            The page object exactly as returned, with ``items`` and ``pages`` preserved.
+            The page object exactly as returned, with ``items`` preserved and ``pages`` preserved
+            when the operation declares it. ``pages`` is optional in the contract
+            (``listNetworkInterfaces`` is in the v1 network domain), so it is never invented.
 
         Raises:
             ValueError: ``page`` or ``page_size`` is out of range; nothing is sent.
@@ -232,9 +234,16 @@ class SophosRestClient:
                 method="GET",
                 path=path,
             )
-        if not isinstance(payload.get("items"), list) or not isinstance(payload.get("pages"), dict):
+        if not isinstance(payload.get("items"), list):
             raise SophosAPIError(
-                f"GET {path} returned a paginated body without 'items' and 'pages'",
+                f"GET {path} returned a paginated body without a list 'items'",
+                method="GET",
+                path=path,
+            )
+        pages = payload.get("pages")
+        if pages is not None and not isinstance(pages, dict):
+            raise SophosAPIError(
+                f"GET {path} returned a non-object 'pages' in a paginated body",
                 method="GET",
                 path=path,
             )

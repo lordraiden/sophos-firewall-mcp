@@ -612,12 +612,22 @@ async def test_trust_env_is_disabled(router: Any, monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid:3128")
     monkeypatch.setenv("ALL_PROXY", "http://proxy.invalid:3128")
 
+    captured: dict[str, Any] = {}
+    real_client = httpx.AsyncClient
+
+    def factory(**kwargs: Any) -> httpx.AsyncClient:
+        captured.update(kwargs)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", factory)
+
     path = "/network/dns/protection/status"
     route = router.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json={}))
     client = make_client()
     try:
-        assert client._client._trust_env is False  # type: ignore[attr-defined]
-        assert client._client.follow_redirects is False
+        # Public surface: the constructor kwargs, not httpx private attributes.
+        assert captured["trust_env"] is False
+        assert captured["follow_redirects"] is False
         await client.get(path)
     finally:
         await client.aclose()
@@ -799,9 +809,27 @@ async def test_get_page_rejects_a_non_object_body(router: Any) -> None:
     assert "non-object" in str(info.value)
 
 
-async def test_get_page_rejects_missing_metadata(router: Any) -> None:
+async def test_get_page_accepts_a_missing_pages_object(router: Any) -> None:
+    """``pages`` is optional for ``listNetworkInterfaces`` (v1 scope); do not invent it."""
+    path = "/network/interfaces/network-interfaces"
+    body = {"items": [{"name": "Port1"}]}
+    route = router.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json=body))
+    client = make_client()
+    try:
+        result = await client.get_page(path)
+    finally:
+        await client.aclose()
+
+    assert result == body
+    assert "pages" not in result
+    assert "page=1" in str(route.calls.last.request.url)
+
+
+async def test_get_page_rejects_missing_items(router: Any) -> None:
     path = "/authentication/users"
-    router.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json={"items": []}))
+    router.get(f"{BASE}{path}").mock(
+        return_value=httpx.Response(200, json={"pages": {"current": 1}})
+    )
     client = make_client()
     try:
         with pytest.raises(SophosAPIError) as info:
@@ -810,6 +838,20 @@ async def test_get_page_rejects_missing_metadata(router: Any) -> None:
         await client.aclose()
 
     assert "items" in str(info.value)
+
+
+async def test_get_page_rejects_non_object_pages(router: Any) -> None:
+    path = "/authentication/users"
+    router.get(f"{BASE}{path}").mock(
+        return_value=httpx.Response(200, json={"items": [], "pages": []})
+    )
+    client = make_client()
+    try:
+        with pytest.raises(SophosAPIError) as info:
+            await client.get_page(path)
+    finally:
+        await client.aclose()
+
     assert "pages" in str(info.value)
 
 

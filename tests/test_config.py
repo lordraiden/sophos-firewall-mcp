@@ -131,6 +131,55 @@ def test_blank_optional_values_use_defaults() -> None:
     assert settings.read_only_mode is False
 
 
+def test_optional_boolean_and_numeric_values_are_stripped() -> None:
+    settings = Settings.from_env(
+        env(
+            SOPHOS_PORT=" 8443 ",
+            SOPHOS_VERIFY_SSL=" false ",
+            SOPHOS_TIMEOUT=" 12.5 ",
+            SOPHOS_READ_ONLY_MODE=" true ",
+        )
+    )
+
+    assert settings.port == 8443
+    assert settings.timeout == 12.5
+    assert settings.verify_ssl is False
+    assert settings.read_only_mode is True
+
+
+def test_optional_paths_and_inline_key_are_stripped(tmp_path: Path) -> None:
+    ca_bundle = tmp_path / "ca.pem"
+    ca_bundle.write_text("cert", encoding="utf-8")
+    key_file = tmp_path / "key"
+    key_file.write_text("file-secret\n", encoding="utf-8")
+
+    settings = Settings.from_env(
+        {
+            "SOPHOS_HOST": "fw.example.com",
+            "SOPHOS_API_KEY_FILE": f"  {key_file}  ",
+            "SOPHOS_CA_BUNDLE": f"  {ca_bundle}  ",
+        }
+    )
+
+    assert settings.api_key.get_secret_value() == "file-secret"
+    assert settings.api_key_file == key_file
+    assert settings.ca_bundle == ca_bundle
+
+
+def test_inline_api_key_is_stripped() -> None:
+    settings = Settings.from_env(env(SOPHOS_API_KEY="  inline-secret  "))
+
+    assert settings.api_key.get_secret_value() == "inline-secret"
+
+
+def test_whitespace_only_api_key_is_treated_as_missing() -> None:
+    with pytest.raises(ConfigurationError) as info:
+        Settings.from_env({"SOPHOS_HOST": "fw.example.com", "SOPHOS_API_KEY": "   "})
+
+    assert "SOPHOS_API_KEY" in str(info.value)
+    assert info.value.__cause__ is None
+
+
 # -- API key sources ---------------------------------------------------------
 
 
@@ -374,6 +423,21 @@ def test_direct_construction_redacts_the_key() -> None:
 
     assert KEY not in repr(settings)
     assert settings.api_key.get_secret_value() == KEY
+
+
+@pytest.mark.parametrize("api_key", ["", "   ", "\n\t "])
+def test_direct_construction_rejects_an_empty_api_key(api_key: str) -> None:
+    with pytest.raises(ValidationError) as info:
+        Settings(host="fw.example.com", api_key=api_key)
+
+    assert "api_key" in str(info.value)
+
+
+def test_direct_construction_strips_api_key_whitespace() -> None:
+    settings = Settings(host="fw.example.com", api_key="  direct-secret  ")
+
+    assert settings.api_key.get_secret_value() == "direct-secret"
+    assert "direct-secret" not in repr(settings)
 
 
 def test_unknown_fields_are_rejected() -> None:

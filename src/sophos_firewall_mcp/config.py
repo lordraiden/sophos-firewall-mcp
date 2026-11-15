@@ -80,11 +80,17 @@ def _raw(env: Mapping[str, str], name: str) -> str | None:
 
 
 def _optional(env: Mapping[str, str], name: str) -> str | None:
-    """Return *name* unless it is absent or blank."""
+    """Return *name* stripped, or ``None`` when it is absent or blank.
+
+    Stripping here keeps every optional setting consistent: a ``.env`` line such as
+    ``SOPHOS_VERIFY_SSL= false `` must mean the same as ``SOPHOS_VERIFY_SSL=false``, exactly as
+    Pydantic already tolerates surrounding whitespace for the numeric settings.
+    """
     value = _raw(env, name)
-    if value is None or value.strip() == "":
+    if value is None:
         return None
-    return value
+    stripped = value.strip()
+    return stripped or None
 
 
 def _summarize(exc: ValidationError) -> str:
@@ -172,6 +178,24 @@ class Settings(BaseModel):
     def _check_host(cls, value: str) -> str:
         return _validate_host(value)
 
+    @field_validator("api_key")
+    @classmethod
+    def _check_api_key(cls, value: SecretStr) -> SecretStr:
+        """Reject an empty secret, including on direct construction.
+
+        ``from_env`` already rejects a missing or blank key, but ``Settings(...)`` is also a public
+        constructor: without this check the server could start with ``Authorization: Bearer `` and
+        fail only on the first API call. Surrounding whitespace is stripped for the same reason
+        ``from_env`` strips it; the key itself never appears in the error.
+        """
+        secret = value.get_secret_value()
+        stripped = secret.strip()
+        if stripped == "":
+            raise ValueError("api_key must not be empty")
+        if stripped != secret:
+            return SecretStr(stripped)
+        return value
+
     @field_validator("port")
     @classmethod
     def _check_port(cls, value: int) -> int:
@@ -255,13 +279,11 @@ class Settings(BaseModel):
 
         key_file: Path | None = None
         if raw_key_file is not None:
-            key_file = Path(raw_key_file).expanduser()
+            key_file = Path(raw_key_file.strip()).expanduser()
             secret = _read_secret_file(key_file)
         else:
             assert raw_key is not None  # narrowed by the checks above
-            secret = raw_key.strip()
-            if secret == "":
-                raise ConfigurationError(f"{_ENV_API_KEY} must not be empty")
+            secret = raw_key
 
         values: dict[str, Any] = {
             "host": host,
@@ -276,7 +298,7 @@ class Settings(BaseModel):
             values["verify_ssl"] = verify_ssl
         ca_bundle = _optional(source, _ENV_CA_BUNDLE)
         if ca_bundle is not None:
-            values["ca_bundle"] = Path(ca_bundle).expanduser()
+            values["ca_bundle"] = Path(ca_bundle.strip()).expanduser()
         timeout = _optional(source, _ENV_TIMEOUT)
         if timeout is not None:
             values["timeout"] = timeout
