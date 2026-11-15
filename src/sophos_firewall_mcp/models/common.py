@@ -110,20 +110,34 @@ def validate_object_name(value: str) -> str:
 ObjectName = Annotated[str, AfterValidator(validate_object_name)]
 
 
-def validate_object_name_or_id(value: str) -> str:
-    """Validate the documented ``sfos-object-name-or-id`` format.
+#: Characters that cannot appear in a value used as one URL path segment.
+_PATH_UNSAFE = ("/", "\\", "..", "?", "#")
 
-    A UUID is accepted as an identifier; anything else must be a valid object name. GET,
-    PATCH and DELETE paths use this form, so the same value may be a name or an id.
+
+def validate_object_name_or_id(value: str) -> str:
+    """Validate the documented ``sfos-object-name-or-id`` format for a path identifier.
+
+    A UUID is accepted as an identifier; anything else must be a valid object name **and**
+    usable as a single URL path segment: the shared client rejects ``/``, ``\\``, ``..``,
+    ``?`` and ``#`` in a path, so a name carrying one of them would fail later with a
+    transport-level error instead of a clear validation error. GET, PATCH and DELETE paths
+    use this form, so the same value may be a name or an id.
 
     Raises:
-        ValueError: The value is neither a UUID nor a valid Sophos object name.
+        ValueError: The value is neither a UUID nor a usable object name.
     """
     if not isinstance(value, str):
         raise ValueError("object identifier must be a string")
-    if _UUID_PATTERN.match(value):
+    if _UUID_PATTERN.fullmatch(value):
         return value
-    return validate_object_name(value)
+    name = validate_object_name(value)
+    for token in _PATH_UNSAFE:
+        if token in name:
+            raise ValueError(
+                "object identifier must be usable as a single URL path segment; "
+                f"it must not contain {token!r}"
+            )
+    return name
 
 
 #: ``str`` annotated with the documented name-or-id validation.

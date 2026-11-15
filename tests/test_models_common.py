@@ -98,7 +98,9 @@ def test_object_name_or_id_accepts_names_and_uuids(value: str):
     assert validate_object_name_or_id(value) == value
 
 
-@pytest.mark.parametrize("value", ["", " leading", "a,b", "a;b", "a\x00b"])
+@pytest.mark.parametrize(
+    "value", ["", " leading", "a,b", "a;b", "a\x00b", "a/b", "a\\b", "a..b", "a?b", "a#b"]
+)
 def test_object_name_or_id_rejects_invalid_names(value: str):
     with pytest.raises(ValueError):
         validate_object_name_or_id(value)
