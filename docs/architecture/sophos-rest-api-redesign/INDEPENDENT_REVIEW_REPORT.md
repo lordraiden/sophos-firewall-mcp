@@ -279,8 +279,8 @@ Aciclo confirmado. El único ciclo blando detectado (#25 pedía coordinar con #2
 
 **Código de aplicación, dependencias, workflows, Docker, Compose y configuración de release: NO modificados.** El único cambio en el entorno local fue la instalación de dependencias de desarrollo y `pyyaml` en `.venv`, y la caché de uv en `.uv-cache/` (ignorada por git).
 
-**Commit:** `PENDING` — se rellena al publicar la rama.  
-**PR:** `PENDING` — se abre contra `main` y **no se fusiona**.
+**Commit de correcciones:** `bb57afd` (docs: independent audit of REST migration plan and issues).  
+**PR:** [#33](https://github.com/lordraiden/sophos-firewall-mcp/pull/33) — abierto contra `main` y **no fusionado**.
 
 ---
 
