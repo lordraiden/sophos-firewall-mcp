@@ -6,7 +6,7 @@
 
 Implement the five domain tool families on top of the phase 1 foundation, with typed contracts, tests, and coverage, **without touching the foundation**.
 
-**Issues:** [#27](https://github.com/lordraiden/sophos-firewall-mcp/issues/27) firewall rules, [#28](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) NAT rules, [#29](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) objects and services, [#30](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) users and sessions, [#31](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) VPN, interfaces, and status.
+**Issues:** [#27](https://github.com/lordraiden/sophos-firewall-mcp/issues/27) firewall rules (maximum surface), [#28](https://github.com/lordraiden/sophos-firewall-mcp/issues/28) NAT rules, [#29](https://github.com/lordraiden/sophos-firewall-mcp/issues/29) objects and services, [#30](https://github.com/lordraiden/sophos-firewall-mcp/issues/30) users and sessions, [#31](https://github.com/lordraiden/sophos-firewall-mcp/issues/31) network architecture + VPN read-only + status, [#35](https://github.com/lordraiden/sophos-firewall-mcp/issues/35) rule audit, connectivity explanation and object usage.
 
 **Out of scope:** changes to `client.py`, `config.py`, `server.py`, `context.py`, `pyproject.toml`, CI, Docker, or release. If one is needed, ask the Lead and handle it as a separate task.
 
@@ -15,7 +15,7 @@ Implement the five domain tool families on top of the phase 1 foundation, with t
 1. Verify on `main` (or the base branch) that the following exist and are documented: `AppContext`, the `register_<domain>_tools(...)` signature, the REST client, and the error hierarchy. If not, **stop**: phase 1 is not ready.
 2. Create branch `migration/phase-2-domain-tools`.
 3. Create tasks T27–T31 + T32 (review) with disjoint `write_scopes` and no `blocked_by` (the foundation is already there).
-4. Create `firewall`, `nat`, `objects`, `users`, `vpn`, and `reviewer`.
+4. Create `firewall`, `nat`, `objects`, `users`, `network`, `audit`, and `reviewer`.
 5. Assign one task per agent and send the work prompt. All five can work in parallel because their files are disjoint.
 
 ## Write ownership (disjoint)
@@ -26,7 +26,8 @@ Implement the five domain tool families on top of the phase 1 foundation, with t
 | `nat` | #28 | `tools/nat_rules.py`, `tests/test_nat_rules.py`, `docs/api-coverage/nat.md` | idem |
 | `objects` | #29 | `tools/hosts_objects.py`, `tools/services_objects.py`, `tests/test_hosts_objects.py`, `tests/test_services_objects.py`, `docs/api-coverage/objects.md` | idem |
 | `users` | #30 | `tools/users_auth.py`, `tests/test_users_auth.py`, `docs/api-coverage/users.md` | idem |
-| `vpn` | #31 | `tools/vpn.py`, `tools/system.py`, `tests/test_vpn.py`, `tests/test_system.py`, `docs/api-coverage/vpn.md` | idem |
+| `network` | #31 | `tools/network.py`, `tools/vpn.py`, `tools/system.py`, `tests/test_network.py`, `tests/test_vpn.py`, `tests/test_system.py`, `docs/api-coverage/network.md` | idem |
+| `audit` | #35 | `tools/audit.py`, `tests/test_audit.py`, `docs/api-coverage/audit.md` | idem |
 | `reviewer` | — | nothing (report) | everything |
 | Lead | integration | `docs/API-COVERAGE.md` (assembly), branch, integration commits | domain code |
 
@@ -81,13 +82,22 @@ Each agent must:
 - Administrators and user groups: out of scope.
 - Credentials: write-only, never in output or logs.
 
-### T31 — VPN, interfaces, and status (`vpn`)
+### T31 — Network architecture, VPN read-only, and status (`network`)
 
-- **VPN read-only in v1**: profiles, failover groups, policy/route-based IPv4 connections, live connections, remote-access settings, SSL VPN policies/bookmarks/global settings.
-- **Interfaces read-only**: `listNetworkInterfaces`, `getNetworkInterface`; mutations deferred.
+- **Network architecture (read-only):** interfaces, zones, routing gateways (IPv4/IPv6, WAN and custom), static unicast routes, SD-WAN routes, DHCP servers, DHCP leases, DHCP relays, DNS settings, DNS host entries, DNS request routes, static neighbors.
+- **Interfaces: read-only except VLANs.** `createNetworkInterface`, `updateNetworkInterface`, `deleteNetworkInterface` are exposed **only** for `type: vlan`; physical, bridge, LAG and XFRM stay read-only. A VLAN write must never alter a physical interface.
+- **VPN read-only:** profiles, failover groups, policy/route-based IPv4 connections, live connections, remote-access settings, SSL VPN policies/bookmarks/global settings. No VPN mutations.
 - Status: `getDnsProtectionStatus`, `getCellularWanStatus`; do **not** create a generic "firewall health" tool.
 - No IPv6 site-to-site (it does not exist in the contract).
+- Logs are out: the contract has no log query endpoint. System info/service status are an accepted regression.
 - Do not infer start/stop/reconnect from the UI.
+
+### T35 — Rule audit and connectivity explanation (`audit`)
+
+- `audit_firewall_rules`: any-any, disabled, shadowed/duplicate, no-logging, unused-object, NAT-without-rule, unrestricted-service. Evidence-based, bounded, read-only.
+- `explain_connectivity`: source/destination/service → interfaces, zones, ordered rules, NAT, routing, verdict; explicitly configuration analysis, not a packet test; `not-verifiable` instead of guessing.
+- `find_object_usage`: scan rules, NAT and groups for references; bounded, with explicit truncation.
+- No mutations; no invented fields.
 
 ## Review (T32)
 
@@ -107,7 +117,7 @@ Each agent must:
 
 ## Exit criteria
 
-- [ ] Five domains implemented with the exact v1 scope.
+- [ ] Six domains implemented with the exact v1 scope (firewall, NAT, objects, users, network, audit).
 - [ ] Every tool maps to audited operationIds and has contract tests.
 - [ ] Annotations and schemas verified on the wire (tools/list).
 - [ ] `API-COVERAGE.md` assembled and regenerable.

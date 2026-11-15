@@ -17,7 +17,7 @@ Therefore: **3 sequential phases + 1 independent review per phase**.
 | Phase | Issues | Prompt | Output |
 |---|---|---|---|
 | 1 — Foundation | #24, #25, #26 | [`01-PHASE-1-FOUNDATION.md`](./01-PHASE-1-FOUNDATION.md) | ADR, `API-COVERAGE.md`, REST client, MCP foundation, tests |
-| 2 — Domain tools | #27, #28, #29, #30, #31 | [`02-PHASE-2-DOMAIN-TOOLS.md`](./02-PHASE-2-DOMAIN-TOOLS.md) | 5 domain PRs + coverage + tests |
+| 2 — Domain tools | #27, #28, #29, #30, #31, #35 | [`02-PHASE-2-DOMAIN-TOOLS.md`](./02-PHASE-2-DOMAIN-TOOLS.md) | 6 domain PRs + coverage + tests |
 | 3 — Hardening and release | #32 | [`03-PHASE-3-HARDENING-RELEASE.md`](./03-PHASE-3-HARDENING-RELEASE.md) | CI, Docker, docs, evidence, release prepared |
 | Review | cross-cutting | [`04-REVIEW-PROTOCOL.md`](./04-REVIEW-PROTOCOL.md) | Adversarial report per phase |
 
@@ -39,7 +39,7 @@ Each phase prompt **starts by reading** [`00-MASTER-PROMPT.md`](./00-MASTER-PROM
 | Phase | Members | Write ownership |
 |---|---|---|
 | 1 | `contract`, `client`, `foundation`, `reviewer` | `docs/API-COVERAGE.md`, `docs/architecture/ADR-001-*`, `scripts/coverage*`, `src/sophos_firewall_mcp/client.py`, `config.py`, `server.py`, `context.py`, `tests/` |
-| 2 | `firewall`, `nat`, `objects`, `users`, `vpn`, `reviewer` | `src/sophos_firewall_mcp/tools/<domain>.py`, `tests/test_<domain>.py`, `docs/api-coverage/<domain>.md` |
+| 2 | `firewall`, `nat`, `objects`, `users`, `network`, `audit`, `reviewer` | `src/sophos_firewall_mcp/tools/<domain>.py`, `tests/test_<domain>.py`, `docs/api-coverage/<domain>.md` |
 | 3 | `hardening`, `release`, `reviewer` | `.github/`, `Dockerfile`, `docker-compose.yml`, `README.md`, `.env.example`, `pyproject.toml`, `uv.lock` |
 
 The Lead does not write domain code: it coordinates, reviews diffs, integrates, and decides. The `reviewer` never writes to `src/`.
