@@ -1,482 +1,391 @@
-"""Async Sophos Firewall XML API Client."""
+"""Asynchronous transport for the Sophos Firewall Configuration REST API.
 
+One :class:`SophosRestClient` wraps exactly one :class:`httpx.AsyncClient` and is created by the MCP
+lifespan, shared by every domain adapter and closed in ``finally``. The appliance base URL is fixed
+by :class:`~sophos_firewall_mcp.config.Settings`; callers pass a validated ``/``-prefixed path and
+can never supply an absolute URL, a host or a header.
+
+Transport policy (ADR-001 §9):
+
+* ``Authorization: Bearer <api key>`` and ``Accept: application/json`` on every request;
+  ``Content-Type: application/json`` on POST and PATCH only (never ``application/merge-patch+json``);
+* TLS verification on by default, optional private CA bundle, explicit timeout;
+* redirects are not followed, so the Bearer token cannot cross origins;
+* ``trust_env=False``: inherited proxy variables are ignored;
+* reads retry at most twice, only for connect/read timeouts and 502/503/504, with jittered
+  exponential backoff; writes are never retried and surface
+  :class:`~sophos_firewall_mcp.errors.SophosAmbiguousWriteError` instead.
+"""
+
+from __future__ import annotations
+
+import asyncio
 import logging
-import os
-from typing import Any, Dict, FrozenSet, List, Optional, Tuple, Union, cast
-from xml.parsers.expat import ExpatError
+import random
+import re
+from typing import Any, Mapping
 
 import httpx
-import xmltodict
+
+from .config import Settings
+from .errors import (
+    SophosAmbiguousWriteError,
+    SophosAPIError,
+    SophosAuthError,
+    SophosConflictError,
+    SophosNotFoundError,
+    SophosTransportError,
+    SophosValidationError,
+)
+
+__all__ = ["SophosRestClient"]
 
 logger = logging.getLogger(__name__)
 
-# --- Response diagnostics ----------------------------------------------------
-# An empty or non-XML body used to surface as `ExpatError: no element found: line 1, column 0`, which names
-# neither the appliance nor the cause. The body is empty for real, ordinary reasons -- API access disabled,
-# client IP missing from Allowed IP Addresses, wrong port, or a proxy eating the form body -- so the error
-# spells those out instead of looking like a parser bug.
-_EMPTY_BODY_MESSAGE = (
-    "the appliance accepted the request and returned an empty body (HTTP {status}). "
-    "This is a configuration problem, not a credentials problem: check that (1) API access is enabled "
-    "under System > Administration > API Access, (2) this client's IP is in Allowed IP Addresses, "
-    "(3) the port ({port}) is the Admin Console HTTPS port configured on the appliance, and (4) no proxy "
-    "or WAF is stripping the request body. The XML must travel in the 'reqxml' form field."
-)
+#: Methods that carry a JSON request body and therefore a ``Content-Type`` header.
+_JSON_BODY_METHODS = frozenset({"POST", "PATCH"})
 
-_TIMEOUT_MESSAGE = (
-    "SFOS did not answer within {seconds:g}s (operation={operation}, tag={tag}, endpoint={endpoint}). "
-    "A full listing on a large configuration can take longer than that: raise SOPHOS_TIMEOUT "
-    "(for example SOPHOS_TIMEOUT=300) or request less data. Without a message like this the caller only "
-    "saw 'Error executing tool <name>: ' with nothing after the colon, because str(httpx.ReadTimeout()) "
-    "is empty."
-)
-_CONNECT_MESSAGE = (
-    "Could not reach SFOS at {endpoint} (operation={operation}, tag={tag}): {reason}. Check "
-    "SOPHOS_HOST/SOPHOS_PORT, that the admin console is reachable from this host, and that API access "
-    "is enabled for this client IP."
-)
-DEFAULT_TIMEOUT = 120.0
+#: Statuses that are worth retrying for an idempotent read.
+_RETRYABLE_STATUSES = frozenset({502, 503, 504})
 
+#: Transport failures that are safe to retry for a read: the request was not applied.
+_RETRYABLE_EXCEPTIONS = (httpx.ConnectTimeout, httpx.ReadTimeout)
 
-def _env_timeout() -> float:
-    """HTTP timeout: ``SOPHOS_TIMEOUT`` in seconds, else :data:`DEFAULT_TIMEOUT`.
+#: Maximum attempts for a read (one initial attempt plus one retry).
+_MAX_READ_ATTEMPTS = 2
 
-    The old hardcoded 30s is below what a full ``Get FirewallRule`` takes on a real configuration (~64 KB
-    over a VPN), so legitimate calls failed as if the server had died. An invalid value falls back to the
-    default with a warning rather than raising: a typo in an env var must not stop the server from booting.
-    """
-    raw = os.getenv("SOPHOS_TIMEOUT", "").strip()
-    if not raw:
-        return DEFAULT_TIMEOUT
-    try:
-        value = float(raw)
-    except ValueError:
-        logger.warning("SOPHOS_TIMEOUT=%r is not a number; using %ss", raw, DEFAULT_TIMEOUT)
-        return DEFAULT_TIMEOUT
-    if value <= 0 or value != value:  # non-positive or NaN
-        logger.warning("SOPHOS_TIMEOUT=%r is not a usable timeout; using %ss", raw, DEFAULT_TIMEOUT)
-        return DEFAULT_TIMEOUT
-    return value
+#: Base delay of the jittered exponential backoff, in seconds.
+_BACKOFF_BASE_SECONDS = 0.5
 
-
-_NOT_XML_MESSAGE = (
-    "the appliance answered HTTP {status} with a body that is not XML. First {limit} characters "
-    "received (credentials redacted): {snippet}"
-)
-
-
-def _redacted_snippet(text: str, secret: str, limit: int = 240) -> str:
-    """First *limit* characters of a body, with the account password removed.
-
-    The snippet exists so the failure can be diagnosed, so it must not become a new way for the password
-    to reach a log line or a tool result.
-    """
-    snippet = " ".join(text.split())[:limit]
-    if secret:
-        snippet = snippet.replace(secret, "[REDACTED]")
-    return snippet or "<empty>"
-
-
-# --- Payload hardening -------------------------------------------------------
-# The SFOS XML API returns credential material inside some Get payloads: the
-# <Interface> entity carries the PPPoE Username and an encrypted Password.
-SECRET_KEYS: FrozenSet[str] = frozenset(
-    {
-        "password",
-        "passwordhash",
-        "presharedkey",
-        "passphrase",
-        "secret",
-        "token",
-        "privatekey",
-        "clientsecret",
-    }
-)
-
-# Tags carrying credentials beyond the global denylist. "username" stays out of
-# SECRET_KEYS on purpose: the User entity uses it as the account identifier, and
-# sophos_list_users would otherwise lose its primary field.
-TAG_SECRET_KEYS: Dict[str, FrozenSet[str]] = {"interface": frozenset({"username"})}
-
-# --- SFOS status codes -------------------------------------------------------
-# Official table: https://docs.sophos.com/nsg/sophos-firewall/22.0/api/apicontentpage.html
-# The previous logic guessed from the message text and exempted 500 outright, so a 500 ("Operation could
-# not be performed on Entity") was reported as success and a 203 ("successful but few configurations could
-# not be applied") looked identical to a clean 200. For a server an agent uses to change firewall
-# configuration, a partial apply reported as success is the most expensive mistake available.
-_STATUS_DESCRIPTIONS: Dict[str, str] = {
-    "200": "Configuration applied successfully",
-    "201": "Operation partially successful",
-    "203": "Operation successful but few configurations could not be applied",
-    "216": "Operation successful",
-    "500": "Operation could not be performed on Entity",
-    "501": "Configuration parameters validation failed",
-    "502": "Entity having same name already exists",
-    "503": "Entity having same parameter details already exists",
-    "521": "XML request not compatible with current API version",
-    "526": "Record does not exist",
-    "528": "Trying to update default entities which are not editable",
-    "529": "Invalid XML request for entity/entities",
-    "530": "API version not supported for specific entity",
-    "599": "Not having privilege to add/modify configuration",
+#: Documented status mapping. Anything else maps to the base :class:`SophosAPIError`.
+_STATUS_EXCEPTIONS: dict[int, type[SophosAPIError]] = {
+    400: SophosValidationError,
+    401: SophosAuthError,
+    403: SophosAuthError,
+    404: SophosNotFoundError,
+    409: SophosConflictError,
 }
 
-# 200/216 are the only codes that mean "fully applied".
-_STATUS_OK = frozenset({"200", "216"})
-# 201/203 say so in their own text; 211-215 are warning messages attached to an operation.
-_STATUS_WARNING = frozenset({"201", "203", "211", "212", "213", "214", "215"})
-# 204-210 "partially failed", 504-510/511-520/522-525/541-590 failed or limit reached: errors by default,
-# which is what an unlisted code falls back to as well.
+#: Characters allowed in the appliance's short ``error`` code before it reaches a message.
+_ERROR_CODE_PATTERN = re.compile(r"[^A-Za-z0-9_.:-]")
+
+#: Sentinel distinguishing "no body" from a JSON ``null`` body.
+_NO_BODY = object()
 
 
-def _classify_status(code: str) -> str:
-    """Map an SFOS status code to ``ok`` / ``warning`` / ``error`` using the documented table."""
-    if code in _STATUS_OK:
-        return "ok"
-    if code in _STATUS_WARNING:
-        return "warning"
-    return "error"
+async def _sleep(seconds: float) -> None:
+    """Backoff sleep, kept module-level so tests can replace it with a no-op."""
+    await asyncio.sleep(seconds)
 
 
-def _status_message(code: str, text: str = "") -> str:
-    """Human-readable meaning of a status code, keeping whatever the appliance itself said."""
-    described = _STATUS_DESCRIPTIONS.get(code, text or "no description provided by the appliance")
-    if text and text != described:
-        return f"{described} ({text})"
-    return described
+def _backoff_delay(attempt: int) -> float:
+    """Jittered exponential backoff for the given (1-based) retry attempt."""
+    exponential: float = _BACKOFF_BASE_SECONDS * (2.0 ** (attempt - 1))
+    jitter: float = random.uniform(0.5, 1.0)
+    return exponential * jitter
 
 
-def _scrub_secrets(node: Any, keys: FrozenSet[str] = SECRET_KEYS) -> Any:
-    """Return a copy of an API payload with credential-bearing keys removed."""
-    if isinstance(node, dict):
-        return {
-            key: _scrub_secrets(value, keys)
-            for key, value in node.items()
-            if str(key).lower() not in keys
-        }
-    if isinstance(node, list):
-        return [_scrub_secrets(item, keys) for item in node]
-    return node
+def _describe_exception(exc: BaseException) -> str:
+    """Short, single-line description of a transport exception (no headers, no body)."""
+    name = type(exc).__name__
+    detail = " ".join(str(exc).split())[:200]
+    return f"{name}: {detail}" if detail else name
 
 
-def _find_error_status(node: Any) -> Optional[Tuple[str, str]]:
-    """Locate an error <Status> nested anywhere in the response tree.
+def _extract_error_code(response: httpx.Response) -> str | None:
+    """Return the appliance's short ``error`` code, sanitized, or ``None``.
 
-    SFOS nests the error inside the echoed tag, for example::
-
-        <Response><SystemInformation>
-            <Status code="529">Input request module is Invalid</Status>
-        </SystemInformation></Response>
-
-    so a top-level-only check misses it and the error is returned as data.
-
-    Only mappings carrying an "@code" attribute are considered: per-record
-    Status fields are plain strings ("Enable"/"Disable") and must survive.
+    The body may be JSON, HTML or plain text. Only a string ``error`` member is used; the
+    ``message`` member and the raw body are deliberately discarded.
     """
-    if isinstance(node, dict):
-        code = node.get("@code")
-        if isinstance(code, str) and _classify_status(code) != "ok":
-            return code, str(node.get("#text", ""))
-        for value in node.values():
-            found = _find_error_status(value)
-            if found is not None:
-                return found
-    elif isinstance(node, list):
-        for item in node:
-            found = _find_error_status(item)
-            if found is not None:
-                return found
-    return None
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    code = payload.get("error")
+    if not isinstance(code, str):
+        return None
+    sanitized = _ERROR_CODE_PATTERN.sub("", code.strip())[:64]
+    return sanitized or None
 
 
-class SophosAPIError(Exception):
-    """Base exception for Sophos Firewall API errors."""
+class SophosRestClient:
+    """One shared async client for the Sophos Firewall Configuration REST API.
 
-    pass
+    Args:
+        settings: Validated connection settings. The API key is read once and only ever placed in
+            the ``Authorization`` header.
 
-
-class SophosAuthenticationError(SophosAPIError):
-    """Raised when authentication with Sophos Firewall fails."""
-
-    pass
-
-
-class SophosResponseError(SophosAPIError):
-    """Raised when Sophos Firewall returns an API error status code."""
-
-    def __init__(self, code: str, message: str) -> None:
-        self.code = code
-        self.message = message
-        super().__init__(f"Sophos API Error {code}: {message}")
-
-
-class SophosPartialResultError(SophosResponseError):
-    """Raised when SFOS reports a partial result: some of the requested change was not applied.
-
-    A separate class because ``except SophosResponseError`` should still catch it, while a caller that
-    wants to distinguish "nothing happened" from "half of it happened" can. Treating this as success is the
-    failure mode that matters: an agent that believes a firewall rule was applied when only part of it was
-    will not retry.
+    The client owns an HTTP connection pool: create one instance per process, reuse it for every
+    tool call and close it with :meth:`aclose` (or ``async with``).
     """
 
-
-class SophosFirewallClient:
-    """Asynchronous client for interacting with Sophos Firewall (SFOS) XML API."""
-
-    def __init__(
-        self,
-        host: Optional[str] = None,
-        port: Optional[int] = None,
-        username: Optional[str] = None,
-        password: Optional[str] = None,
-        api_version: Optional[str] = None,
-        verify_ssl: Optional[bool] = None,
-        timeout: Optional[float] = None,
-    ) -> None:
-        """Initialize Sophos Firewall XML API client.
-
-        Args:
-            host: Firewall IP or domain. Defaults to SOPHOS_HOST env var or 172.16.16.16.
-            port: API Web Console port. Defaults to SOPHOS_PORT env var or 4444.
-            username: Admin username. Defaults to SOPHOS_USERNAME env var or admin.
-            password: Admin password. Defaults to SOPHOS_PASSWORD env var.
-            api_version: Sophos API Version. Defaults to SOPHOS_API_VERSION env var or 2200.1.
-            verify_ssl: Validate SSL certs. Defaults to SOPHOS_VERIFY_SSL env var or False.
-            timeout: Request timeout in seconds. Defaults to ``SOPHOS_TIMEOUT`` or 120.
-        """
-        self.host = host or os.environ.get("SOPHOS_HOST", "172.16.16.16")
-        self.port = port or int(os.environ.get("SOPHOS_PORT", "4444"))
-        self.username = username or os.environ.get("SOPHOS_USERNAME", "admin")
-        self.password = password or os.environ.get("SOPHOS_PASSWORD", "")
-        self.api_version = api_version or os.environ.get("SOPHOS_API_VERSION", "2200.1")
-
-        if verify_ssl is None:
-            v_env = os.environ.get("SOPHOS_VERIFY_SSL", "true").lower()
-            self.verify_ssl = v_env in ("1", "true", "yes")
-        else:
-            self.verify_ssl = verify_ssl
-
-        if not self.verify_ssl:
-            logger.warning(
-                "SSL certificate verification is disabled (verify_ssl=False). "
-                "HTTPS requests to Sophos Firewall appliance will not validate TLS certificates."
-            )
-
-        self.timeout = _env_timeout() if timeout is None else timeout
-        self.endpoint_url = f"https://{self.host}:{self.port}/webconsole/APIController"
-
+    def __init__(self, settings: Settings) -> None:
+        if not isinstance(settings, Settings):
+            raise TypeError("settings must be a Settings instance")
+        self._settings = settings
+        self._api_key = settings.api_key.get_secret_value()
+        self._base_url = settings.base_url
+        self._closed = False
         self._client = httpx.AsyncClient(
-            verify=self.verify_ssl,
-            timeout=self.timeout,
+            base_url=self._base_url,
+            headers={
+                "Authorization": f"Bearer {self._api_key}",
+                "Accept": "application/json",
+            },
+            verify=settings.tls_verify,
+            timeout=httpx.Timeout(settings.timeout),
+            follow_redirects=False,
+            trust_env=False,
         )
 
-    def build_xml_request(
-        self,
-        operation: str,
-        tag: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> str:
-        """Build SFOS XML request string with embedded authentication credentials.
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}(base_url={self._base_url!r})"
+
+    # -- Public interface -----------------------------------------------------
+
+    async def get(self, path: str, *, params: Mapping[str, Any] | None = None) -> Any:
+        """Read one resource or collection page.
 
         Args:
-            operation: Operation tag ('Get', 'Set', 'Remove').
-            tag: Entity tag (e.g., 'SystemInformation', 'FirewallRule', 'IPHost').
-            params: Optional child parameters or entity definitions.
+            path: ``/``-prefixed API path, a module constant in the domain adapters.
+            params: Query parameters (filters, sort). Pagination belongs in :meth:`get_page`.
 
         Returns:
-            Formatted XML request string.
+            The decoded JSON body, or ``None`` for an empty/204 response.
         """
-        req: Dict[str, Any] = {
-            "Request": {
-                "@APIVersion": self.api_version,
-                "Login": {
-                    "Username": self.username,
-                    "Password": self.password,
-                },
-                operation: {
-                    tag: params if params is not None else {}
-                },
-            }
-        }
-        return cast(str, xmltodict.unparse(req, pretty=True))
+        self._validate_path(path)
+        return await self._read("GET", path, params=params)
 
-    def _applied(self, code: str, text: str, *, operation: str) -> bool:
-        """Decide what a status code means, raising unless the operation genuinely applied.
+    async def post(self, path: str, *, json: Any) -> Any:
+        """Create a resource. Never retried: a failure after the request may be ambiguous."""
+        self._validate_path(path)
+        return await self._write("POST", path, body=json)
 
-        Returns False only for the one case that is an answer rather than a failure: a Get for a record
-        that does not exist (526), where callers get an empty result instead of an exception.
+    async def patch(self, path: str, *, json: Any) -> Any:
+        """Partially update a resource with a JSON Merge Patch body.
+
+        The body must already be a partial document (``model_dump(exclude_unset=True)`` in the
+        domain models); omitted properties keep their persisted value. Never retried.
         """
-        verdict = _classify_status(code)
-        if verdict == "ok":
-            return True
-        if verdict == "warning":
-            raise SophosPartialResultError(code=code, message=_status_message(code, text))
-        if code == "526" and operation.lower() == "get":
-            logger.warning("SFOS answered 526 (record does not exist) for a Get; returning no rows")
-            return False
-        raise SophosResponseError(code=code, message=_status_message(code, text))
+        self._validate_path(path)
+        return await self._write("PATCH", path, body=json)
 
-    async def send_request(
+    async def delete(self, path: str) -> None:
+        """Delete a resource. Never retried: a failure after the request may be ambiguous."""
+        self._validate_path(path)
+        await self._write("DELETE", path)
+        return None
+
+    async def get_page(
         self,
-        operation: str,
-        tag: str,
-        params: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        """Send an XML API request to the Sophos Firewall appliance.
+        path: str,
+        *,
+        page: int = 1,
+        page_size: int = 50,
+        page_total: bool = False,
+        params: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Read one page of a paginated collection.
+
+        Only for the 83 GET operations whose contract declares ``page``/``pageSize``/``pageTotal``.
+        Validation happens before any I/O: the appliance accepts ``page=0`` but the contract does
+        not, and it rejects ``pageSize`` above 100 with ``400 invalidPageSizeParam``.
 
         Args:
-            operation: API operation ('Get', 'Set', 'Remove').
-            tag: Target XML tag/object.
-            params: Parameters for the payload or query filters.
+            path: ``/``-prefixed API path of the collection.
+            page: 1-based page number (``>= 1``).
+            page_size: Page size (``1 <= page_size <= 100``).
+            page_total: Ask the appliance for ``pages.total``/``pages.items`` metadata.
+            params: Additional query parameters (for example ``nameContains``).
 
         Returns:
-            Parsed response payload dictionary.
+            The page object exactly as returned, with ``items`` and ``pages`` preserved.
 
         Raises:
-            SophosAuthenticationError: If login credentials are invalid.
-            SophosResponseError: If SFOS returns a non-200 status code.
-            SophosResponseError: Also for timeouts (code TIMEOUT) and unreachable hosts (code CONNECT).
+            ValueError: ``page`` or ``page_size`` is out of range; nothing is sent.
+            SophosAPIError: The response is not a page object.
         """
-        xml_payload = self.build_xml_request(operation, tag, params)
-        data = {"reqxml": xml_payload}
+        if isinstance(page, bool) or not isinstance(page, int) or page < 1:
+            raise ValueError("page must be an integer greater than or equal to 1")
+        if (
+            isinstance(page_size, bool)
+            or not isinstance(page_size, int)
+            or not 1 <= page_size <= 100
+        ):
+            raise ValueError("page_size must be an integer between 1 and 100")
 
-        try:
-            response = await self._client.post(self.endpoint_url, data=data)
-            response.raise_for_status()
-        except httpx.TimeoutException as exc:
-            raise SophosResponseError(
-                code="TIMEOUT",
-                message=_TIMEOUT_MESSAGE.format(
-                    seconds=self.timeout,
-                    operation=operation,
-                    tag=tag,
-                    endpoint=self.endpoint_url,
-                ),
-            ) from exc
-        except httpx.TransportError as exc:
-            reason = f"{type(exc).__name__}: {exc}".rstrip(": ")
-            raise SophosResponseError(
-                code="CONNECT",
-                message=_CONNECT_MESSAGE.format(
-                    endpoint=self.endpoint_url,
-                    operation=operation,
-                    tag=tag,
-                    reason=reason,
-                ),
-            ) from exc
+        query: dict[str, Any] = dict(params or {})
+        query["page"] = page
+        query["pageSize"] = page_size
+        query["pageTotal"] = page_total
 
-        body = response.text or ""
-        if not body.strip():
-            raise SophosResponseError(
-                code="EMPTY",
-                message=_EMPTY_BODY_MESSAGE.format(status=response.status_code, port=self.port),
+        payload = await self.get(path, params=query)
+        if not isinstance(payload, dict):
+            raise SophosAPIError(
+                f"GET {path} returned a non-object body for a paginated operation",
+                method="GET",
+                path=path,
             )
+        if not isinstance(payload.get("items"), list) or not isinstance(payload.get("pages"), dict):
+            raise SophosAPIError(
+                f"GET {path} returned a paginated body without 'items' and 'pages'",
+                method="GET",
+                path=path,
+            )
+        return payload
 
-        try:
-            parsed: Dict[str, Any] = xmltodict.parse(body)
-        except ExpatError:
-            raise SophosResponseError(
-                code="NOT-XML",
-                message=_NOT_XML_MESSAGE.format(
-                    status=response.status_code,
-                    limit=240,
-                    snippet=_redacted_snippet(body, self.password),
-                ),
-            ) from None
-
-        resp_data = parsed.get("Response", {})
-
-        # Check login status
-        login_info = resp_data.get("Login", {})
-        if isinstance(login_info, dict):
-            status_text = login_info.get("status", "")
-            if "Authentication Failed" in status_text:
-                raise SophosAuthenticationError(f"Authentication failed: {status_text}")
-
-        # Check API status response against the documented SFOS table.
-        status_info = resp_data.get("Status", {})
-        code, text = "200", ""
-        if isinstance(status_info, dict):
-            code = str(status_info.get("@code", "200"))
-            text = str(status_info.get("#text", ""))
-        elif isinstance(status_info, str):
-            text = status_info
-
-        if not self._applied(code, text, operation=operation):
-            return {}
-
-        # SFOS nests the status inside the echoed tag, where the top-level check
-        # above cannot see it.
-        nested = _find_error_status(resp_data)
-        if nested is not None:
-            nested_code, nested_message = nested
-            self._applied(nested_code, nested_message, operation=operation)
-
-        return cast(Dict[str, Any], resp_data)
-
-    async def get_tag(
-        self,
-        tag: str,
-        filter_criteria: Optional[Dict[str, Any]] = None,
-    ) -> Union[Dict[str, Any], List[Dict[str, Any]]]:
-        """Query data for a specific XML tag.
-
-        Args:
-            tag: Sophos XML entity tag (e.g. 'FirewallRule', 'IPHost').
-            filter_criteria: Optional XML filter tag parameters.
-
-        Returns:
-            Dictionary or list of objects matching the query.
-        """
-        res = await self.send_request("Get", tag, filter_criteria)
-        payload = res.get(tag, res)
-        extra_keys = TAG_SECRET_KEYS.get(str(tag).lower(), frozenset())
-        return cast(
-            Union[Dict[str, Any], List[Dict[str, Any]]],
-            _scrub_secrets(payload, SECRET_KEYS | extra_keys),
-        )
-
-    async def set_tag(
-        self,
-        tag: str,
-        payload: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        """Create or update an object using a 'Set' operation.
-
-        Args:
-            tag: Sophos XML entity tag (e.g. 'FirewallRule', 'IPHost').
-            payload: Parameters defining the entity state.
-
-        Returns:
-            API response status dictionary.
-        """
-        res = await self.send_request("Set", tag, payload)
-        return cast(Dict[str, Any], res)
-
-    async def remove_tag(
-        self,
-        tag: str,
-        name: str,
-    ) -> Dict[str, Any]:
-        """Delete an object using a 'Remove' operation.
-
-        Args:
-            tag: Sophos XML entity tag (e.g. 'FirewallRule', 'IPHost').
-            name: Name attribute of the entity to delete.
-
-        Returns:
-            API response status dictionary.
-        """
-        payload = {"Name": name}
-        res = await self.send_request("Remove", tag, payload)
-        return cast(Dict[str, Any], res)
-
-    async def close(self) -> None:
-        """Close the underlying HTTPX client connection pool."""
+    async def aclose(self) -> None:
+        """Close the connection pool. Safe to call more than once."""
+        if self._closed:
+            return
+        self._closed = True
         await self._client.aclose()
 
-    async def __aenter__(self) -> "SophosFirewallClient":
+    async def __aenter__(self) -> "SophosRestClient":
         return self
 
-    async def __aexit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        await self.close()
+    async def __aexit__(self, *exc: object) -> None:
+        await self.aclose()
+
+    # -- Path validation ------------------------------------------------------
+
+    @staticmethod
+    def _validate_path(path: str) -> None:
+        """Reject anything that is not a plain API path, before any I/O."""
+        if not isinstance(path, str):
+            raise ValueError("path must be a string")
+        if path == "":
+            raise ValueError("path must not be empty")
+        if "://" in path:
+            raise ValueError("path must not contain a scheme or an absolute URL")
+        if not path.startswith("/"):
+            raise ValueError("path must start with '/'")
+        if path.startswith("//"):
+            raise ValueError(
+                "path must not start with '//'; absolute URLs and host overrides are not allowed"
+            )
+        for token, description in (
+            ("..", "'..'"),
+            ("\\", "a backslash"),
+            ("?", "'?'"),
+            ("#", "'#'"),
+        ):
+            if token in path:
+                raise ValueError(
+                    f"path must not contain {description}; pass query values through 'params'"
+                )
+        if path != path.strip():
+            raise ValueError("path must not have leading or trailing whitespace")
+        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in path):
+            raise ValueError("path must not contain control characters")
+
+    # -- Request pipeline -----------------------------------------------------
+
+    async def _send(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        body: Any = _NO_BODY,
+    ) -> httpx.Response:
+        url = f"{self._base_url}{path}"
+        request_headers = (
+            {"Content-Type": "application/json"} if method in _JSON_BODY_METHODS else None
+        )
+        kwargs: dict[str, Any] = {}
+        if params is not None:
+            kwargs["params"] = dict(params)
+        if body is not _NO_BODY:
+            kwargs["json"] = body
+        return await self._client.request(method, url, headers=request_headers, **kwargs)
+
+    async def _read(
+        self, method: str, path: str, *, params: Mapping[str, Any] | None = None
+    ) -> Any:
+        """Send an idempotent read with the bounded retry policy."""
+        for attempt in range(1, _MAX_READ_ATTEMPTS + 1):
+            try:
+                response = await self._send(method, path, params=params)
+            except _RETRYABLE_EXCEPTIONS as exc:
+                if attempt < _MAX_READ_ATTEMPTS:
+                    logger.debug("%s %s: retrying after %s", method, path, type(exc).__name__)
+                    await _sleep(_backoff_delay(attempt))
+                    continue
+                raise self._transport_error(method, path, exc) from exc
+            except httpx.TransportError as exc:
+                raise self._transport_error(method, path, exc) from exc
+
+            if response.status_code in _RETRYABLE_STATUSES and attempt < _MAX_READ_ATTEMPTS:
+                logger.debug("%s %s: retrying after HTTP %s", method, path, response.status_code)
+                await _sleep(_backoff_delay(attempt))
+                continue
+            return self._decode(method, path, response)
+
+        raise AssertionError("unreachable: the read loop always returns or raises")
+
+    async def _write(self, method: str, path: str, *, body: Any = _NO_BODY) -> Any:
+        """Send a write exactly once; a transport failure is ambiguous, never retried."""
+        try:
+            response = await self._send(method, path, body=body)
+        except httpx.TransportError as exc:
+            raise self._ambiguous_error(method, path, exc) from exc
+        return self._decode(method, path, response)
+
+    # -- Response handling ----------------------------------------------------
+
+    def _decode(self, method: str, path: str, response: httpx.Response) -> Any:
+        status = response.status_code
+        if 200 <= status < 300:
+            if status == 204 or not response.content:
+                return None
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise SophosAPIError(
+                    f"{method} {path} returned HTTP {status} with a body that is not valid JSON",
+                    method=method,
+                    path=path,
+                    status=status,
+                ) from exc
+        raise self._response_error(method, path, response)
+
+    def _response_error(self, method: str, path: str, response: httpx.Response) -> SophosAPIError:
+        status = response.status_code
+        error_code = _extract_error_code(response)
+        exception_type = _STATUS_EXCEPTIONS.get(status, SophosAPIError)
+        message = f"{method} {path} failed with HTTP {status}"
+        if error_code is not None:
+            message = f"{message} (error: {error_code})"
+        logger.debug("%s %s -> HTTP %s", method, path, status)
+        return exception_type(
+            self._scrub(message),
+            method=method,
+            path=path,
+            status=status,
+            error_code=error_code,
+        )
+
+    def _transport_error(
+        self, method: str, path: str, exc: httpx.TransportError
+    ) -> SophosTransportError:
+        message = f"{method} {path} failed: {_describe_exception(exc)}"
+        return SophosTransportError(self._scrub(message), method=method, path=path)
+
+    def _ambiguous_error(
+        self, method: str, path: str, exc: httpx.TransportError
+    ) -> SophosAmbiguousWriteError:
+        message = (
+            f"{method} {path} may have been applied: {_describe_exception(exc)}; "
+            "the outcome is unknown, reconcile with a read before retrying"
+        )
+        return SophosAmbiguousWriteError(self._scrub(message), method=method, path=path)
+
+    def _scrub(self, text: str) -> str:
+        """Defense in depth: the API key must never reach an exception message."""
+        if self._api_key and self._api_key in text:
+            return text.replace(self._api_key, "[REDACTED]")
+        return text
