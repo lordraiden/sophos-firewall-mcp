@@ -1,0 +1,504 @@
+# Curated human decisions for docs/API-COVERAGE.md.
+#
+# This file holds ONLY decisions and prose written by people. Every generated
+# fact (operation rows, counts, schemas, statuses, identifiers, pagination
+# parameters) is derived from firewall_config_openapi.yaml by
+# scripts/generate_coverage.py and must never be copied here.
+#
+# Edit this file, then regenerate:
+#   uv run --no-sync python scripts/generate_coverage.py
+#
+# The generator refuses to write output when the specification SHA-256 differs
+# from the embedded value unless --accept-sha is passed explicitly.
+
+version: 1
+
+release:
+  phase: "Phase 2 (#27-#31)"
+  summary: >-
+    96 MCP tools across 10 domains: firewall rules, NAT rules, addresses and
+    address groups, services and service groups, authentication users, live
+    users, read-only IPsec/SSL VPN, read-only network interfaces, and two
+    read-only status endpoints.
+  rule: >-
+    An operation is part of the v1 surface only when it appears in `tool_map`.
+    Every other operation is listed with an explicit exclusion reason. Bulk
+    delete is excluded everywhere. Tool names below are the intended v1
+    surface; the domain issues (#27-#31) own the implementation and #32 owns
+    the final reconciliation.
+
+# ---------------------------------------------------------------------------
+# Domain sections, in the canonical order used by the generated document.
+# The path-to-domain mapping itself is derived by the generator and rendered
+# in the document header; these blocks hold the decisions per domain.
+# ---------------------------------------------------------------------------
+domains:
+  firewall_rules:
+    title: "Firewall rules"
+    v1_scope: >-
+      Individual CRUD and move for IPv4 and IPv6 rules. `enabled` and
+      `position` are explicit inputs; a created rule is never auto-enabled.
+    exclusions:
+      - "Bulk delete (`bulkDeleteFirewallRulesIpv4/Ipv6`): high blast radius and not required for individual CRUD (PLAN §4)."
+      - "WAF rule variant (`ruleType: waf`): create/update schemas are discriminated by `ruleType`; v1 tools accept only `ruleType: firewall` (PLAN §4; #27)."
+    caveats:
+      - "The contract has no firewall rule groups; do not infer them from other object groups."
+      - "`move` changes rule ordering and is a separate operation (`moveFirewallRuleIpv4/Ipv6`)."
+      - "The Firewall AI Assistant default (disabled, placed last) is not evidence for the REST POST default; represent and return the applied state explicitly."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  nat_rules:
+    title: "NAT rules"
+    v1_scope: "Individual CRUD and move for IPv4 and IPv6 NAT rules."
+    exclusions:
+      - "Bulk delete (`bulkDeleteNatRulesIpv4/Ipv6`): excluded from v1 (PLAN §4)."
+    caveats:
+      - "NAT rules are not firewall-rule variants; the contract has no SNAT/DNAT discriminator."
+      - "`linkedFirewallRule` is returned by the live appliance; do not assume it on create."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  addresses:
+    title: "Addresses and address groups"
+    v1_scope: >-
+      IPv4, IPv6 and FQDN addresses and address groups:
+      list/get/create/update/delete.
+    exclusions:
+      - "MAC address objects (`/network/addresses/mac`): classified and deferred by v1 scope (PLAN §4; #29)."
+      - "Country groups (`/network/address-groups/country`): classified and deferred by v1 scope (PLAN §4; #29)."
+      - "Bulk delete of addresses and address groups: excluded from v1 (PLAN §4)."
+    caveats:
+      - "IPv4, IPv6 and FQDN addresses have distinct schemas; do not merge them into one model."
+      - "Groups are per family/type; do not assume mixed membership."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  services:
+    title: "Services and service groups"
+    v1_scope: "Services and service groups: list/get/create/update/delete."
+    exclusions:
+      - "Bulk delete of services and service groups: excluded from v1 (PLAN §4)."
+    caveats:
+      - "`getAllServices` accepts a `type` filter; services and service groups have different payloads."
+      - "Do not reuse the service payload for service groups."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  auth_users:
+    title: "Authentication users, administrators and groups"
+    v1_scope: >-
+      General user list (`getUsers`) and network-user CRUD (`getNetworkUsers`,
+      `getNetworkUser`, `createNetworkUser`, `updateNetworkUser`,
+      `deleteNetworkUser`).
+    exclusions:
+      - "Administrator CRUD (`/authentication/users/administrators`): excluded from v1 for privilege impact (PLAN §4; #30)."
+      - "User groups and `setFallbackUserGroup` (`/authentication/user-groups`): excluded from v1 (PLAN §4; #30)."
+      - "Administrator password change (`updateAdminUserPassword`): excluded from v1."
+      - "Network-user login/logout (`networkUserLiveLogin`, `networkUserLiveLogout`): operational side effects; not registered in v1."
+      - "Bulk delete of network users and administrators: excluded from v1."
+    caveats:
+      - "`getUsers` is the paginated general list; `getNetworkUsers` is the network-user collection. Do not conflate them."
+      - "Passwords are write-only/sensitive; never return or log them."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  live_users:
+    title: "Live users"
+    v1_scope: "List active sessions (`getLiveUsers`) and disconnect one session (`disconnectLiveUser`)."
+    exclusions:
+      - "No bulk disconnect exists in the contract."
+    caveats:
+      - "The contract declares no page parameters, but the appliance accepts `page`/`pageSize`/`pageTotal` (live observation 2026-11-15); v1 does not expose them."
+      - "`disconnectLiveUser` requires `liveUserId` (integer >= 1) and `message` (1-600 characters) and is destructive."
+      - "Preserve the `pages` metadata exactly; do not invent a cursor or a page loop."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  ipsec_vpn:
+    title: "IPsec VPN"
+    v1_scope: >-
+      Read-only: profiles, failover groups, site-to-site connections
+      (policy-based and route-based, IPv4), live connections, and
+      remote-access settings.
+    exclusions:
+      - "All IPsec mutations (create/update/delete/bulk delete): v1 VPN is read-only (PLAN §4; #31)."
+    caveats:
+      - "The contract has no IPv6 site-to-site connections."
+      - "`connections/ipv4` exposes list and delete only; there is no create/update for that path."
+      - "Distinguish configured connections from live connection state."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  ssl_vpn:
+    title: "SSL VPN"
+    v1_scope: >-
+      Read-only: remote-access policies, clientless policies, bookmark
+      groups, bookmarks, and global settings.
+    exclusions:
+      - "All SSL VPN mutations: v1 VPN is read-only (PLAN §4; #31)."
+      - "SSL VPN site-to-site is not supported by SFOS 23 and is absent from the contract."
+    caveats:
+      - "Clientless bookmarks and bookmark groups are separate resources."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  interfaces:
+    title: "Network interfaces"
+    v1_scope: "Read-only: list and get network interfaces."
+    exclusions:
+      - "create/update/delete network interface: deferred because a mutation can interrupt management connectivity (PLAN §4; #31; administration help)."
+    caveats:
+      - "The contract defines full CRUD; v1 exposes read-only until a safe lab test exists."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  network_status:
+    title: "Network status"
+    v1_scope: "Two read-only status endpoints: DNS protection status and cellular WAN modem status."
+    exclusions:
+      - "No generic firewall health endpoint exists; Firewall Health Check is a Web Admin Console compliance view, not this API."
+    caveats:
+      - "`getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`; do not promise model, serial number, firmware or uptime."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  admin_system:
+    title: "Administration and system"
+    v1_scope: "None in v1; classified for later phases."
+    exclusions:
+      - "Administration, notification and system settings are configuration writes with broad impact; deferred (PLAN §4)."
+    caveats:
+      - "`patchMessages`, `updateCentralFirewallReportingLogComponents`, `updateSyslogServerLogs` and `updateAlertNotificationSettings` document PATCH deviations; see the PATCH section."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+  other:
+    title: "Other catalog"
+    v1_scope: "None in v1; the remaining catalog is classified here for later phases."
+    exclusions:
+      - "Not in the v1 first-release scope (PLAN §4)."
+    caveats:
+      - "This section is the complete remainder of the contract; no operation is silently omitted."
+    default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
+
+# ---------------------------------------------------------------------------
+# Intended v1 MCP tool names, one entry per in-scope operation.
+# ---------------------------------------------------------------------------
+tool_map:
+  # Firewall rules (#27)
+  getAllFirewallRulesIpv4: firewall_rule_list_ipv4
+  getFirewallRuleIpv4: firewall_rule_get_ipv4
+  createFirewallRuleIpv4: firewall_rule_create_ipv4
+  updateFirewallRuleIpv4: firewall_rule_update_ipv4
+  deleteFirewallRuleIpv4: firewall_rule_delete_ipv4
+  moveFirewallRuleIpv4: firewall_rule_move_ipv4
+  getAllFirewallRulesIpv6: firewall_rule_list_ipv6
+  getFirewallRuleIpv6: firewall_rule_get_ipv6
+  createFirewallRuleIpv6: firewall_rule_create_ipv6
+  updateFirewallRuleIpv6: firewall_rule_update_ipv6
+  deleteFirewallRuleIpv6: firewall_rule_delete_ipv6
+  moveFirewallRuleIpv6: firewall_rule_move_ipv6
+
+  # NAT rules (#28)
+  getAllNatRulesIpv4: nat_rule_list_ipv4
+  getNatRuleIpv4ByIdOrName: nat_rule_get_ipv4
+  createNatRuleIpv4: nat_rule_create_ipv4
+  updateNatRuleIpv4ByIdOrName: nat_rule_update_ipv4
+  deleteNatRuleIpv4ByIdOrName: nat_rule_delete_ipv4
+  moveNatRuleIpv4: nat_rule_move_ipv4
+  getAllNatRulesIpv6: nat_rule_list_ipv6
+  getNatRuleIpv6ByIdOrName: nat_rule_get_ipv6
+  createNatRuleIpv6: nat_rule_create_ipv6
+  updateNatRuleIpv6ByIdOrName: nat_rule_update_ipv6
+  deleteNatRuleIpv6ByIdOrName: nat_rule_delete_ipv6
+  moveNatRuleIpv6: nat_rule_move_ipv6
+
+  # Addresses (#29)
+  getAllIpAddresses: address_list_ipv4
+  getIpAddressByIdOrName: address_get_ipv4
+  createIpAddress: address_create_ipv4
+  updateIpAddressByIdOrName: address_update_ipv4
+  deleteIpAddressByIdOrName: address_delete_ipv4
+  getAllIpv6Addresses: address_list_ipv6
+  getIpv6AddressByIdOrName: address_get_ipv6
+  createIpv6Address: address_create_ipv6
+  updateIpv6AddressByIdOrName: address_update_ipv6
+  deleteIpv6AddressByIdOrName: address_delete_ipv6
+  getAllFqdns: address_list_fqdn
+  getFqdnByIdOrName: address_get_fqdn
+  createFqdn: address_create_fqdn
+  updateFqdnByIdOrName: address_update_fqdn
+  deleteFqdnByIdOrName: address_delete_fqdn
+
+  # Address groups (#29)
+  getAllIpv4AddressGroups: address_group_list_ipv4
+  getIpv4AddressGroupByIdOrName: address_group_get_ipv4
+  createIpv4AddressGroup: address_group_create_ipv4
+  updateIpv4AddressGroupByIdOrName: address_group_update_ipv4
+  deleteIpv4AddressGroupByIdOrName: address_group_delete_ipv4
+  getAllIpv6AddressGroups: address_group_list_ipv6
+  getIpv6AddressGroupByIdOrName: address_group_get_ipv6
+  createIpv6AddressGroup: address_group_create_ipv6
+  updateIpv6AddressGroupByIdOrName: address_group_update_ipv6
+  deleteIpv6AddressGroupByIdOrName: address_group_delete_ipv6
+  getAllFqdnGroups: address_group_list_fqdn
+  getFqdnGroupByIdOrName: address_group_get_fqdn
+  createFqdnGroup: address_group_create_fqdn
+  updateFqdnGroupByIdOrName: address_group_update_fqdn
+  deleteFqdnGroupByIdOrName: address_group_delete_fqdn
+
+  # Services and service groups (#29)
+  getAllServices: service_list
+  getServiceByIdOrName: service_get
+  createService: service_create
+  updateServiceByIdOrName: service_update
+  deleteServiceByIdOrName: service_delete
+  getAllServiceGroups: service_group_list
+  getServiceGroupByIdOrName: service_group_get
+  createServiceGroup: service_group_create
+  updateServiceGroupByIdOrName: service_group_update
+  deleteServiceGroupByIdOrName: service_group_delete
+
+  # Users and live sessions (#30)
+  getUsers: user_list
+  getNetworkUsers: network_user_list
+  getNetworkUser: network_user_get
+  createNetworkUser: network_user_create
+  updateNetworkUser: network_user_update
+  deleteNetworkUser: network_user_delete
+  getLiveUsers: live_user_list
+  disconnectLiveUser: live_user_disconnect
+
+  # IPsec VPN, read-only (#31)
+  getProfiles: ipsec_profile_list
+  getProfile: ipsec_profile_get
+  getFailovergroups: ipsec_failover_group_list
+  getFailovergroup: ipsec_failover_group_get
+  listIpsecConnectionsIpv4: ipsec_connection_list_ipv4
+  listIpsecPolicyBasedConnectionsIpv4: ipsec_policy_based_connection_list_ipv4
+  getPolicyBasedIpsecConnectionIpv4: ipsec_policy_based_connection_get_ipv4
+  listIpsecRouteBasedConnectionsIpv4: ipsec_route_based_connection_list_ipv4
+  getRouteBasedIpsecConnectionIpv4: ipsec_route_based_connection_get_ipv4
+  getIpsecSiteToSiteLiveConnectionsIpv4: ipsec_live_connection_list_ipv4
+  getIpsecRemoteAccessVpnSettings: ipsec_remote_access_settings_get
+
+  # SSL VPN, read-only (#31)
+  getRemoteAccessPolicies: sslvpn_remote_access_policy_list
+  getRemoteAccessPolicy: sslvpn_remote_access_policy_get
+  listBookmarkGroups: sslvpn_bookmark_group_list
+  getBookmarkGroup: sslvpn_bookmark_group_get
+  getBookmarks: sslvpn_bookmark_list
+  getBookmark: sslvpn_bookmark_get
+  listClientlessPolicies: sslvpn_clientless_policy_list
+  getClientlessPolicy: sslvpn_clientless_policy_get
+  getSslvpnGlobalSettings: sslvpn_global_settings_get
+
+  # Interfaces, read-only (#31)
+  listNetworkInterfaces: interface_list
+  getNetworkInterface: interface_get
+
+  # Read-only status (#31)
+  getDnsProtectionStatus: network_status_dns_protection
+  getCellularWanStatus: network_status_cellular_wan
+
+# Short per-operation caveats appended to the MCP column of the inventory row.
+tool_notes:
+  createFirewallRuleIpv4: "accepts ruleType=firewall only; WAF variant excluded"
+  updateFirewallRuleIpv4: "accepts ruleType=firewall only; WAF variant excluded"
+  createFirewallRuleIpv6: "accepts ruleType=firewall only; WAF variant excluded"
+  updateFirewallRuleIpv6: "accepts ruleType=firewall only; WAF variant excluded"
+  getLiveUsers: "contract declares no page params; v1 does not expose them (see live observations)"
+  disconnectLiveUser: "requires liveUserId and message (1-600); destructive"
+  createNetworkUser: "password is write-only; never returned"
+  updateNetworkUser: "password is write-only; never returned"
+  getAllServices: "`type` is an enum filter declared by the contract"
+  getIpsecSiteToSiteLiveConnectionsIpv4: "live state, not configuration"
+  listNetworkInterfaces: "read-only in v1"
+  getNetworkInterface: "read-only in v1"
+  getDnsProtectionStatus: "read-only status; not a general firewall health check"
+  getCellularWanStatus: "read-only status; not a general firewall health check"
+
+# ---------------------------------------------------------------------------
+# Ordered exclusion rules. The tool map wins first; then these rules are
+# evaluated in order; then the per-domain default_exclusion applies.
+# All predicates present in a rule must match (logical AND).
+# ---------------------------------------------------------------------------
+exclusion_rules:
+  - id: bulk_delete
+    applies: "POST to any path ending in `/delete`"
+    method: "POST"
+    path_suffix: "/delete"
+    reason: "Bulk delete excluded from v1: high blast radius and not required for individual CRUD (PLAN §4; #27-#31)."
+
+  - id: administrators_crud
+    applies: "path prefix `/authentication/users/administrators`"
+    path_prefix: "/authentication/users/administrators"
+    reason: "Administrator CRUD and privilege changes excluded from v1 for security impact (PLAN §4; #30)."
+
+  - id: user_groups
+    applies: "path prefix `/authentication/user-groups`"
+    path_prefix: "/authentication/user-groups"
+    reason: "User-group management and set-fallback-group excluded from v1 (PLAN §4; #30)."
+
+  - id: admin_user_password
+    applies: "path prefix `/authentication/admin-user`"
+    path_prefix: "/authentication/admin-user"
+    reason: "Administrator password change excluded from v1 (privilege impact)."
+
+  - id: vpn_mutations
+    applies: "mutations under `/ipsec-vpn` or `/ssl-vpn`"
+    path_prefixes: ["/ipsec-vpn", "/ssl-vpn"]
+    kind: "mutation"
+    reason: "VPN v1 is read-only; no VPN mutation is registered (PLAN §4; #31)."
+
+  - id: interface_mutations
+    applies: "mutations under `/network/interfaces`"
+    path_prefix: "/network/interfaces"
+    kind: "mutation"
+    reason: "Interface mutations deferred: they can interrupt management connectivity; v1 exposes read-only (PLAN §4; #31)."
+
+  - id: country_groups
+    applies: "path prefix `/network/address-groups/country`"
+    path_prefix: "/network/address-groups/country"
+    reason: "Country address groups classified and deferred by v1 scope (PLAN §4; #29)."
+
+  - id: mac_objects
+    applies: "path prefix `/network/addresses/mac`"
+    path_prefix: "/network/addresses/mac"
+    reason: "MAC address objects classified and deferred by v1 scope (PLAN §4; #29)."
+
+  - id: login_logout
+    applies: "`networkUserLiveLogin`, `networkUserLiveLogout`"
+    operation_ids: ["networkUserLiveLogin", "networkUserLiveLogout"]
+    reason: "Network-user login/logout have operational side effects and are not registered in v1 (PLAN §4; #30)."
+
+  - id: multipart_import
+    applies: "`importTrustedMacs` (multipart/form-data)"
+    operation_ids: ["importTrustedMacs"]
+    reason: "Multipart import is outside the v1 JSON tool surface."
+
+# Curated impact flags that cannot be derived from the HTTP shape alone.
+risk:
+  network_affecting:
+    - createNetworkInterface
+    - updateNetworkInterface
+    - deleteNetworkInterface
+    - connectCellularWan
+    - disconnectCellularWan
+    - resetCellularWan
+    - patchCellularWanModemSettings
+    - patchCellularWanSettings
+
+# ---------------------------------------------------------------------------
+# PATCH semantics and the four documented deviations.
+# ---------------------------------------------------------------------------
+patch:
+  default_semantics: >-
+    PATCH follows JSON Merge Patch (RFC 7396) by default: omitted properties
+    keep their persisted values and `null` removes a property. This rule is
+    reproduced verbatim in the contract's `info.description`.
+  content_type_rule: >-
+    All 134 PATCH operations declare `application/json`; none declares
+    `application/merge-patch+json`. Do not change the Content-Type.
+  exceptions:
+    - operation_id: patchMessages
+      path: "/administration/messages"
+      deviation: "catalog-keyed by `name`; not a full-array replacement"
+    - operation_id: updateCentralFirewallReportingLogComponents
+      path: "/logging/log-destinations/central-firewall-reporting"
+      deviation: "merge by `name`"
+    - operation_id: updateSyslogServerLogs
+      path: "/logging/log-destinations/syslog-servers/{idOrName}/logs"
+      deviation: "merge by `name`"
+    - operation_id: updateAlertNotificationSettings
+      path: "/notification/notifications"
+      deviation: "root booleans follow RFC 7396; `notifications[]` is catalog-keyed by `name`"
+
+# ---------------------------------------------------------------------------
+# Pagination rules.
+# ---------------------------------------------------------------------------
+pagination:
+  declared_parameters: >-
+    `page` (1-indexed, default 1), `pageSize` (default 50) and `pageTotal`
+    (default false).
+  declared_maximum: >-
+    A `pageSize` maximum of 100 is declared only on `getUsers`,
+    `getAdministrators` and `getNetworkUsers`.
+  rules:
+    - "Validate `page >= 1` before sending: the appliance accepts `page=0` with 200 but the contract requires `minimum: 1` (live observation 2026-11-15)."
+    - "Validate `1 <= pageSize <= 100` before sending: the appliance returns 400 `invalidPageSizeParam` above 100 in every tested listing, including ones with no declared maximum."
+    - "`pageTotal=true` adds `pages.total` and `pages.items` to the response (live observation 2026-11-15)."
+    - "No `limit`, `offset` or cursor exists anywhere in the contract; do not invent one."
+    - "Return one page per MCP call; do not auto-paginate or fetch every page."
+    - "`/authentication/live-users` declares no page parameters; the appliance accepts them but v1 does not expose them (the contract stays authoritative)."
+
+# ---------------------------------------------------------------------------
+# Object identifiers and name formats.
+# ---------------------------------------------------------------------------
+identifiers:
+  formats:
+    - "`sfos-object-name`: valid UTF-8, no commas, semicolons, non-printable characters or leading/trailing spaces, and never a UUID."
+    - "`sfos-object-name-or-id`: `sfos-object-name` or a UUID."
+    - "`sfos-object-name-lenient`: like `sfos-object-name`, but commas and semicolons are allowed for pre-existing, built-in or localized objects."
+    - "`sfos-object-name-lenient-or-id`: `sfos-object-name-lenient` or a UUID."
+  rules:
+    - "The operation's own path parameter and schema are authoritative; do not generalise across endpoints."
+    - "POST bodies identify objects by unique name (`sfos-object-name`); GET/PATCH/DELETE paths use name-or-id."
+    - "The `format` values are non-assertive: most `sfos-object-name*` schemas carry no `pattern`. The client must implement the documented validation itself."
+    - "Do not treat display name, object ID and object reference as interchangeable."
+
+# ---------------------------------------------------------------------------
+# Responses, error envelopes and security.
+# ---------------------------------------------------------------------------
+errors:
+  envelope: >-
+    Every documented non-2xx response declares `application/json` with an
+    object `{error (required), message, code}`.
+  rules:
+    - "Status codes are operation-specific; there is no universal status map. Follow the `responses` column of each row."
+    - "Treat undocumented statuses as unexpected errors; do not invent envelopes or meanings."
+    - "Live observation 2026-11-15: 401/400 and resource 404 are JSON; an unknown path returns 404 HTML; an unsupported method returns 405 plain text; PUT on a valid path returns 403 HTML. Sanitize and map per operation."
+    - "Never return raw remote bodies or secrets in MCP errors."
+
+security:
+  contract: "Global HTTP Bearer (`bearerFormat: API key`); no operation overrides it."
+  rules:
+    - "Effective authorization comes from the Sophos administrator profile associated with the API key; the MCP tool surface is not an authorization boundary."
+    - "Live tests use a dedicated read-only administrator and never attempt writes."
+    - "Never expose or log the API key."
+
+# ---------------------------------------------------------------------------
+# Live observations that must be reflected in the coverage document.
+# ---------------------------------------------------------------------------
+live_observations:
+  - id: live_users_pagination
+    statement: >-
+      `/authentication/live-users` accepts `page`, `pageSize` and `pageTotal`
+      even though the contract declares no query parameters; `pageSize=101`
+      returns 400 `invalidPageSizeParam`; the real `pages.maxSize` is 100, not
+      the 1000 shown in an example.
+    decision: >-
+      v1 does not expose the undeclared parameters; the observation is
+      recorded for #30 and the contract remains authoritative.
+  - id: page_total
+    statement: "`pageTotal=true` adds `pages.total` and `pages.items` (observed on users, firewall rules and live users)."
+    decision: "Expose `pageTotal` where the contract declares it."
+  - id: page_size_limit
+    statement: "`pageSize` above 100 returns 400 `invalidPageSizeParam` in every tested listing, including ones with no declared maximum."
+    decision: "Validate `1 <= pageSize <= 100` client-side."
+  - id: page_zero
+    statement: "`page=0` is accepted with 200 and `pages.current: 0` although the contract declares `minimum: 1`."
+    decision: "Validate `page >= 1` client-side; do not replicate the laxity."
+  - id: error_envelopes
+    statement: "Error envelopes are not uniform: JSON for 401/400 and resource 404, HTML for an unknown path, plain text for 405, HTML for PUT."
+    decision: "Sanitize and map per operation; never assume JSON."
+  - id: firewall_rule_by_name
+    statement: "`GET /firewall/rules/ipv4/{name}` works with the real name (spaces and dots, URL-encoded) and returns the full object."
+    decision: "Name-or-id path parameters are usable with names; still accept UUIDs."
+  - id: read_only_key
+    statement: >-
+      The lab key belongs to a dedicated `admin_mcp` administrator with the
+      'Read only Admin' profile (47 read-only permissions, inferred). No write
+      was attempted.
+    decision: "Live tests stay read-only until the owner provides a write key and a disposable-object plan."
+  - id: firmware_unknown
+    statement: "The SFOS build is not exposed by the contract (`getSystemSettings` returns only hostname, loginDisclaimer and updatedAt)."
+    decision: "Firmware compatibility remains unverified; live evidence must record the build when it becomes known."
+
+firmware:
+  status: >-
+    Unresolved. The contract exposes no version endpoint and
+    `getSystemSettings` returns only `hostname`, `loginDisclaimer` and
+    `updatedAt`. SFOS 23.0 GA Build 371 is the documented reference for the
+    REST API, not a verified target build.
+  live_evidence: "docs/live-evidence/api-smoke-2026-11-15.md"
