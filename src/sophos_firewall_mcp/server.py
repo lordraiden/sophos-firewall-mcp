@@ -1,220 +1,180 @@
-"""Main MCP server entrypoint for Sophos Firewall MCP (mcp 2.x, MCPServer)."""
+"""MCP server factory and entrypoint for Sophos Firewall MCP.
 
-from typing import Any, List, Optional, Union
+The server is a local STDIO MCP server that administers one Sophos Firewall appliance
+through its Configuration REST API. This module owns application construction, the
+lifespan and the STDIO entrypoint; domain tools live in :mod:`sophos_firewall_mcp.tools`
+and register themselves through the contract documented there.
 
-# Must precede the mcp import: it is the check that explains a shadowed or too-new `mcp` before the
-# import below dies with a bare ModuleNotFoundError the MCP client cannot see (empty error).
+Lifecycle
+---------
+``create_server(settings)`` validates nothing about the environment -- it receives
+settings that :func:`create_server_from_env` already validated -- and builds the server:
+the read-only mode is resolved from those settings *before* any domain registers a tool,
+because the SDK does not re-read the tool registry and the tool set must be fixed for the
+process lifetime. The lifespan then creates exactly one
+:class:`~sophos_firewall_mcp.client.SophosRestClient`, yields the
+:class:`~sophos_firewall_mcp.context.AppContext` every handler receives, and closes the
+client in ``finally`` on both normal and exceptional shutdown.
+
+Transport and diagnostics
+-------------------------
+STDIO only: stdout carries the MCP protocol and nothing else. Logging and diagnostics go
+to stderr. ``MCPServer(..., subscriptions=False)`` is used because the tool catalog is
+static for the process lifetime (the read-only mode is applied at startup), so the SDK
+must not advertise ``subscriptions/listen`` or ``listChanged``.
+"""
+
+from __future__ import annotations
+
+import logging
+import sys
+from collections.abc import AsyncIterator, Iterable, Mapping
+from contextlib import asynccontextmanager
+
+# Must precede the mcp import: it is the check that explains a shadowed or too-new `mcp`
+# before the import below dies with a bare ModuleNotFoundError the MCP client cannot see
+# (empty error). Kept from the pre-REST server; it is not XML-specific.
 from sophos_firewall_mcp._env_guard import verify_local_mcp
 
 verify_local_mcp()
 
 from mcp.server.mcpserver import MCPServer  # noqa: E402
-from mcp.types import Tool, ToolAnnotations  # noqa: E402
 
-from sophos_firewall_mcp import prompts, resources  # noqa: E402
-from sophos_firewall_mcp._guard import guard_module_tools, guard_tool  # noqa: E402
-from sophos_firewall_mcp.router import get_router  # noqa: E402
-from sophos_firewall_mcp.tools import (  # noqa: E402
-    firewall_rules,
-    hosts_objects,
-    nat_rules,
-    raw_api,
-    services_objects,
-    system,
-    users_auth,
-    vpn,
-)
+from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
+from sophos_firewall_mcp.config import ConfigurationError, Settings  # noqa: E402
+from sophos_firewall_mcp.context import AppContext  # noqa: E402
+from sophos_firewall_mcp.tools import DomainRegistrar  # noqa: E402
 
-# Initialize the MCP server (mcp >= 2 renamed FastMCP to MCPServer)
-mcp = MCPServer(
-    "Sophos Firewall MCP Server",
-    instructions=(
-        "Sophos Firewall MCP Server provides tools to monitor system status, "
-        "manage firewall rules, host objects, service definitions, NAT rules, "
-        "user accounts, and VPN policies on Sophos Firewall (SFOS) appliances."
-    ),
-)
+__all__ = [
+    "DEFAULT_DOMAINS",
+    "INSTRUCTIONS",
+    "SERVER_NAME",
+    "create_server",
+    "create_server_from_env",
+    "main",
+]
 
-# Guard every tool before anything is registered: a failure must name itself. The MCP SDK formats a
-# tool error as `Error executing tool <name>: <exc>`, so an exception with an empty str() reaches the
-# model as a colon and nothing else -- indistinguishable from a crashed server. Upstream traced the same
-# symptom through the client and concluded the empty text is born in the server
-# (NousResearch/hermes-agent#145923); this is where it stops.
-_GUARDED_TOOLS = guard_module_tools(
-    (firewall_rules, hosts_objects, nat_rules, raw_api, services_objects, system, users_auth, vpn)
+logger = logging.getLogger(__name__)
+
+#: Name advertised to MCP clients.
+SERVER_NAME = "Sophos Firewall MCP Server"
+
+#: Server-level instructions shown to the model. Domain tools carry their own.
+INSTRUCTIONS = (
+    "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
+    "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
+    "rules, address and service objects, users and live sessions. Read-only tools never "
+    "modify the appliance. When the server runs in read-only mode, mutation tools are "
+    "not registered at all."
 )
 
-# Register resources & diagnostic prompts
-resources.register(mcp)
-prompts.register(mcp)
-
-# -----------------------------------------------------------------------------
-# Register Domain Tools with ToolAnnotations
-# -----------------------------------------------------------------------------
-
-# Low-Level Generic API Tool
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=False))(
-    raw_api.sophos_raw_api_request
-)
-
-# System & Status Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(system.sophos_get_system_info)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(system.sophos_get_service_status)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(system.sophos_get_interface_list)
-
-# Firewall Rules Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(firewall_rules.sophos_list_firewall_rules)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(firewall_rules.sophos_get_firewall_rule)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    firewall_rules.sophos_create_firewall_rule
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))(
-    firewall_rules.sophos_update_firewall_rule
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))(
-    firewall_rules.sophos_update_firewall_rule_status
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    firewall_rules.sophos_delete_firewall_rule
-)
-
-# Host & Network Object Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(hosts_objects.sophos_list_ip_hosts)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(hosts_objects.sophos_get_ip_host)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    hosts_objects.sophos_create_ip_host
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    hosts_objects.sophos_delete_ip_host
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(hosts_objects.sophos_list_ip_host_groups)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    hosts_objects.sophos_create_ip_host_group
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    hosts_objects.sophos_delete_ip_host_group
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(hosts_objects.sophos_list_fqdn_hosts)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    hosts_objects.sophos_create_fqdn_host
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    hosts_objects.sophos_delete_fqdn_host
-)
-
-# Service & Protocol Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(services_objects.sophos_list_services)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(services_objects.sophos_get_service)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    services_objects.sophos_create_service
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    services_objects.sophos_delete_service
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(services_objects.sophos_list_service_groups)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    services_objects.sophos_create_service_group
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    services_objects.sophos_delete_service_group
-)
-
-# NAT Rules Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(nat_rules.sophos_list_nat_rules)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(nat_rules.sophos_get_nat_rule)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    nat_rules.sophos_create_nat_rule
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=True))(
-    nat_rules.sophos_update_nat_rule
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    nat_rules.sophos_delete_nat_rule
-)
-
-# User Accounts & Auth Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(users_auth.sophos_list_users)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(users_auth.sophos_get_user)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=False, idempotent_hint=False))(
-    users_auth.sophos_create_user
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=False, destructive_hint=True, idempotent_hint=True))(
-    users_auth.sophos_delete_user
-)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(users_auth.sophos_list_live_users)
-
-# VPN Management Tools
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(vpn.sophos_list_ipsec_vpns)
-mcp.tool(annotations=ToolAnnotations(read_only_hint=True))(vpn.sophos_list_sslvpn_policies)
-
-# Lazy Tool Router Initialization
-_router: Optional[Any] = None
-_router_initialized: bool = False
+#: Domain registration functions, in registration order.
+#:
+#: Empty in phase 1 (#26): no domain tools exist yet. Issues #27-#31 (and later phase-2
+#: domains such as #35) append their ``register_<domain>_tools`` functions here; the
+#: server factory does not change.
+DEFAULT_DOMAINS: tuple[DomainRegistrar, ...] = ()
 
 
-async def get_initialized_router() -> Optional[Any]:
-    """Lazy initialize and index the semantic tool router if enabled."""
-    global _router, _router_initialized
-    if _router_initialized:
-        return _router
+def create_server(
+    settings: Settings,
+    *,
+    domains: Iterable[DomainRegistrar] = DEFAULT_DOMAINS,
+) -> MCPServer[AppContext]:
+    """Build the MCP server for already-validated settings.
 
-    r = get_router()
-    if r is not None:
-        all_registered_tools = await mcp.list_tools()
-        r.index([(t.name, t.description or "") for t in all_registered_tools])
-        _router = r
-    _router_initialized = True
-    return _router
-
-
-@mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
-@guard_tool
-async def route_tools(
-    query: str,
-    top_k: int = 5,
-) -> Union[List[Tool], str]:
-    """Find relevant Sophos Firewall tools matching a natural language prompt.
+    Configuration is validated once, before this function is called (see
+    :func:`create_server_from_env`), because the read-only mode decides the tool set and
+    the SDK does not re-read the registry after construction.
 
     Args:
-        query: Natural language task description or question.
-        top_k: Number of relevant tools to return. Default is 5.
+        settings: Validated connection settings. The API key inside is a ``SecretStr``
+            and is only ever placed in the ``Authorization`` header by the client.
+        domains: Registration functions called once each, before the server starts. Each
+            receives the server and the resolved ``read_only`` flag.
 
     Returns:
-        List of matching tool schema definitions or status string.
+        A server whose lifespan creates one shared REST client and yields the
+        :class:`~sophos_firewall_mcp.context.AppContext`.
+
+    Raises:
+        TypeError: ``settings`` is not a :class:`~sophos_firewall_mcp.config.Settings`.
     """
-    router = await get_initialized_router()
-    if router is None:
-        return "Tool routing is not enabled."
-    tool_names = router.search(query, top_k=top_k)
-    all_tools = await mcp.list_tools()
-    name_map = {t.name: t for t in all_tools}
-    return [name_map[n] for n in tool_names if n in name_map]
+    if not isinstance(settings, Settings):
+        raise TypeError("settings must be a Settings instance")
+    read_only = settings.read_only_mode
+
+    @asynccontextmanager
+    async def lifespan(_: MCPServer[AppContext]) -> AsyncIterator[AppContext]:
+        """Create the one shared client, yield the context, close the client exactly once."""
+        logger.info(
+            "starting %s: appliance %s, read-only=%s",
+            SERVER_NAME,
+            settings.authority,
+            read_only,
+        )
+        client = SophosRestClient(settings)
+        try:
+            yield AppContext(client=client, settings=settings, read_only=read_only)
+        finally:
+            # Runs on normal and exceptional shutdown. ``aclose`` is idempotent, but the
+            # lifespan calls it once: the client is created here and nowhere else.
+            await client.aclose()
+
+    server: MCPServer[AppContext] = MCPServer(
+        SERVER_NAME,
+        instructions=INSTRUCTIONS,
+        lifespan=lifespan,
+        subscriptions=False,
+    )
+    for register in domains:
+        register(server, read_only=read_only)
+    return server
 
 
-@mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
-@guard_tool
-async def call_routed_tool(
-    tool_name: str,
-    arguments: Optional[dict] = None,
-) -> Any:
-    """Dynamically execute a routed tool by name with arguments.
+def create_server_from_env(
+    env: Mapping[str, str] | None = None,
+    *,
+    domains: Iterable[DomainRegistrar] = DEFAULT_DOMAINS,
+) -> MCPServer[AppContext]:
+    """Validate the environment and build the server.
 
     Args:
-        tool_name: Name of the registered tool to call.
-        arguments: Optional dictionary of arguments to pass to the tool function.
+        env: Environment mapping to read. Defaults to :data:`os.environ`; passing an
+            explicit mapping never touches the process environment.
+        domains: Registration functions, as for :func:`create_server`.
 
-    Returns:
-        Result of the executed tool function.
+    Raises:
+        ConfigurationError: A required setting is missing or invalid. The message names
+            the setting and never contains the API key.
     """
-    router = await get_initialized_router()
-    if router is None:
-        return "Tool routing is not enabled."
-    return await mcp.call_tool(tool_name, arguments or {})
+    return create_server(Settings.from_env(env), domains=domains)
 
 
-def main() -> None:
-    """Entry point for running the Sophos Firewall MCP server."""
-    mcp.run()
+def main(env: Mapping[str, str] | None = None) -> None:
+    """Entrypoint: validate configuration, then serve MCP over STDIO.
+
+    Diagnostics go to stderr; stdout is reserved for the MCP protocol. A configuration
+    failure exits with status 2 and one actionable line on stderr instead of a traceback
+    the client cannot see.
+
+    Args:
+        env: Optional environment mapping for startup; defaults to :data:`os.environ`.
+            Exposed so tests can exercise startup without mutating the process
+            environment.
+    """
+    logging.basicConfig(
+        level=logging.INFO,
+        stream=sys.stderr,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    try:
+        server = create_server_from_env(env)
+    except ConfigurationError as exc:
+        sys.stderr.write(f"sophos-firewall-mcp: cannot start: {exc}\n")
+        sys.stderr.flush()
+        raise SystemExit(2) from None
+    server.run("stdio")
 
 
 if __name__ == "__main__":
