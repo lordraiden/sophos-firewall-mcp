@@ -8,7 +8,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2026-11-15
 
 **Breaking: input parameter names are unified on snake_case.** The 0.4.0 surface published two
-conventions (79 tools used the Sophos wire names, 61 used snake_case). Every tool now publishes
+conventions (measured on the published `request` objects: 74 camelCase-only, 55 snake_case-only, 5
+mixed, 6 single-word-only and 12 parameterless tools). Every tool now publishes
 snake_case parameters (`page_size`, `name_contains`, `id_or_name`, `rule_type`, `reference_item`, …);
 the JSON body sent to the appliance is unchanged because each field keeps its wire alias. Callers that
 hard-coded `pageSize`/`nameContains`/`idOrName` must update. The published input schemas also gain

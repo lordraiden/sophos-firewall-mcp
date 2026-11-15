@@ -819,7 +819,7 @@ This section is appended after the fixes; the findings above are unchanged.
 | **H3** | 401 renders an authentication message; 403 keeps the authorization message. |
 | **H4** | The WAN gateway is modelled as the default route. |
 | **D1** (write validation) | `group` is a `{"name": …}` reference; live create/update/delete re-validated. |
-| **M3** | Built-in and list-returned identifiers (`##ALL_RW`, names with `/`) are accepted; verified live. |
+| **M3** | Built-in and list-returned identifiers (`##ALL_RW`, names with `/`) are accepted. Live evidence (2026-11-15, read-only, fixed source): `address_get_ipv4` accepted `##ALL_RW`, `##ALL_IPSEC_RW` and `FQDN Group - Pipeline/parsing errors`, and `find_object_usage` resolved both; the released 0.4.0 rejected all five. |
 | **M4–M8** | Severity-ordered truncation, built-ins excluded from `unused-object`, `rule_name_contains` narrows the report, `not-verifiable` includes candidates and missing evidence, family inferred when one rule base is empty. |
 | **L2** | `live_user_list` no longer names an unregistered tool. |
 | **L4** | Validation errors are sanitized (no internal model names or pydantic URLs). |
@@ -841,3 +841,17 @@ This section is appended after the fixes; the findings above are unchanged.
 The phase-3 "0 FAIL" measured HTTP status and schema validity, not content correctness; this run shows
 that a schema-valid answer can still be wrong. The phase-3 naming claim is superseded by M1: the
 published input surface is now uniformly snake_case.
+
+
+### Reproducible driver
+
+The live runs above used ad-hoc drivers. `scripts/mcp_smoke_test.py` is now committed: it launches
+the server over STDIO with the official SDK `Client`, prints the negotiated protocol and the tool
+surface, and can call one tool with JSON arguments. It inherits the parent environment, so the
+`SOPHOS_*` configuration reaches the server. Example:
+
+```bash
+SOPHOS_HOST=10.10.10.1 SOPHOS_PORT=443 SOPHOS_API_KEY_FILE=/run/secrets/key \
+SOPHOS_VERIFY_SSL=false SOPHOS_READ_ONLY_MODE=true \
+python scripts/mcp_smoke_test.py --call network_status_dns_protection
+```

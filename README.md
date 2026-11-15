@@ -308,21 +308,24 @@ administrator profile for any deployment that only needs inspection.
 
 ## Known limitations and accepted regressions
 
-- **Input parameter naming is not yet uniform.** Measured by enumerating `tools/list` and classifying
-  each tool's `request` object: 74 tools publish camelCase-only inputs (`pageSize`, `nameContains`,
-  `idOrName`; firewall, network, VPN), 55 publish snake_case-only (`page_size`, `name_contains`,
-  `id_or_name`; NAT, objects, users), 5 mix both, 6 have only single-word fields, and 12 take no
-  parameters (8 declare no `request` property and 4 expose an empty request model). Each tool's schema
-  is self-describing, so this is an ergonomics inconsistency, not a functional one. It is scheduled to
-  be unified in **0.5.0** as a documented breaking change.
+- **Input parameter naming is uniform as of 0.5.0.** Every published input property, at every depth,
+  is snake_case (`page_size`, `name_contains`, `id_or_name`, `rule_type`, `reference_item`, …). The JSON
+  body sent to the appliance is unchanged: each field keeps its Sophos wire alias. This was a breaking
+  change from 0.4.0, where 79 tools published the wire names; callers that hard-coded `pageSize` /
+  `nameContains` / `idOrName` must update. The published schemas also set `additionalProperties: false`,
+  so an unknown argument is rejected instead of ignored.
 - **Target firmware build is not verified.** The contract exposes no version endpoint
   (`getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`), so the SFOS build
   behind the checked-in OpenAPI file is unknown. This project makes **no firmware compatibility claim**;
   verify against your own appliance before relying on a tool.
-- **No live write validation.** The shared lab credential is read-only, so no POST, PATCH or DELETE has
-  been executed against a real appliance. Write tools are covered by contract tests (mocked HTTP) only.
-  Read paths are exercised by the opt-in `pytest -m live` suite; see
-  [`docs/live-evidence/`](docs/live-evidence/) for what was actually run and what was deferred.
+- **Live write validation is limited.** The 0.5.0 cycle validated create/update/delete against the lab
+  appliance for an IPv4 address, an FQDN address, a service, a MAC address, a network user, a firewall
+  rule and a NAT rule, with every created object deleted and the collection counts restored
+  ([`docs/live-evidence/phase-4-write-validation.md`](docs/live-evidence/phase-4-write-validation.md)).
+  Rules were created `enabled: false` and the applied state was read back. What remains unverified:
+  ambiguous-write reconciliation, a real `403` denial, bulk delete, interface/VPN mutations, and every
+  write on a firmware other than the lab appliance. Read paths are exercised by the opt-in
+  `pytest -m live` suite; see [`docs/live-evidence/`](docs/live-evidence/) for what was run and deferred.
 - **Accepted regressions** (no REST endpoint exists, so no placeholder tool is advertised):
   - system information — appliance model, serial number, firmware version and uptime;
   - service status — the running state of system services;
