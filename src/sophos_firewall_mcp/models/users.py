@@ -17,7 +17,12 @@ out of the v1 scope and have no model here.
 
 The ``*Wire`` models parse the appliance payload (``extra="ignore"``, forward-compatible)
 and are never returned to a model; the ``project_*`` functions turn them into the bounded
-snake_case DTOs the tools publish.
+DTOs the tools publish.
+
+Naming (phase 5, M2): the **inputs** are snake_case because the model writes them, and the
+**outputs** keep the Sophos wire names (camelCase) because they are projections of the
+appliance payload. The two conventions meet only in the ``project_*`` functions, which map
+one onto the other explicitly.
 """
 
 from __future__ import annotations
@@ -73,7 +78,7 @@ __all__ = [
 ]
 
 #: The 20 ``clientType`` values the contract declares for a live session. The output model
-#: keeps ``client_type`` a plain ``str`` so a future firmware value is passed through
+#: keeps ``clientType`` a plain ``str`` so a future firmware value is passed through
 #: instead of failing the whole listing; this constant is the documented vocabulary and is
 #: asserted against the contract by the tests.
 LIVE_USER_CLIENT_TYPES = frozenset(
@@ -545,55 +550,61 @@ class UserSummaryOutput(BaseModel):
     """One row of the general authentication-user list (``getUsers``).
 
     This is the contract's *basic summary*, not a network-user detail: it has no policies
-    and no VPN access.
+    and no VPN access. The field names are the appliance's wire names (camelCase), like
+    every other output projection in this server.
     """
 
     id: str = Field(description="Unique identifier (UUID).")
     name: str
-    display_name: str
+    displayName: str  # noqa: N815 - the wire name is camelCase
     description: str | None = None
     active: bool
-    email_addresses: list[str] = Field(default_factory=list)
+    emailAddresses: list[str] = Field(default_factory=list)  # noqa: N815
     group: str | None = Field(default=None, description="Primary group name, when returned.")
-    additional_groups: list[str] = Field(default_factory=list)
-    administrative_access: bool = Field(
+    additionalGroups: list[str] = Field(default_factory=list)  # noqa: N815
+    administrativeAccess: bool = Field(  # noqa: N815
         description="Whether this authentication user also has administrative access."
     )
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    createdAt: datetime | None = None  # noqa: N815
+    updatedAt: datetime | None = None  # noqa: N815
 
 
 class NetworkUserPoliciesOutput(BaseModel):
-    """Bounded projection of a network user's effective policies."""
+    """Bounded projection of a network user's effective policies.
 
-    surfing_quota_policy: str | None = None
-    access_time_policy: str | None = None
-    network_traffic_quota_policy: str | None = None
-    traffic_shaping_policy: str | None = None
-    mac_binding: bool | None = None
-    mac_addresses: list[str] = Field(default_factory=list)
-    allowed_networks_any: bool | None = None
-    allowed_networks_ipv4: list[str] = Field(default_factory=list)
-    allowed_networks_ipv4_start: str | None = None
-    allowed_networks_ipv4_end: str | None = None
-    simultaneous_logins_use_global: bool | None = None
-    simultaneous_logins_unlimited: bool | None = None
-    simultaneous_logins_limit: int | None = None
+    The flattened members keep the wire vocabulary: ``allowedNetworksIpv4`` is the
+    ``allowedNetworksIpv4`` oneOf and ``simultaneousLogins*`` are the ``simultaneousLogins``
+    oneOf, projected into one flat object.
+    """
+
+    surfingQuotaPolicy: str | None = None  # noqa: N815
+    accessTimePolicy: str | None = None  # noqa: N815
+    networkTrafficQuotaPolicy: str | None = None  # noqa: N815
+    trafficShapingPolicy: str | None = None  # noqa: N815
+    macBinding: bool | None = None  # noqa: N815
+    macAddresses: list[str] = Field(default_factory=list)  # noqa: N815
+    allowedNetworksAny: bool | None = None  # noqa: N815
+    allowedNetworksIpv4: list[str] = Field(default_factory=list)  # noqa: N815
+    allowedNetworksIpv4Start: str | None = None  # noqa: N815
+    allowedNetworksIpv4End: str | None = None  # noqa: N815
+    simultaneousLoginsUseGlobal: bool | None = None  # noqa: N815
+    simultaneousLoginsUnlimited: bool | None = None  # noqa: N815
+    simultaneousLoginsLimit: int | None = None  # noqa: N815
 
 
 class NetworkUserVpnAccessOutput(BaseModel):
     """Bounded projection of a network user's VPN-access overrides."""
 
-    ssl_vpn_remote_access_policy: str | None = None
-    ssl_vpn_clientless_policy: str | None = None
-    ssl_vpn_static_ipv4_address: str | None = None
-    ssl_vpn_static_ipv6_address: str | None = None
+    sslVpnRemoteAccessPolicy: str | None = None  # noqa: N815
+    sslVpnClientlessPolicy: str | None = None  # noqa: N815
+    sslVpnStaticIpv4Address: str | None = None  # noqa: N815
+    sslVpnStaticIpv6Address: str | None = None  # noqa: N815
     l2tp: bool | None = None
-    l2tp_static_ipv4_address: str | None = None
+    l2tpStaticIpv4Address: str | None = None  # noqa: N815
     pptp: bool | None = None
-    pptp_static_ipv4_address: str | None = None
-    ipsec_vpn_remote_access: bool | None = None
-    ipsec_vpn_static_ipv4_address: str | None = None
+    pptpStaticIpv4Address: str | None = None  # noqa: N815
+    ipsecVpnRemoteAccess: bool | None = None  # noqa: N815
+    ipsecVpnStaticIpv4Address: str | None = None  # noqa: N815
 
 
 class NetworkUserOutput(BaseModel):
@@ -601,17 +612,17 @@ class NetworkUserOutput(BaseModel):
 
     id: str = Field(description="Unique identifier (UUID).")
     name: str = Field(description="Unique login name.")
-    display_name: str
+    displayName: str  # noqa: N815
     description: str | None = None
     active: bool
-    email_addresses: list[str] = Field(default_factory=list)
+    emailAddresses: list[str] = Field(default_factory=list)  # noqa: N815
     group: str | None = Field(default=None, description="Primary group name.")
-    additional_groups: list[str] = Field(default_factory=list)
+    additionalGroups: list[str] = Field(default_factory=list)  # noqa: N815
     policies: NetworkUserPoliciesOutput | None = None
-    vpn_access: NetworkUserVpnAccessOutput | None = None
-    email_quarantine_digest: bool | None = None
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    vpnAccess: NetworkUserVpnAccessOutput | None = None  # noqa: N815
+    emailQuarantineDigest: bool | None = None  # noqa: N815
+    createdAt: datetime | None = None  # noqa: N815
+    updatedAt: datetime | None = None  # noqa: N815
 
 
 class NetworkUserDeleteOutput(BaseModel):
@@ -623,27 +634,31 @@ class NetworkUserDeleteOutput(BaseModel):
             "expose the response body of a DELETE, so this reflects the successful status."
         )
     )
-    id_or_name: str = Field(description="Identifier the delete was issued for.")
+    idOrName: str = Field(description="Identifier the delete was issued for.")  # noqa: N815
 
 
 class LiveUserSessionOutput(BaseModel):
     """One active user session (``getLiveUsers``)."""
 
-    live_user_id: int = Field(description="Session identifier used by disconnectLiveUser.")
-    user_name: str
-    client_type: str = Field(
+    liveUserId: int = Field(  # noqa: N815
+        description="Session identifier used by disconnectLiveUser."
+    )
+    userName: str  # noqa: N815
+    clientType: str = Field(  # noqa: N815
         description=(
             "Client type reported by the appliance; the documented vocabulary is "
             "LIVE_USER_CLIENT_TYPES."
         )
     )
-    ipv4_address: str | None = None
-    ipv6_address: str | None = None
-    mac_address: str
-    logged_in_time: datetime
-    upload_data: int = Field(description="Bytes uploaded by the session.")
-    download_data: int = Field(description="Bytes downloaded by the session.")
-    transfer_rate: int = Field(description="Current transfer rate reported by the appliance.")
+    ipv4Address: str | None = None  # noqa: N815
+    ipv6Address: str | None = None  # noqa: N815
+    macAddress: str  # noqa: N815
+    loggedInTime: datetime  # noqa: N815
+    uploadData: int = Field(description="Bytes uploaded by the session.")  # noqa: N815
+    downloadData: int = Field(description="Bytes downloaded by the session.")  # noqa: N815
+    transferRate: int = Field(  # noqa: N815
+        description="Current transfer rate reported by the appliance."
+    )
     duration: int = Field(description="Session duration reported by the appliance.")
 
 
@@ -651,7 +666,9 @@ class LiveUserDisconnectOutput(BaseModel):
     """Result of ``disconnectLiveUser``."""
 
     disconnected: bool = Field(description="True when the appliance disconnected the session.")
-    live_user_id: int = Field(description="Session identifier the request was issued for.")
+    liveUserId: int = Field(  # noqa: N815
+        description="Session identifier the request was issued for."
+    )
 
 
 # -- Wire models: parse the appliance payload, never returned --------------------------
@@ -810,23 +827,21 @@ def _project_policies(wire: NetworkUserPoliciesWire | None) -> NetworkUserPolici
     allowed = wire.allowedNetworksIpv4
     simultaneous = wire.simultaneousLogins
     return NetworkUserPoliciesOutput(
-        surfing_quota_policy=_policy_name(wire.surfingQuotaPolicy),
-        access_time_policy=_policy_name(wire.accessTimePolicy),
-        network_traffic_quota_policy=_policy_name(wire.networkTrafficQuotaPolicy),
-        traffic_shaping_policy=_policy_name(wire.trafficShapingPolicy),
-        mac_binding=wire.macBinding,
-        mac_addresses=list(wire.macAddresses),
-        allowed_networks_any=allowed.any if allowed is not None else None,
-        allowed_networks_ipv4=list(allowed.ipv4Addresses) if allowed is not None else [],
-        allowed_networks_ipv4_start=allowed.ipv4AddressStart if allowed is not None else None,
-        allowed_networks_ipv4_end=allowed.ipv4AddressEnd if allowed is not None else None,
-        simultaneous_logins_use_global=(
+        surfingQuotaPolicy=_policy_name(wire.surfingQuotaPolicy),
+        accessTimePolicy=_policy_name(wire.accessTimePolicy),
+        networkTrafficQuotaPolicy=_policy_name(wire.networkTrafficQuotaPolicy),
+        trafficShapingPolicy=_policy_name(wire.trafficShapingPolicy),
+        macBinding=wire.macBinding,
+        macAddresses=list(wire.macAddresses),
+        allowedNetworksAny=allowed.any if allowed is not None else None,
+        allowedNetworksIpv4=list(allowed.ipv4Addresses) if allowed is not None else [],
+        allowedNetworksIpv4Start=allowed.ipv4AddressStart if allowed is not None else None,
+        allowedNetworksIpv4End=allowed.ipv4AddressEnd if allowed is not None else None,
+        simultaneousLoginsUseGlobal=(
             simultaneous.useGlobalLimit if simultaneous is not None else None
         ),
-        simultaneous_logins_unlimited=(
-            simultaneous.unlimited if simultaneous is not None else None
-        ),
-        simultaneous_logins_limit=simultaneous.limit if simultaneous is not None else None,
+        simultaneousLoginsUnlimited=(simultaneous.unlimited if simultaneous is not None else None),
+        simultaneousLoginsLimit=simultaneous.limit if simultaneous is not None else None,
     )
 
 
@@ -837,16 +852,16 @@ def _project_vpn_access(
     if wire is None:
         return None
     return NetworkUserVpnAccessOutput(
-        ssl_vpn_remote_access_policy=_policy_name(wire.sslVpnRemoteAccessPolicy),
-        ssl_vpn_clientless_policy=_policy_name(wire.sslVpnClientlessPolicy),
-        ssl_vpn_static_ipv4_address=wire.sslVpnStaticIpv4Address,
-        ssl_vpn_static_ipv6_address=wire.sslVpnStaticIpv6Address,
+        sslVpnRemoteAccessPolicy=_policy_name(wire.sslVpnRemoteAccessPolicy),
+        sslVpnClientlessPolicy=_policy_name(wire.sslVpnClientlessPolicy),
+        sslVpnStaticIpv4Address=wire.sslVpnStaticIpv4Address,
+        sslVpnStaticIpv6Address=wire.sslVpnStaticIpv6Address,
         l2tp=wire.l2tp,
-        l2tp_static_ipv4_address=wire.l2tpStaticIpv4Address,
+        l2tpStaticIpv4Address=wire.l2tpStaticIpv4Address,
         pptp=wire.pptp,
-        pptp_static_ipv4_address=wire.pptpStaticIpv4Address,
-        ipsec_vpn_remote_access=wire.ipsecVpnRemoteAccess,
-        ipsec_vpn_static_ipv4_address=wire.ipsecVpnStaticIpv4Address,
+        pptpStaticIpv4Address=wire.pptpStaticIpv4Address,
+        ipsecVpnRemoteAccess=wire.ipsecVpnRemoteAccess,
+        ipsecVpnStaticIpv4Address=wire.ipsecVpnStaticIpv4Address,
     )
 
 
@@ -855,17 +870,17 @@ def _project_network_user_wire(wire: NetworkUserWire) -> NetworkUserOutput:
     return NetworkUserOutput(
         id=wire.id,
         name=wire.name,
-        display_name=wire.displayName,
+        displayName=wire.displayName,
         description=wire.description,
         active=wire.active,
-        email_addresses=list(wire.emailAddresses),
+        emailAddresses=list(wire.emailAddresses),
         group=wire.group.name if wire.group is not None else None,
-        additional_groups=[group.name for group in wire.additionalGroups],
+        additionalGroups=[group.name for group in wire.additionalGroups],
         policies=_project_policies(wire.policies),
-        vpn_access=_project_vpn_access(wire.vpnAccess),
-        email_quarantine_digest=wire.emailQuarantineDigest,
-        created_at=wire.createdAt,
-        updated_at=wire.updatedAt,
+        vpnAccess=_project_vpn_access(wire.vpnAccess),
+        emailQuarantineDigest=wire.emailQuarantineDigest,
+        createdAt=wire.createdAt,
+        updatedAt=wire.updatedAt,
     )
 
 
@@ -879,15 +894,15 @@ def _project_user_summary(wire: UserSummaryWire) -> UserSummaryOutput:
     return UserSummaryOutput(
         id=wire.id,
         name=wire.name,
-        display_name=wire.displayName,
+        displayName=wire.displayName,
         description=wire.description,
         active=wire.active,
-        email_addresses=list(wire.emailAddresses),
+        emailAddresses=list(wire.emailAddresses),
         group=wire.group.name if wire.group is not None else None,
-        additional_groups=[group.name for group in wire.additionalGroups],
-        administrative_access=wire.administrativeAccess,
-        created_at=wire.createdAt,
-        updated_at=wire.updatedAt,
+        additionalGroups=[group.name for group in wire.additionalGroups],
+        administrativeAccess=wire.administrativeAccess,
+        createdAt=wire.createdAt,
+        updatedAt=wire.updatedAt,
     )
 
 
@@ -912,16 +927,16 @@ def project_network_user_page(payload: Mapping[str, Any]) -> ListPage[NetworkUse
 def _project_live_user_session(wire: LiveUserSessionWire) -> LiveUserSessionOutput:
     """Project one live-session row."""
     return LiveUserSessionOutput(
-        live_user_id=wire.liveUserId,
-        user_name=wire.userName,
-        client_type=wire.clientType,
-        ipv4_address=wire.ipv4Address,
-        ipv6_address=wire.ipv6Address,
-        mac_address=wire.macAddress,
-        logged_in_time=wire.loggedInTime,
-        upload_data=wire.uploadData,
-        download_data=wire.downloadData,
-        transfer_rate=wire.transferRate,
+        liveUserId=wire.liveUserId,
+        userName=wire.userName,
+        clientType=wire.clientType,
+        ipv4Address=wire.ipv4Address,
+        ipv6Address=wire.ipv6Address,
+        macAddress=wire.macAddress,
+        loggedInTime=wire.loggedInTime,
+        uploadData=wire.uploadData,
+        downloadData=wire.downloadData,
+        transferRate=wire.transferRate,
         duration=wire.duration,
     )
 
@@ -940,4 +955,4 @@ def project_disconnect_live_user(
 ) -> LiveUserDisconnectOutput:
     """Project the ``disconnectLiveUser`` body and echo the targeted session id."""
     wire = DisconnectLiveUserWire.model_validate(payload)
-    return LiveUserDisconnectOutput(disconnected=wire.disconnected, live_user_id=live_user_id)
+    return LiveUserDisconnectOutput(disconnected=wire.disconnected, liveUserId=live_user_id)

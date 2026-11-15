@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -198,6 +199,26 @@ def find_password_schema(schema: Any) -> dict[str, Any]:
             if found:
                 return found
     return {}
+
+
+def schema_property_names(node: Any) -> set[str]:
+    """Every ``properties`` key reachable in a JSON schema, at every depth.
+
+    The walk is structural rather than ``$ref``-aware: it descends into ``$defs``,
+    ``items``, ``anyOf``/``oneOf``/``allOf`` and every other nested object, so a property
+    declared one level down is found without resolving references.
+    """
+    found: set[str] = set()
+    if isinstance(node, dict):
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            found.update(properties)
+        for value in node.values():
+            found |= schema_property_names(value)
+    elif isinstance(node, list):
+        for value in node:
+            found |= schema_property_names(value)
+    return found
 
 
 def load_spec() -> dict[str, Any]:
@@ -390,15 +411,15 @@ def test_project_network_user_projects_the_bounded_shape():
 
     assert output.id == NETWORK_USER_PAYLOAD["id"]
     assert output.name == "user-ops"
-    assert output.display_name == "Operations user"
+    assert output.displayName == "Operations user"
     assert output.group == "users"
-    assert output.additional_groups == ["engineering-users"]
+    assert output.additionalGroups == ["engineering-users"]
     assert output.policies is not None
-    assert output.policies.surfing_quota_policy == "default-surfing-quota"
-    assert output.policies.allowed_networks_any is True
-    assert output.policies.simultaneous_logins_limit == 3
-    assert output.vpn_access is not None
-    assert output.vpn_access.l2tp is False
+    assert output.policies.surfingQuotaPolicy == "default-surfing-quota"
+    assert output.policies.allowedNetworksAny is True
+    assert output.policies.simultaneousLoginsLimit == 3
+    assert output.vpnAccess is not None
+    assert output.vpnAccess.l2tp is False
 
 
 def test_projection_ignores_unknown_fields_and_credential_material():
@@ -430,7 +451,7 @@ def test_project_user_page_preserves_the_pages_metadata():
     page = project_user_page({"items": [USER_SUMMARY_PAYLOAD], "pages": PAGES})
 
     assert [item.name for item in page.items] == ["alice"]
-    assert page.items[0].administrative_access is False
+    assert page.items[0].administrativeAccess is False
     assert page.pages is not None
     assert page.pages.current == 2
     assert page.pages.size == 10
@@ -459,15 +480,15 @@ def test_project_live_user_page_projects_every_documented_field():
     page = project_live_user_page({"items": [LIVE_USER_PAYLOAD], "pages": PAGES})
 
     session = page.items[0]
-    assert session.live_user_id == 41
-    assert session.user_name == "user-ops"
-    assert session.client_type == "sslVpnTunnel"
-    assert session.ipv4_address == "10.10.10.50"
-    assert session.ipv6_address == "2001:db8::50"
-    assert session.mac_address == "00:11:22:33:44:55"
-    assert session.logged_in_time.year == 2026
-    assert (session.upload_data, session.download_data) == (1024, 2048)
-    assert (session.transfer_rate, session.duration) == (12, 3600)
+    assert session.liveUserId == 41
+    assert session.userName == "user-ops"
+    assert session.clientType == "sslVpnTunnel"
+    assert session.ipv4Address == "10.10.10.50"
+    assert session.ipv6Address == "2001:db8::50"
+    assert session.macAddress == "00:11:22:33:44:55"
+    assert session.loggedInTime.year == 2026
+    assert (session.uploadData, session.downloadData) == (1024, 2048)
+    assert (session.transferRate, session.duration) == (12, 3600)
     assert page.pages is not None
     assert (page.pages.current, page.pages.size, page.pages.maxSize) == (2, 10, 100)
 
@@ -484,7 +505,136 @@ def test_project_disconnect_live_user_echoes_the_target_session():
     output = project_disconnect_live_user({"disconnected": True}, 41)
 
     assert output.disconnected is True
-    assert output.live_user_id == 41
+    assert output.liveUserId == 41
+
+
+# -- M2: output naming -----------------------------------------------------------------
+
+#: The Sophos wire names of every users output object. The projections are renames of the
+#: appliance payload, so these are the contract's camelCase names, not snake_case.
+USER_SUMMARY_OUTPUT_KEYS = {
+    "id",
+    "name",
+    "displayName",
+    "description",
+    "active",
+    "emailAddresses",
+    "group",
+    "additionalGroups",
+    "administrativeAccess",
+    "createdAt",
+    "updatedAt",
+}
+NETWORK_USER_OUTPUT_KEYS = {
+    "id",
+    "name",
+    "displayName",
+    "description",
+    "active",
+    "emailAddresses",
+    "group",
+    "additionalGroups",
+    "policies",
+    "vpnAccess",
+    "emailQuarantineDigest",
+    "createdAt",
+    "updatedAt",
+}
+NETWORK_USER_POLICIES_OUTPUT_KEYS = {
+    "surfingQuotaPolicy",
+    "accessTimePolicy",
+    "networkTrafficQuotaPolicy",
+    "trafficShapingPolicy",
+    "macBinding",
+    "macAddresses",
+    "allowedNetworksAny",
+    "allowedNetworksIpv4",
+    "allowedNetworksIpv4Start",
+    "allowedNetworksIpv4End",
+    "simultaneousLoginsUseGlobal",
+    "simultaneousLoginsUnlimited",
+    "simultaneousLoginsLimit",
+}
+NETWORK_USER_VPN_ACCESS_OUTPUT_KEYS = {
+    "sslVpnRemoteAccessPolicy",
+    "sslVpnClientlessPolicy",
+    "sslVpnStaticIpv4Address",
+    "sslVpnStaticIpv6Address",
+    "l2tp",
+    "l2tpStaticIpv4Address",
+    "pptp",
+    "pptpStaticIpv4Address",
+    "ipsecVpnRemoteAccess",
+    "ipsecVpnStaticIpv4Address",
+}
+LIVE_USER_SESSION_OUTPUT_KEYS = {
+    "liveUserId",
+    "userName",
+    "clientType",
+    "ipv4Address",
+    "ipv6Address",
+    "macAddress",
+    "loggedInTime",
+    "uploadData",
+    "downloadData",
+    "transferRate",
+    "duration",
+}
+
+#: camelCase as the contract writes it: a lowercase first letter, no underscore.
+CAMEL_CASE_PATTERN = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+
+
+def test_projections_dump_the_sophos_wire_names():
+    """M2: the users projections publish the appliance's camelCase names.
+
+    Inputs stay snake_case (the model writes them); outputs are projections of the payload
+    the model reads, so they keep the wire names like the other 119 tools. A snake_case
+    output key is exactly the split M2 removes.
+    """
+    network_user = project_network_user(NETWORK_USER_PAYLOAD).model_dump(mode="json")
+    assert set(network_user) == NETWORK_USER_OUTPUT_KEYS
+    assert set(network_user["policies"]) == NETWORK_USER_POLICIES_OUTPUT_KEYS
+    assert set(network_user["vpnAccess"]) == NETWORK_USER_VPN_ACCESS_OUTPUT_KEYS
+
+    summary = project_user_page({"items": [USER_SUMMARY_PAYLOAD], "pages": PAGES}).items[0]
+    assert set(summary.model_dump(mode="json")) == USER_SUMMARY_OUTPUT_KEYS
+
+    session = project_live_user_page({"items": [LIVE_USER_PAYLOAD], "pages": PAGES}).items[0]
+    assert set(session.model_dump(mode="json")) == LIVE_USER_SESSION_OUTPUT_KEYS
+
+    assert set(project_disconnect_live_user({"disconnected": True}, 41).model_dump()) == {
+        "disconnected",
+        "liveUserId",
+    }
+
+
+async def test_every_published_output_property_is_camel_case_at_every_depth():
+    """M2: no users tool publishes a snake_case output property, at any depth.
+
+    The scan walks each tool's published output schema structurally (``$defs``, ``items``,
+    ``anyOf``/``oneOf``/``allOf``), so a nested projection such as ``policies.macBinding``
+    is covered rather than only the top-level object.
+    """
+    tools = {tool.name: tool for tool in await make_server().list_tools()}
+
+    scanned: dict[str, set[str]] = {}
+    offending: dict[str, list[str]] = {}
+    for name, tool in tools.items():
+        schema = tool.output_schema
+        assert schema is not None, name
+        properties = schema_property_names(schema)
+        scanned[name] = properties
+        bad = sorted(prop for prop in properties if not CAMEL_CASE_PATTERN.match(prop))
+        if bad:
+            offending[name] = bad
+
+    # The scan must reach the nested projections, not only the top-level object.
+    assert {"macBinding", "allowedNetworksIpv4"} <= scanned["network_user_get"]
+    assert {"liveUserId", "clientType"} <= scanned["live_user_list"]
+    assert {"administrativeAccess", "displayName"} <= scanned["user_list"]
+
+    assert offending == {}
 
 
 # -- Contract tests: users -------------------------------------------------------------
@@ -583,7 +733,7 @@ async def test_network_user_list_sends_the_documented_query(router: Any):
     }
     assert result.is_error is False
     assert result.structured_content["items"][0]["name"] == "user-ops"
-    assert result.structured_content["items"][0]["policies"]["mac_binding"] is False
+    assert result.structured_content["items"][0]["policies"]["macBinding"] is False
 
 
 async def test_network_user_get_encodes_the_name_as_one_path_segment(router: Any):
@@ -595,7 +745,7 @@ async def test_network_user_get_encodes_the_name_as_one_path_segment(router: Any
 
     assert str(route.calls.last.request.url) == f"{BASE}{NETWORK_USERS_PATH}/user%20ops"
     assert result.is_error is False
-    assert result.structured_content["display_name"] == "Operations user"
+    assert result.structured_content["displayName"] == "Operations user"
 
 
 async def test_network_user_get_encodes_a_slash_inside_the_name(router: Any):
@@ -823,7 +973,7 @@ async def test_network_user_delete_sends_delete_without_a_body(router: Any):
     assert request.content == b""
     assert "content-type" not in request.headers
     assert result.is_error is False
-    assert result.structured_content == {"deleted": True, "id_or_name": "user-ops"}
+    assert result.structured_content == {"deleted": True, "idOrName": "user-ops"}
 
 
 # -- Contract tests: live sessions -----------------------------------------------------
@@ -842,8 +992,8 @@ async def test_live_user_list_sends_no_query_parameters(router: Any):
     assert request.content == b""
     assert result.is_error is False
     session = result.structured_content["items"][0]
-    assert session["live_user_id"] == 41
-    assert session["client_type"] == "sslVpnTunnel"
+    assert session["liveUserId"] == 41
+    assert session["clientType"] == "sslVpnTunnel"
     assert result.structured_content["pages"]["maxSize"] == 100
 
 
@@ -892,7 +1042,7 @@ async def test_live_user_disconnect_posts_the_documented_body(router: Any):
         "message": "Session closed by administrator",
     }
     assert result.is_error is False
-    assert result.structured_content == {"disconnected": True, "live_user_id": 41}
+    assert result.structured_content == {"disconnected": True, "liveUserId": 41}
 
 
 # -- Error mapping ---------------------------------------------------------------------

@@ -250,7 +250,7 @@ class UsersAdapter(DomainAdapter):
             await self.client.delete(path)
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return NetworkUserDeleteOutput(deleted=True, id_or_name=request.id_or_name)
+        return NetworkUserDeleteOutput(deleted=True, idOrName=request.id_or_name)
 
     async def list_live_users(self, request: LiveUserListInput) -> ListPage[LiveUserSessionOutput]:
         """``getLiveUsers``: the ``{items, pages}`` live-session body, no request pagination."""
