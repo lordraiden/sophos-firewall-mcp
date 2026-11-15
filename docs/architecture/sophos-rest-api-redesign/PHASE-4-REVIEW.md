@@ -108,3 +108,50 @@ three bounded-analysis limitations.
 - **The routing decision ignores a truncated gateway/route scan.** The budget is 500 items per collection, so this is unlikely on a real appliance, but a false `no-route` is the kind of confident wrong answer the audit tools exist to avoid (finding 8).
 - **The live evidence is not exactly reproducible** because the drivers are not committed (finding 10).
 - **The 0.5.0 release pack is incomplete.** The CHANGELOG and `pyproject.toml` are 0.5.0, but there is no `docs/release/RELEASE-0.5.0.md` and the README is not updated. The PR says the release is "prepared, not published"; the publication checklist will need the release notes and the README fix before the tag.
+
+---
+
+## Re-check after fixes
+
+**Re-checked HEAD:** `5bec690` (4 commits after the reviewed `d0e6c67`). **Date:** 2026-11-15.
+**Scope:** focused re-check of the 10 findings, not a second full review. The original verdict
+section above is unchanged.
+
+### Status of the findings
+
+| # | Severity | Status | Evidence |
+|---|---|---|---|
+| 1 | Medium | **Closed** | `models/firewall.py` and `models/objects.py` now publish snake_case at every depth; the surface test walks the whole schema recursively (`$ref`, `items`, `allOf`/`oneOf`/`anyOf`, cycle-safe), covers the union-request tools, and pins 144 tools / 1,495 occurrences / 167 distinct names / 0 non-snake_case (`tests/test_tool_surface.py:160-250`). I independently enumerated `tools/list`: 0 camelCase properties at any depth, 144 tools with a request, 167 distinct names. The wire body is identical to `d0e6c67` for a firewall rule, a service, all 8 address-create and 2 MAC-create bodies (constructed the same models in both trees and compared `model_dump(by_alias=True)`). The only output schema that changed is `explain_connectivity` (`routing.truncated`, the L8 fix); the firewall/objects/services output schemas are unchanged. |
+| 2 | Medium | **Closed** | `README.md:311-326` now says the naming is uniform as of 0.5.0 (breaking from 0.4.0, wire aliases unchanged, `additionalProperties: false`) and describes the live write validation and what remains unverified. |
+| 3 | Low | **Closed** | `docs/live-evidence/phase-4-feedback.md:822` now records the M3 live evidence: `address_get_ipv4` accepted `##ALL_RW`, `##ALL_IPSEC_RW` and `FQDN Group - Pipeline/parsing errors`, `find_object_usage` resolved both, and 0.4.0 rejected all five. |
+| 4 | Low | **Closed** | The private seam is confined to `_registered_tool` (`src/sophos_firewall_mcp/tools/__init__.py:393-410`), pinned to mcp 2.3.0, raises if `_tool_manager` is missing, and three tests cover the mutation, the single accessor (AST) and the failure mode (`tests/test_server.py:863-904`). |
+| 5 | Low | **Closed** | The `service_list` description states the filter is client-side over the returned page (`src/sophos_firewall_mcp/tools/services_objects.py:272-280`); the page-level limitation is documented. |
+| 6 | Low | **Closed** | `_evaluate_rules` now collects every indeterminate rule (`_IndeterminateRule`), continues the scan, and reports a later fully-resolved rule as non-decisive when an earlier rule may preempt it (`src/sophos_firewall_mcp/tools/audit.py:2358-2500`); the evidence line is bounded to `MAX_TEXT`; tests cover the multi-candidate case and the bound. |
+| 7 | Low | **Closed** | The `_is_built_in` docstring records the live confirmation (93 services, all epoch) and the false-negative limit (user-created services also carry the epoch); the `unused-object` note states the heuristic and the excluded count; a test pins the note. |
+| 8 | Low | **Closed** | `_routing_for` takes `truncated`/`item_limit`, marks the decision `truncated`, and downgrades `no-route` to `not-verified`; `missing_evidence` records the truncation; three tests cover the no-route, static-route and default-route cases. |
+| 9 | Low | **Closed** | `CHANGELOG.md:11` now uses the measured counts (74 camelCase-only, 55 snake_case-only, 5 mixed, 6 single-word-only, 12 parameterless). |
+| 10 | Low | **Closed** | `scripts/mcp_smoke_test.py` is committed and reproducible; the feedback doc documents it (`docs/live-evidence/phase-4-feedback.md:846-858`). |
+
+### Gates (re-run on `5bec690`)
+
+| Gate | Command | Result |
+|---|---|---|
+| Tests | `UV_CACHE_DIR=/tmp/dsh-uv-cache uv run --no-sync pytest -q` | **1070 passed, 100 skipped** |
+| Types | `uv run --no-sync mypy src/sophos_firewall_mcp` | clean (26 files) |
+| Lint | `uv run --no-sync flake8 src/sophos_firewall_mcp tests scripts` | clean |
+| Format | `uv run --no-sync black --check src tests scripts` | 51 files unchanged |
+| Coverage drift | `uv run --no-sync python scripts/generate_coverage.py --check` | up to date |
+| Lock | `uv lock --check` | 55 packages |
+
+### New findings
+
+- **Low (new):** `tests/test_tool_surface.py:222` says the walk reaches "a maximum depth of five",
+  but the test does not assert the depth. The 1,495-occurrence pin would catch a flattening, so the
+  risk is low; the docstring should either assert the depth or drop the claim.
+
+### Verdict after re-check
+
+**APPROVE.** All 10 findings are closed. The only new item is a Low documentation/test-quality gap
+(the max-depth claim is not asserted), which does not block integration. The gates are green, the
+wire body is unchanged, the output schemas are unchanged except for the intentional
+`explain_connectivity` addition, and the live evidence is now recorded and reproducible.
