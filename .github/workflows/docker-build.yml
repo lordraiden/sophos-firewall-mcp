@@ -72,7 +72,7 @@ jobs:
 
       - name: The image contains no XML-era or router dependency
         run: |
-          docker run --rm --entrypoint python sophos-firewall-mcp:pr - <<'PY'
+          docker run --rm -i --entrypoint python sophos-firewall-mcp:pr - <<'PY'
           import importlib.util
           import sys
 
