@@ -111,7 +111,7 @@ ObjectName = Annotated[str, AfterValidator(validate_object_name)]
 
 
 #: Characters that cannot appear in a value used as one URL path segment.
-_PATH_UNSAFE = ("/", "\\", "..", "?", "#")
+_PATH_UNSAFE = ("/", "\\", "..", "?", "#", "://")
 
 
 def validate_object_name_or_id(value: str) -> str:
@@ -131,6 +131,8 @@ def validate_object_name_or_id(value: str) -> str:
     if _UUID_PATTERN.fullmatch(value):
         return value
     name = validate_object_name(value)
+    if "%2e" in name.lower():
+        raise ValueError("object identifier must not contain percent-encoded dots ('%2e')")
     for token in _PATH_UNSAFE:
         if token in name:
             raise ValueError(

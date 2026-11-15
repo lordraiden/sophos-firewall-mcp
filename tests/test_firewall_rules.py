@@ -25,6 +25,7 @@ from mcp import Client
 from pydantic import ValidationError
 
 from sophos_firewall_mcp.config import Settings
+from sophos_firewall_mcp.models.common import validate_object_name_or_id  # noqa: F401
 from sophos_firewall_mcp.models.common import Pages
 from sophos_firewall_mcp.models.firewall import (
     AnySelection,
@@ -41,7 +42,6 @@ from sophos_firewall_mcp.models.firewall import (
     UpdateFirewallRuleIpv4Input,
     UpdateFirewallRuleIpv6Input,
     ZoneReference,
-    validate_object_name_or_id,
 )
 from sophos_firewall_mcp.server import create_server
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools

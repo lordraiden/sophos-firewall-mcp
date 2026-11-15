@@ -33,7 +33,6 @@ Contract decisions encoded here:
 
 from __future__ import annotations
 
-import re
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
@@ -42,8 +41,10 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validat
 from sophos_firewall_mcp.models.common import (
     ListPage,
     ObjectName,
+    ObjectNameOrId,
     ObjectRef,
     validate_object_name,
+    validate_object_name_or_id,
 )
 
 __all__ = [
@@ -109,16 +110,6 @@ MAX_NAME_FILTER_LENGTH = 255
 
 #: The contract's zone-name ``pattern`` (note: ``0`` is not a valid first character).
 ZONE_NAME_PATTERN = r"^[a-zA-Z1-9][a-zA-Z0-9_]*$"
-
-#: ``format: uuid`` as used by the ``idOrName`` path parameters and rule ids.
-_UUID_PATTERN = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
-
-#: Characters that would make a name unsafe as a single URL path segment. The REST client
-#: already refuses ``..``; rejecting these here turns a transport-level ``ValueError`` into
-#: a clear model validation error before any I/O.
-_PATH_UNSAFE_TOKENS = ("/", "\\", "..")
 
 #: A rule name: the documented ``sfos-object-name`` format, at most 60 characters.
 RuleName = Annotated[ObjectName, Field(min_length=1, max_length=MAX_RULE_NAME_LENGTH)]
@@ -209,30 +200,6 @@ DscpMarking = Literal[
     "62",
     "63",
 ]
-
-
-def validate_object_name_or_id(value: str) -> str:
-    """Validate an ``idOrName`` path identifier: a UUID or a documented object name.
-
-    ``sfos-object-name-or-id`` accepts either form. A UUID is returned unchanged; any
-    other value must pass :func:`~sophos_firewall_mcp.models.common.validate_object_name`
-    and must also be safe as one URL path segment (no ``/``, ``\\`` or ``..``).
-
-    Raises:
-        ValueError: The value is neither a UUID nor a usable object name.
-    """
-    if not isinstance(value, str):
-        raise ValueError("idOrName must be a string")
-    if _UUID_PATTERN.fullmatch(value):
-        return value
-    name = validate_object_name(value)
-    if any(token in name for token in _PATH_UNSAFE_TOKENS):
-        raise ValueError("object name must not contain '/', '\\' or '..'")
-    return name
-
-
-#: A UUID or a documented object name, as accepted by the ``idOrName`` path parameters.
-ObjectNameOrId = Annotated[str, AfterValidator(validate_object_name_or_id)]
 
 
 class _ClosedModel(BaseModel):

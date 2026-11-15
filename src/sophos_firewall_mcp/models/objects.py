@@ -32,9 +32,14 @@ from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Literal, Self, Union
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from sophos_firewall_mcp.models.common import ObjectName, ObjectRef, validate_object_name
+from sophos_firewall_mcp.models.common import (
+    ObjectName,
+    ObjectNameOrId,
+    ObjectRef,
+    validate_object_name_or_id,
+)
 
 __all__ = [
     "CountryGroup",
@@ -106,7 +111,7 @@ __all__ = [
     "MacAddressString",
     "MacAddressUpdateInput",
     "MemberRef",
-    "ObjectIdOrName",
+    "ObjectNameOrId",
     "ObjectIdentifierInput",
     "Service",
     "ServiceCreate",
@@ -124,7 +129,7 @@ __all__ = [
     "ServiceUpdateInput",
     "TcpUdpServiceDetail",
     "TcpUdpServiceDetailOutput",
-    "validate_object_id_or_name",
+    "validate_object_name_or_id",
 ]
 
 #: Closed request models: the contract is closed, an unknown member is a bug.
@@ -148,34 +153,11 @@ class _OutputModel(BaseModel):
 
 # -- Shared identifier and membership primitives --------------------------------------
 
-_UUID_PATTERN = re.compile(
-    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
-)
-
-
-def validate_object_id_or_name(value: str) -> str:
-    """Validate the documented ``sfos-object-name-or-id`` path parameter.
-
-    A path identifier is either a UUID or a valid ``sfos-object-name``. The shared
-    :func:`~sophos_firewall_mcp.models.common.validate_object_name` deliberately rejects
-    UUIDs, so the UUID branch is checked first.
-
-    Raises:
-        ValueError: The value is neither a UUID nor a valid Sophos object name.
-    """
-    if _UUID_PATTERN.match(value):
-        return value
-    return validate_object_name(value)
-
-
-#: ``str`` annotated with the documented ``sfos-object-name-or-id`` validation.
-ObjectIdOrName = Annotated[str, AfterValidator(validate_object_id_or_name)]
-
 
 class ObjectIdentifierInput(_InputModel):
     """The ``{idOrName}`` path parameter used by get and delete operations."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
 
 
 class MemberRef(_InputModel):
@@ -338,7 +320,7 @@ Ipv4AddressCreate = Annotated[
 class Ipv4AddressUpdateInput(_InputModel):
     """The ``updateIpAddressByIdOrName`` input: identifier plus partial PATCH fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     ipv4_address: IPv4Address | None = Field(None, alias="ipv4Address")
@@ -471,7 +453,7 @@ Ipv6AddressCreate = Annotated[
 class Ipv6AddressUpdateInput(_InputModel):
     """The ``updateIpv6AddressByIdOrName`` input: identifier plus partial PATCH fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     ipv6_address: IPv6Address | None = Field(None, alias="ipv6Address")
@@ -517,7 +499,7 @@ class FqdnAddressCreate(_InputModel):
 class FqdnAddressUpdateInput(_InputModel):
     """The ``updateFqdnByIdOrName`` input: identifier plus partial PATCH fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     fqdn: str | None = Field(None, min_length=1, max_length=253)
@@ -552,7 +534,7 @@ class Ipv4AddressGroupCreate(_InputModel):
 class Ipv4AddressGroupUpdateInput(_InputModel):
     """The ``updateIpv4AddressGroupByIdOrName`` input: identifier plus partial fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     ipv4_addresses: list[MemberRef] | None = Field(None, alias="ipv4Addresses")
@@ -584,7 +566,7 @@ class Ipv6AddressGroupCreate(_InputModel):
 class Ipv6AddressGroupUpdateInput(_InputModel):
     """The ``updateIpv6AddressGroupByIdOrName`` input: identifier plus partial fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     ipv6_addresses: list[MemberRef] | None = Field(None, alias="ipv6Addresses")
@@ -616,7 +598,7 @@ class FqdnAddressGroupCreate(_InputModel):
 class FqdnAddressGroupUpdateInput(_InputModel):
     """The ``updateFqdnGroupByIdOrName`` input: identifier plus partial fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     fqdns: list[MemberRef] | None = None
@@ -726,7 +708,7 @@ and both variants are closed.
 class MacAddressUpdateInput(_InputModel):
     """The ``updateMacAddressByIdOrName`` input: identifier plus partial PATCH fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     mac_address: MacAddressString | None = Field(None, alias="macAddress")
@@ -1297,7 +1279,7 @@ class ServiceUpdateInput(_InputModel):
     the service type.
     """
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=50)
     description: str | None = Field(None, max_length=255)
     services: list[ServiceDetail] | None = Field(None, min_length=1, max_length=100)
@@ -1337,7 +1319,7 @@ class ServiceGroupCreate(_InputModel):
 class ServiceGroupUpdateInput(_InputModel):
     """The ``updateServiceGroupByIdOrName`` input: identifier plus partial fields."""
 
-    id_or_name: ObjectIdOrName = Field(..., min_length=1, max_length=60)
+    id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
     services: list[ServiceMemberRef] | None = Field(None, min_length=1)
