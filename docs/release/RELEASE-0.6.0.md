@@ -95,7 +95,7 @@ The server is stateless: rolling back changes no appliance configuration and no 
 
 ## 3. Publication checklist
 
-- [ ] `pyproject.toml` and `uv.lock` both say `0.6.0`; `uv lock --check` passes. *(The Lead bumps the
+- [x] `pyproject.toml` and `uv.lock` both say `0.6.0`; `uv lock --check` passes. *(The Lead bumps the
       version at integration; this release pack does not change it.)*
 - [ ] `CHANGELOG.md` has the `[0.6.0]` entry; `README.md` reflects 0.6.0.
 - [ ] `docs/API-COVERAGE.md` regenerates without a diff.
