@@ -55,22 +55,26 @@ transport). The plan explicitly left this open and required evidence from a boun
 | Paths | **384** |
 | HTTP operations | **700** — GET 263, POST 210, PATCH 134, DELETE 93; **0** PUT/HEAD/OPTIONS/TRACE |
 | `operationId` | **700 present, 700 unique, 0 missing, 0 duplicate** |
-| Tags | 133 distinct tag names |
+| Tags | **132** distinct tag names (`len(doc["tags"]) == 132`; all 132 are used by the 700 operations) |
 | `$ref` occurrences | **76** |
 | Unique `$ref` targets | **32**, all local `#/components/schemas/*` |
 | External / unresolved `$ref` | **0 / 0** (every local pointer resolved) |
 | Component schemas | **32**, all referenced, **0** unreferenced, **0** cycles |
-| `schema` keyword sites | **4,981** — 339 request bodies, 3,936 response media types, 706 parameters |
-| Reachable schema objects | **38,541** = 32 component schemas + **38,509 inline** schema objects |
-| Dict nodes inside schema subtrees | 52,852; largest single inline schema: **373 dict nodes** (`PATCH /firewall/rules/ipv4/{idOrName}` request body) |
+| `schema` keyword sites | **4,981** — 339 request bodies + 3,926 response media types + 706 parameters + 10 response headers (`Location` on the 201 responses) |
+| Media-type schema sites | **4,265** (339 request-body + 3,926 response media-type); **162,760** JSON nodes under them (objects, arrays and scalars) — reproduces the independent audit's figures |
+| Reachable schema objects | **38,541** = 32 component schemas + **38,509 inline** schema objects (unique schema objects reached through `properties`/`items`/`allOf`/`oneOf`/`anyOf`); 52,852 dict nodes |
+| Largest inline schema | **1,148 JSON nodes** (373 dict nodes) — `PATCH /firewall/rules/ipv4/{idOrName}` request body |
 | Constructs | `allOf` 2,046 · `oneOf` 1,130 · `anyOf` 0 · `discriminator` 26 · `not` 6 · `nullable` 294 |
 
-> **Counting note.** The independent audit (report §2.2) published "4,265 inline schemas / 162,760 schema
-> nodes". Those figures are **not reproducible** with the definitions above (nor with any subset of
-> `schema` keyword sites: 339 + 3,936 + 706 = 4,981; the whole document has 232,492 nodes). They appear to
-> use a different convention that the report does not define. This ADR records its own reproducible
-> definition and numbers; the discrepancy does not affect the decision, but the coverage matrix (#24/T4)
-> must use one definition and state it.
+> **Counting definitions.** Two reproducible definitions are in play, and both are stated here so the
+> coverage matrix can pick one. (1) *Media-type schema sites* — the independent audit's convention (report
+> §2.2): 339 request-body + 3,926 response media-type schema sites = **4,265**, and every JSON node under
+> them (objects, arrays and scalars) = **162,760**. (2) *Reachable schema objects* — every `schema` site plus
+> the component schemas, counting each distinct schema object reached through
+> `properties`/`items`/`allOf`/`oneOf`/`anyOf` = **38,541** (38,509 inline + 32 component), with 52,852 dict
+> nodes. The 10 `Location` response-header schemas and the 706 parameter schemas are excluded from
+> definition (1) and included in the 4,981 total. `docs/API-COVERAGE.md` (#24/T4) must state which
+> definition it uses.
 
 ### 2.3 Operation surface
 
@@ -168,7 +172,7 @@ openapi-python-client generate --path firewall_config_openapi.yaml \
 | Peak RSS | 368 MB |
 | Generated source | **9,180 `.py` files, 28,781,171 bytes, 976,963 lines** |
 | Model modules | **8,366** |
-| API modules | 810, across 133 tag packages |
+| API modules | 810, across **132** tag packages (one per YAML tag; `api/__init__.py` is not a package) |
 | Generator warnings | **48** |
 | Endpoints **not generated** | **23** ("Endpoint will not be generated") |
 | Success responses **omitted** | **25** ("response will be omitted from generated client") |
@@ -486,7 +490,7 @@ have no REST endpoint in this contract; they are not migrated and no placeholder
 | MCP SDK | `mcp>=2.3.0,<3` (v2.3.0 = latest stable, 2 Oct 2026); `[cli]` extra dev-only | REFERENCES R14/R15 |
 | MCP protocol | `2026-07-28` (SDK also serves 2024-11-05…2025-11-25 via handshake); `subscriptions=False`; no manual handshake | REFERENCES R15a/R35/R39 |
 | MCP transport | STDIO only; stdout is protocol, logs to stderr; no TTY | PLAN §7 |
-| Python / runtime | Python `>=3.11` (CI 3.11–3.14); `httpx` (current 0.28.1; version pinned by the Lead-owned lockfile); `pydantic>=2`; no new dependencies | `pyproject.toml`; POC venv |
+| Python / runtime | Python `>=3.11`; CI matrix is 3.11–3.13 today (`.github/workflows/test.yml`), 3.14 is added by #32; `httpx` (current 0.28.1; version pinned by the Lead-owned lockfile); `pydantic>=2`; no new dependencies | `pyproject.toml`; `.github/workflows/test.yml`; POC venv |
 | Firmware | **unknown** — prerequisite for live verification, not for this ADR | §3 |
 
 ---
