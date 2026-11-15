@@ -310,6 +310,7 @@ El proyecto actual usa mcp>=2. La línea estable del SDK Python es v2; a 14 de n
 - No añadir Streamable HTTP ni un listener de red sin un requisito real de despliegue remoto. Si se aprueba posteriormente, esa será una superficie de seguridad distinta: exigir autenticación/autorización del transporte MCP y revisar el modelo OAuth vigente; no reutilizar la API Key de Sophos como credencial de cliente MCP.
 - En Docker, mantener el canal stdio limpio; no activar TTY.
 - No implementar manualmente un handshake MCP. En la revisión 2026-07-28 se retiraron initialize/initialized y las sesiones de transporte; el SDK gestiona la revisión de protocolo y compatibilidad. Las pruebas deben usar el cliente SDK y cubrir la revisión actual, no codificar un handshake antiguo. [R15]
+- Crear el servidor con `subscriptions=False` mientras la lista de herramientas y recursos sea estática durante la vida del proceso (incluido `SOPHOS_READ_ONLY_MODE`, aplicado al inicio). Esto evita anunciar `subscriptions/listen` y cambios de catálogo que no se producen. Habilitarlo únicamente si se implementan notificaciones/catálogos dinámicos reales y se añaden pruebas de ese comportamiento. [R14]
 
 ## Lifespan y Context
 
