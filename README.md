@@ -36,6 +36,8 @@ Bearer API key.
 - [Requirements](#requirements)
 - [Sophos Firewall prerequisites](#sophos-firewall-prerequisites)
 - [Tool surface](#tool-surface)
+- [Calling the tools](#calling-the-tools)
+- [Context cost](#context-cost)
 - [Configuration](#configuration)
 - [Install and run](#install-and-run)
 - [MCP client configuration](#mcp-client-configuration)
@@ -151,6 +153,86 @@ VPN mutation, WAF rules, IPS, and the mutation families outside the VLAN-only in
 gateways, routes, SD-WAN, DHCP, DNS, neighbors, router advertisements, multicast, mDNS, country groups).
 The full per-operation inventory, with the reason for every exclusion, is in
 [`docs/API-COVERAGE.md`](docs/API-COVERAGE.md).
+
+## Calling the tools
+
+### The `request` wrapper
+
+Every tool that takes arguments publishes **exactly one top-level property, `request`**, whose value
+is the real argument object. This is the MCP SDK's single-argument convention, not the flat-argument
+shape most MCP examples use, so a call that puts the fields at the top level is rejected.
+
+144 of the 152 tools are wrapped. The other 8 declare no request parameters and take an empty
+`arguments` object: `dns_settings_get`, `dhcp_lease_list_ipv4`, `dhcp_lease_list_ipv6`,
+`ipsec_live_connection_list_ipv4`, `ipsec_remote_access_settings_get`, `sslvpn_global_settings_get`,
+`network_status_dns_protection` and `network_status_cellular_wan`.
+
+The rejection is actionable and names the accepted argument, so a model can self-correct on the next
+call:
+
+```
+invalid arguments: request is required; id_or_name is not an accepted argument; accepted arguments are request
+```
+
+**Input names are snake_case; output names are camelCase.** The fields inside `request` are the
+published snake_case names (`page_size`, `name_contains`, `id_or_name`); the fields of the result are
+the Sophos wire names (`pageSize`, `nameContains`, `idOrName`). See
+[known limitations](#known-limitations-and-accepted-regressions).
+
+### Three call shapes
+
+A **no-argument read** — the tool publishes no `request`, so `arguments` is empty:
+
+```json
+{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+ "params": {"name": "dns_settings_get", "arguments": {}}}
+```
+
+A **paginated list** — `firewall_rule_list_ipv4` publishes `page`, `page_size`, `page_total`,
+`name_contains` and `name_not_equals` inside `request`:
+
+```json
+{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+ "params": {"name": "firewall_rule_list_ipv4",
+            "arguments": {"request": {"page": 1, "page_size": 10, "page_total": true}}}}
+```
+
+A **delete** — `firewall_rule_delete_ipv4` publishes only `id_or_name` inside `request`:
+
+```json
+{"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+ "params": {"name": "firewall_rule_delete_ipv4",
+            "arguments": {"request": {"id_or_name": "Allow LAN to WAN"}}}}
+```
+
+### Read one of `content` / `structuredContent`, not both
+
+Every successful result carries the payload **twice**: a pretty-printed JSON text block in `content`
+and the same object in `structuredContent`. The duplication is sanctioned by the MCP specification for
+backwards compatibility, so it is not a defect — but reading both doubles the token cost of every
+call, and a single list page is 28–70 KB. Read `structuredContent` when the client supports it and
+fall back to the `content` text block otherwise; never parse both.
+
+## Context cost
+
+`tools/list` returns all **152 tools in a single response**: **950,591 bytes**, roughly **238k tokens**
+at ~4 bytes per token. There is no pagination cursor, so a client that injects the whole catalog into
+the prompt either truncates it — and then cannot call the tools that were cut — or exhausts the
+context window before the first call.
+
+The catalog is static for the process lifetime, so:
+
+- **Call `tools/list` once per session and cache it.** Do not re-fetch it per turn.
+- **Prefer progressive discovery** when the client supports it: load a subset of tools on demand
+  instead of every definition up front. The MCP client guidance puts the threshold at 1–5% of the
+  context window.
+- **Use read-only mode** (`SOPHOS_READ_ONLY_MODE=true`) to publish 98 tools instead of 152 when the
+  deployment only inspects.
+- The server publishes **no MCP resources and no prompts**, so the tool catalog is the only channel it
+  offers.
+
+The payload is dominated by the output schemas (598 KB), of which ~75 KB is auto-generated property
+`title` keys; the 40 IPv4/IPv6 tool pairs account for 308 KB between them.
 
 ## Configuration
 
