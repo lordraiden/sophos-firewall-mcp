@@ -1,22 +1,31 @@
-# Sophos Firewall MCP Server (`sophos-firewall-mcp`)
+# Sophos Firewall 23 MCP Server (SFOS 23.0 REST API)
 
+[![SFOS 23](https://img.shields.io/badge/SFOS-23.0%20REST%20API-informational.svg)](#supported-appliance-and-api)
 [![Container image](https://img.shields.io/badge/ghcr.io-lordraiden%2Fsophos--firewall--mcp-blue.svg)](https://github.com/lordraiden/sophos-firewall-mcp/pkgs/container/sophos-firewall-mcp)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13%20%7C%203.14-blue.svg)](pyproject.toml)
 [![MCP protocol](https://img.shields.io/badge/MCP-2026--07--28-informational.svg)](https://modelcontextprotocol.io/)
 
-A local [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that administers a
-**Sophos Firewall (SFOS)** appliance through its **Configuration REST API**, over **STDIO**.
+A local **MCP server** for **Sophos Firewall 23**, built on the
+[Model Context Protocol](https://modelcontextprotocol.io/): it administers a **Sophos Firewall 23
+(SFOS 23.0)** appliance through the **Sophos Firewall Configuration REST API**, over **STDIO**. It is
+built for **firewall automation** and for **AI agents** — Claude Desktop, Cursor, VS Code, Antigravity
+IDE and any other MCP client — that need typed, bounded access to a firewall's configuration instead of
+a raw HTTP surface.
 
 It is not the Sophos Central Firewall Management API: the only backend is
 `https://<SOPHOS_HOST>:<SOPHOS_PORT>/api/firewall-config/v1` on the appliance itself, authenticated with a
 Bearer API key.
 
-> **0.5.0 is the current release.** It unifies every published input parameter on snake_case (a
-> breaking change from 0.4.0) and fixes the defects found by exercising the server against a live
-> appliance. 0.4.0 was the breaking, REST-only migration: the XML transport, the XML credentials, the
-> raw XML tool, the semantic router and FastEmbed are gone, with no compatibility mode. See
-> [`CHANGELOG.md`](CHANGELOG.md), the [0.5.0 release notes](docs/release/RELEASE-0.5.0.md) and the
+> **0.6.0 is prepared and pending owner approval.** It unifies the published *output* field names on
+> camelCase (the Sophos wire names) — a breaking change from 0.5.0 — and closes the remaining phase-4
+> findings. **0.5.0 remains the latest published release** until 0.6.0 is approved: it unified every
+> published *input* parameter on snake_case (breaking from 0.4.0) and fixed the defects found by
+> exercising the server against a live appliance. 0.4.0 was the breaking, REST-only migration: the XML
+> transport, the XML credentials, the raw XML tool, the semantic router and FastEmbed are gone, with no
+> compatibility mode. See [`CHANGELOG.md`](CHANGELOG.md), the
+> [0.6.0 release notes](docs/release/RELEASE-0.6.0.md), the
+> [0.5.0 release notes](docs/release/RELEASE-0.5.0.md) and the
 > [0.4.0 release notes](docs/release/RELEASE-0.4.0.md).
 
 ---
@@ -24,6 +33,7 @@ Bearer API key.
 ## Contents
 
 - [What it does](#what-it-does)
+- [Supported appliance and API](#supported-appliance-and-api)
 - [Requirements](#requirements)
 - [Sophos Firewall prerequisites](#sophos-firewall-prerequisites)
 - [Tool surface](#tool-surface)
@@ -56,6 +66,28 @@ Bearer API key.
 - **STDIO only.** No HTTP listener, no OAuth, no multi-user mode. Logs go to `stderr`; `stdout` carries
   the MCP protocol only.
 - **Read-only mode** that refuses to register mutation tools at all.
+
+## Supported appliance and API
+
+This server implements the **Sophos Firewall 23 (SFOS 23.0) Configuration REST API**. It is not a
+wrapper around the legacy XML API, the Sophos Central API or a vendor SDK: every tool is a typed
+projection of one audited operation of the SFOS 23 REST contract.
+
+| Item | Value |
+|---|---|
+| Appliance | **Sophos Firewall 23** (SFOS 23.0) |
+| Tested firmware build | **SFOS 23.0.0 GA-Build371** — the build every live-evidence record in this repository was produced against |
+| API | Sophos Firewall **Configuration REST API v1**, base path `/api/firewall-config/v1` |
+| Transport | HTTPS to the appliance Web Admin Console port (SFOS default `4444`), Bearer API key |
+| MCP transport | STDIO only |
+| Not supported | Sophos Central Firewall Management API; the legacy XML API (`/webconsole/APIController`) that 0.3.x used |
+
+**Compatibility scope.** The live evidence in [`docs/live-evidence/`](docs/live-evidence/) applies to
+**SFOS 23.0.0 GA-Build371** and to nothing else. The Configuration REST API exposes no version
+endpoint, so the server cannot detect the firmware it is talking to and does not claim compatibility
+with any other SFOS build, including later 23.0 maintenance builds and SFOS 24. Verify the behaviour
+you depend on against your own appliance before relying on a tool; the
+[known limitations](#known-limitations-and-accepted-regressions) list what was and was not exercised.
 
 ## Requirements
 
@@ -316,10 +348,17 @@ administrator profile for any deployment that only needs inspection.
   change from 0.4.0, where 79 tools published the wire names; callers that hard-coded `pageSize` /
   `nameContains` / `idOrName` must update. The published schemas also set `additionalProperties: false`,
   so an unknown argument is rejected instead of ignored.
-- **Firmware compatibility is limited to the tested build.** The lab appliance runs **SFOS 23.0.0 GA-Build371**
-  (owner-provided; the API exposes no version endpoint). The live evidence applies to that build; no
-  general firmware compatibility claim is made for other SFOS versions. Verify against your own
-  appliance before relying on a tool.
+- **Output field naming is uniform on camelCase as of 0.6.0.** Every published output property is the
+  Sophos wire name (`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`, …), because outputs are
+  projections of the appliance payload. The convention is deliberate: inputs are snake_case because the
+  model writes them, outputs are wire-faithful because the model reads them. This was a breaking change
+  from 0.5.0 for the 23 tools that still published snake_case outputs (NAT and the mixed domains);
+  callers that parsed `original_services_or_groups` or `translated_source` must update.
+- **Firmware compatibility is limited to the tested build.** The lab appliance runs **SFOS 23.0.0
+  GA-Build371** (owner-provided; the API exposes no version endpoint). The live evidence applies to that
+  build; no general firmware compatibility claim is made for other SFOS versions. See
+  [Supported appliance and API](#supported-appliance-and-api). Verify against your own appliance before
+  relying on a tool.
 - **Live write validation is limited.** The 0.5.0 cycle validated create/update/delete against the lab
   appliance for an IPv4 address, an FQDN address, a service, a MAC address, a network user, a firewall
   rule and a NAT rule, with every created object deleted and the collection counts restored
@@ -366,6 +405,8 @@ documented in [`docs/live-evidence/README.md`](docs/live-evidence/README.md).
   access and phase reviews.
 - [Live evidence](docs/live-evidence/) — what was verified against a real appliance, and what was
   deferred with a reason.
+- [Release notes 0.6.0](docs/release/RELEASE-0.6.0.md) — the output-contract release, its breaking
+  camelCase output naming, rollback plan and publication checklist.
 - [Release notes 0.5.0](docs/release/RELEASE-0.5.0.md) — the refinement release, its breaking input
   naming, rollback plan and publication checklist.
 - [Release notes 0.4.0](docs/release/RELEASE-0.4.0.md) — the REST-only migration, rollback plan and

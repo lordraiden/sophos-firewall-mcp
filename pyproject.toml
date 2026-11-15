@@ -8,7 +8,20 @@ requires-python = ">=3.11"
 authors = [
     {name = "Jelmer van der Mul"},
 ]
-keywords = ["sophos", "firewall", "sfos", "mcp", "model-context-protocol", "security", "network"]
+keywords = [
+    "sophos",
+    "firewall",
+    "sfos",
+    "mcp",
+    "model-context-protocol",
+    "security",
+    "network",
+    "sophos firewall 23",
+    "sfos 23",
+    "sophos rest api",
+    "firewall automation",
+    "ai agents",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
