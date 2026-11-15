@@ -34,6 +34,14 @@ SOPHOS_VERIFY_SSL=false SOPHOS_READ_ONLY_MODE=true \
 uv run --no-sync pytest -m live -q tests/live/
 ```
 
+### Tooling note
+
+MCP Inspector is not installed on this host and is not required: the official MCP Python
+SDK v2 `Client` is the reference implementation of the protocol and is what
+`tests/test_mcp_e2e.py` uses for discovery, schema, annotation, `isError`, cancellation and
+STDIO verification. The STDIO transport is additionally driven by hand (raw JSON-RPC on
+stdin, every stdout line parsed as JSON-RPC) to prove that stdout carries only the protocol.
+
 ### Result
 
 | Metric | Value |
