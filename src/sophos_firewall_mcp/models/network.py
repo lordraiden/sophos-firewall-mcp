@@ -1,6 +1,6 @@
 """Pydantic models for the Sophos network-architecture and network-status domains.
 
-This module is the typed contract for issue #31's network surface:
+This module is the typed model layer for the network surface:
 
 * **41 read-only projections** of the network architecture: interfaces, zones, routing
   gateways (IPv4/IPv6, WAN and custom), static unicast routes, SD-WAN routes, DHCP
@@ -9,7 +9,7 @@ This module is the typed contract for issue #31's network surface:
 * **three VLAN-only interface mutations** -- the only writes in this domain;
 * **two status projections**: DNS protection status and cellular WAN modem status.
 
-Response models use the contract's wire names (camelCase) so every projection is auditable
+Response models use the API's wire names (camelCase) so every projection is auditable
 against ``firewall_config_openapi.yaml``, and ``extra="ignore"`` keeps a server-side
 addition from breaking a read. Request models are closed (``extra="forbid"``), use
 snake_case Python names with the wire name as an alias, and validate the documented
@@ -22,7 +22,7 @@ Deliberate narrowings of the VLAN write surface (reported to the Lead, never sil
 * ``delegated`` IPv6 assignment and the ``dhcp``/``delegated`` sub-objects are not exposed
   for the same reason.
 * ``hardwareName``, ``description``, ``mtu``/``mss`` on create and MAC override are not
-  exposed because the contract marks them "not applicable when type is vlan" (create) or
+  exposed because the API marks them "not applicable when type is vlan" (create) or
   they belong to bridge/LAG interfaces. ``mtu``/``mss`` are accepted on update, where the
   contract does not restrict them.
 * ``secondaryAddresses`` (alias add/remove envelopes) are not exposed in v1.
@@ -132,17 +132,17 @@ __all__ = [
 
 # -- Shared primitives -----------------------------------------------------------------
 
-#: UUID form the contract uses for ``format: uuid`` values (the DHCP relay path parameter
+#: UUID form the API uses for ``format: uuid`` values (the DHCP relay path parameter
 #: is a UUID, not a name-or-id).
 _UUID_PATTERN = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 
-#: Zone names carry an extra pattern in the contract.
+#: Zone names carry an extra pattern in the API.
 _ZONE_NAME_PATTERN = r"^[a-zA-Z1-9][a-zA-Z0-9_]*$"
 
 
-#: Interface name (``maxLength: 58`` in the contract).
+#: Interface name (``maxLength: 58`` in the API).
 InterfaceName = Annotated[ObjectName, Field(min_length=1, max_length=58)]
 
 #: Interface reference accepted by a path parameter (name or UUID, ``maxLength: 58``).
@@ -166,7 +166,7 @@ WideRef = Annotated[ObjectNameOrId, Field(min_length=1, max_length=64)]
 #: SD-WAN route reference (``maxLength: 60``).
 SdwanRef = Annotated[ObjectNameOrId, Field(min_length=1, max_length=60)]
 
-#: DHCP relay identifier: the contract declares ``format: uuid`` for this path parameter.
+#: DHCP relay identifier: the API declares ``format: uuid`` for this path parameter.
 UuidString = Annotated[str, Field(pattern=_UUID_PATTERN.pattern)]
 
 InterfaceType = Literal["physical", "vlan", "bridge", "lag", "xfrm", "cellularWan"]
@@ -230,7 +230,7 @@ class _Output(BaseModel):
 
 
 class _Input(BaseModel):
-    """Base for closed request models: the contract is closed, unknown fields are a bug."""
+    """Base for closed request models: the API is closed, unknown fields are a bug."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -245,7 +245,7 @@ class PageInput(_Input):
     The bounds are validated here and again by the client before any I/O: the appliance
     accepts ``page=0`` and rejects ``pageSize`` above 100 with ``400 invalidPageSizeParam``.
 
-    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    ``page_size`` defaults to 10: a default call must stay small enough for a model
     context, and the caller raises it explicitly when it wants a bigger page.
     """
 
@@ -277,7 +277,7 @@ class PageInput(_Input):
 
 
 class FilteredPageInput(PageInput):
-    """A page plus the ``nameContains``/``nameNotEquals`` filters the contract declares."""
+    """A page plus the ``nameContains``/``nameNotEquals`` filters the API declares."""
 
     name_contains: str | None = Field(
         default=None,
@@ -298,7 +298,7 @@ class FilteredPageInput(PageInput):
 
     @model_validator(mode="after")
     def _at_most_one_name_filter(self) -> Self:
-        """Reject both name filters: the contract declares them mutually exclusive."""
+        """Reject both name filters: the API declares them mutually exclusive."""
         if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
                 "name_contains and name_not_equals are mutually exclusive; set at most one"
@@ -337,7 +337,7 @@ class FilterInput(_Input):
 
     @model_validator(mode="after")
     def _at_most_one_name_filter(self) -> Self:
-        """Reject both name filters: the contract declares them mutually exclusive."""
+        """Reject both name filters: the API declares them mutually exclusive."""
         if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
                 "name_contains and name_not_equals are mutually exclusive; set at most one"
@@ -407,7 +407,7 @@ class SdwanRefInput(_Input):
 class DhcpRelayRefInput(_Input):
     """Identify one DHCP relay by UUID.
 
-    The contract declares ``format: uuid`` for this path parameter, so a relay name is
+    The API declares ``format: uuid`` for this path parameter, so a relay name is
     rejected before any I/O.
     """
 
@@ -593,10 +593,10 @@ class VlanIpv6Update(_Input):
 class NetworkInterfaceCreateVlanInput(_Input):
     """Create one VLAN interface.
 
-    The tool always sends ``type: "vlan"``: the contract's create body also accepts
+    The tool always sends ``type: "vlan"``: the API's create body also accepts
     ``bridge`` and ``lag``, and those are deliberately not reachable from this server.
     ``hardwareName``, ``description``, ``mtu``/``mss`` and the MAC override are not
-    accepted because the contract marks them "not applicable when type is vlan".
+    accepted because the API marks them "not applicable when type is vlan".
     """
 
     name: InterfaceName = Field(description="Name of the new VLAN interface.")
@@ -624,7 +624,7 @@ class NetworkInterfaceCreateVlanInput(_Input):
 class NetworkInterfaceUpdateVlanInput(_Input):
     """Update one VLAN interface with a JSON Merge Patch body.
 
-    Only fields the caller sets are sent. The contract's PATCH body has no
+    Only fields the caller sets are sent. The API's PATCH body has no
     ``vlanDetails`` member, so the VLAN ID and parent interface cannot be changed; it also
     marks ``description`` as bridge-only, so it is not exposed here.
     """
@@ -752,7 +752,7 @@ class InterfaceIpv6(_Output):
 
 
 class NetworkInterface(_Output):
-    """One network interface, projected from the contract's interface object.
+    """One network interface, projected from the API's interface object.
 
     ``type`` is the field the VLAN tools rely on: only ``vlan`` interfaces may be written.
     """
@@ -790,7 +790,7 @@ class InterfaceDeleteOutput(_Output):
 class ZoneService(_Output):
     """One firewall service allowed for a zone.
 
-    ``name`` is carried as a string rather than a ``Literal``: the contract declares a
+    ``name`` is carried as a string rather than a ``Literal``: the API declares a
     20-value catalog, and a read must not fail if a firmware build adds a service.
     """
 
@@ -1020,7 +1020,7 @@ class SdwanLinkSelection(_Output):
 class SdwanNetworkSelector(_Output):
     """Source or destination network selector of an SD-WAN route.
 
-    The IPv4 and IPv6 members are both modelled: the contract uses the same selector shape
+    The IPv4 and IPv6 members are both modelled: the API uses the same selector shape
     for both address families and only the populated family is returned.
     """
 
@@ -1039,7 +1039,7 @@ class SdwanNetworkSelector(_Output):
 class SdwanRoute(_Output):
     """One SD-WAN route (IPv4 and IPv6 share this projection; configuration, not live state).
 
-    ``dscpMarking`` is carried as a string rather than a ``Literal``: the contract declares
+    ``dscpMarking`` is carried as a string rather than a ``Literal``: the API declares
     a 64-value catalog, and a read must not fail if a firmware build adds a value.
     """
 
@@ -1104,7 +1104,7 @@ class DhcpOption(_Output):
 class DhcpBootNextServer(_Output):
     """The ``bootNextServer`` member of an IPv4 DHCP server.
 
-    The contract declares a ``oneOf`` of ``{ipv4Address}`` and ``{fqdn}``; both members are
+    The API declares a ``oneOf`` of ``{ipv4Address}`` and ``{fqdn}``; both members are
     optional here so either variant projects without rejecting the response.
     """
 
@@ -1182,15 +1182,15 @@ class DhcpLeaseIpv6(_Output):
 class KeysetPages(_Output):
     """Keyset pagination metadata of the DHCP lease collections.
 
-    The contract returns ``fromKey``/``nextKey`` instead of ``current``: the lease
+    The API returns ``fromKey``/``nextKey`` instead of ``current``: the lease
     endpoints declare no ``page``/``pageSize`` request parameters, so the keys are
     preserved as metadata only and no pagination input is exposed. Only the first page is
     therefore reachable, and a non-null ``nextKey`` means the returned list is incomplete.
 
-    ``maxSize`` is **not** a page-size bound on these endpoints. The contract describes it
+    ``maxSize`` is **not** a page-size bound on these endpoints. The API describes it
     as "the maximum page size that can be requested", but there is no page size to request
     here: the appliance reports the number of items in the returned page in that member
-    (21 items and ``maxSize: 21`` on the lab appliance). The value is preserved exactly as
+    (21 items and ``maxSize: 21`` on the tested appliance). The value is preserved exactly as
     returned, never rewritten.
     """
 
@@ -1246,7 +1246,7 @@ class KeysetPage(BaseModel, Generic[ItemT]):
 
 
 class UnpaginatedList(BaseModel, Generic[ItemT]):
-    """A collection the contract returns without ``pages`` metadata.
+    """A collection the API returns without ``pages`` metadata.
 
     ``getAllDhcpRelayIpv4``/``Ipv6`` and ``listDhcpServersIpv4``/``Ipv6`` declare only
     ``items`` in their 200 response, so the appliance returns no pagination metadata. The
@@ -1344,7 +1344,7 @@ class DnsOverHttpsSettings(_Output):
 class DnsSettings(_Output):
     """The firewall's DNS settings (configuration, not the live resolver state).
 
-    ``updatedAt`` is declared ``format: date-time`` in the contract, but the lab appliance
+    ``updatedAt`` is declared ``format: date-time`` in the API, but the tested appliance
     (15 Nov 2026, ``GET /network/dns/settings``) returns ``"updatedAt": ""``. An empty
     string is mapped to ``None`` so the documented settings stay readable; any other
     non-date-time value still fails validation, so a real schema mismatch is not hidden.
@@ -1367,7 +1367,7 @@ class DnsSettings(_Output):
 class DnsHostEntryIpv4(_Output):
     """The IPv4 side of one DNS host-entry record.
 
-    The contract requires exactly one of ``ipv4Address`` and ``ipv4Interface``; both are
+    The API requires exactly one of ``ipv4Address`` and ``ipv4Interface``; both are
     optional here so a firmware that sends neither does not fail the read.
     """
 
@@ -1378,7 +1378,7 @@ class DnsHostEntryIpv4(_Output):
 class DnsHostEntryIpv6(_Output):
     """The IPv6 side of one DNS host-entry record.
 
-    The contract requires exactly one of ``ipv6Address`` and ``ipv6Interface``; both are
+    The API requires exactly one of ``ipv6Address`` and ``ipv6Interface``; both are
     optional here so a firmware that sends neither does not fail the read.
     """
 
@@ -1390,7 +1390,7 @@ class DnsHostEntryRecord(_Output):
     """One record of a DNS host entry: an IPv4 or an IPv6 address/interface.
 
     The appliance nests the address under ``ipv4``/``ipv6``
-    (``hostEntries[].ipv4.ipv4Address``), exactly as the contract declares. An earlier
+    (``hostEntries[].ipv4.ipv4Address``), exactly as the API declares. An earlier
     projection declared flat ``ipv4Address``/``ipv4Interface``/``ipv6Address``/
     ``ipv6Interface`` members the appliance never sends, so every address and interface was
     projected as ``null`` while the object still validated (P5-D1). The nested shape is the
@@ -1508,7 +1508,7 @@ class CellularWanStatus(_Output):
     """Cellular WAN modem status as reported by the appliance.
 
     This is live modem state, not configuration, and it is not a general firewall health
-    check: the contract exposes no such endpoint.
+    check: the API exposes no such endpoint.
     """
 
     noOfModemsDetected: int

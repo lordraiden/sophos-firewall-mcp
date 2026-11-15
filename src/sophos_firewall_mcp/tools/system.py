@@ -1,6 +1,6 @@
-"""Read-only network status tools (issue #31).
+"""Read-only network status tools.
 
-The contract exposes exactly two status operations, and this module registers exactly those
+The API exposes exactly two status operations, and this module registers exactly those
 two -- no more:
 
 * ``getDnsProtectionStatus`` (``GET /network/dns/protection/status``) -- the DNS Protection
@@ -9,7 +9,7 @@ two -- no more:
   WAN modem state.
 
 There is deliberately **no** generic "firewall health" tool. The Web Admin Console's
-Firewall Health Check is a policy-compliance view, not a REST resource, and the contract has
+Firewall Health Check is a policy-compliance view, not a REST resource, and the API has
 no endpoint that returns appliance model, serial number, firmware version, uptime or system
 service state. Those are accepted regressions: no placeholder tool is advertised for them.
 

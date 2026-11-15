@@ -1,4 +1,4 @@
-"""Audit, connectivity-explanation and object-usage tools (issue #35).
+"""Audit, connectivity-explanation and object-usage tools.
 
 Three **composite, read-only** tools that add no Sophos operation. They call the audited
 list/get operations through the domain adapters of issues #27-#31 and reason over the
@@ -40,11 +40,11 @@ gaps instead of guessing:
 * **Address- and service-object membership is not resolved** by ``explain_connectivity``:
   a rule whose network or service criteria reference objects is reported as
   ``not-verifiable`` for that criterion instead of being assumed to match or not match.
-* An **FQDN endpoint** cannot be resolved without DNS, and the contract has no name
+* An **FQDN endpoint** cannot be resolved without DNS, and the API has no name
   resolution operation, so such a flow is reported as ``not-verifiable``.
 * **Routing** is evaluated over the configured static unicast routes and gateways; the
   contract exposes no live routing table, so dynamic routing is not evaluated.
-* ``explain_connectivity`` is **configuration analysis**, not a packet test: the contract
+* ``explain_connectivity`` is **configuration analysis**, not a packet test: the API
   has no ping, traceroute, packet capture or flow-simulation endpoint. The output says so
   (``method="config-analysis"``).
 
@@ -777,8 +777,7 @@ def _validated_page(payload: Any, model: type[PageT], label: str) -> PageT:
         first = exc.errors()[0]
         location = ".".join(str(part) for part in first.get("loc", ())) or "body"
         raise ToolError(
-            f"the appliance returned a {label} page that does not match the contract "
-            f"({location})"
+            f"the appliance returned a {label} page that does not match the API " f"({location})"
         ) from exc
 
 
@@ -2265,7 +2264,7 @@ def _routing_for(
     """Select the best configured route for a non-local destination.
 
     A static unicast route wins when one matches. Otherwise the configured WAN gateway is
-    the appliance's default route: the contract exposes no live routing table, so the
+    the appliance's default route: the API exposes no live routing table, so the
     active/backup role and dynamic routing are not evaluated.
 
     When the gateway or route scan was truncated, the decision is marked ``truncated`` and a
@@ -2298,7 +2297,7 @@ def _routing_for(
             gateway_ip = getattr(wan, "ipv4Address", None) or getattr(wan, "ipv6Address", None)
             note = (
                 "no configured static unicast route matches the destination, so the "
-                "configured WAN gateway is used as the default route; the contract exposes "
+                "configured WAN gateway is used as the default route; the API exposes "
                 "no live routing table, so the active/backup role and dynamic routing are "
                 "not evaluated"
             )
@@ -2338,7 +2337,7 @@ def _routing_for(
     )
     interface = best_route.interface.name if best_route.interface is not None else None
     note = (
-        "selected from the configured static unicast routes; the contract exposes no live "
+        "selected from the configured static unicast routes; the API exposes no live "
         "routing table"
     )
     return RoutingDecision(

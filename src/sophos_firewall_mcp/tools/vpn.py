@@ -1,4 +1,4 @@
-"""Read-only IPsec and SSL VPN tools (issue #31).
+"""Read-only IPsec and SSL VPN tools.
 
 VPN is **read-only in v1**: this module registers 20 GET tools and no mutation. The 11 IPsec
 operations cover profiles, failover groups, policy-based and route-based IPv4 site-to-site
@@ -449,7 +449,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="List SSL VPN bookmarks",
         description=(
             "List the clientless SSL VPN bookmarks one page at a time, with optional name "
-            "filters. The contract models eight protocol variants (rdp, telnet, ssh, ftp, ftps, "
+            "filters. The API models eight protocol variants (rdp, telnet, ssh, ftp, ftps, "
             "sftp, smb, vnc); each item is projected with its protocol and the variant's target "
             "fields. Credentials are never returned. Pagination: `page` is 1-based and "
             "`page_size` is 1-100 (default 10). Read-only."

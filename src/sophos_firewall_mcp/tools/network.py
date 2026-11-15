@@ -1,11 +1,11 @@
-"""Network-architecture tools for the Sophos Firewall Configuration REST API (issue #31).
+"""Network-architecture tools for the Sophos Firewall Configuration REST API.
 
 This module owns the network domain's 44 tools:
 
 * **41 read-only tools** that project the firewall's network architecture: interfaces,
   zones, IPv4/IPv6 routing gateways (WAN and custom), static unicast routes, SD-WAN routes,
   DHCP servers, DHCP leases, DHCP relays, DNS settings, DNS host entries, DNS request
-  routes and static neighbors. They are configuration and live-state views; the contract
+  routes and static neighbors. They are configuration and live-state views; the API
   exposes no live routing table, so none is promised.
 * **3 VLAN-only interface mutations** -- ``network_interface_create_vlan``,
   ``network_interface_update_vlan`` and ``network_interface_delete_vlan``. They are the
@@ -28,7 +28,7 @@ Registration
 ``register_network_tools`` is this domain's single entry point: it registers the 44 network
 tools and then delegates to :func:`sophos_firewall_mcp.tools.vpn.register_vpn_tools` (20
 read-only VPN tools) and :func:`sophos_firewall_mcp.tools.system.register_status_tools` (2
-read-only status tools), which are the other two surfaces of issue #31. Wire only
+read-only status tools), which are the other two surfaces of the network domain. Wire only
 ``register_network_tools`` into ``DEFAULT_DOMAINS``.
 
 Every handler is a thin typed layer over :class:`NetworkAdapter`: it validates the closed
@@ -292,7 +292,7 @@ class NetworkAdapter(DomainAdapter):
 def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
     """Register the network domain: 44 network tools plus the VPN and status surfaces.
 
-    This is the only registration function issue #31 needs in ``DEFAULT_DOMAINS``: it
+    This is the only registration function the network domain needs in ``DEFAULT_DOMAINS``: it
     registers the network tools itself and delegates to
     :func:`~sophos_firewall_mcp.tools.vpn.register_vpn_tools` and
     :func:`~sophos_firewall_mcp.tools.system.register_status_tools` for the other two
@@ -355,8 +355,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "Create one VLAN interface. The parent interface is read first: it must exist and "
             "must be a physical, vlan, bridge or lag interface, and the request always creates "
             "type 'vlan'. Physical, bridge, LAG and XFRM interfaces cannot be created or "
-            "changed by this server. A created interface is not enabled by this tool; the "
-            "contract exposes no enable/disable operation for interfaces."
+            "changed by this server. A created interface is not enabled by this tool; the API "
+            "exposes no enable/disable operation for interfaces."
         ),
         annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
@@ -375,7 +375,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         description=(
             "Partially update one VLAN interface with a JSON Merge Patch body: only the fields "
             "you set are sent. The interface is read first and the write is refused unless its "
-            "type is 'vlan'. The VLAN ID and parent interface cannot be changed (the contract's "
+            "type is 'vlan'. The VLAN ID and parent interface cannot be changed (the API's "
             "PATCH body has no vlanDetails member), and description is bridge-only, so neither "
             "is exposed."
         ),
@@ -628,7 +628,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         description=(
             "List the configured IPv4 static unicast routes one page at a time. This operation "
             "declares no name filters. It is configuration, not the live routing table, which "
-            "the contract does not expose. Read-only: route mutations are excluded."
+            "the API does not expose. Read-only: route mutations are excluded."
         ),
     )
     async def unicast_route_list_ipv4(
@@ -838,14 +838,14 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         name="dhcp_lease_list_ipv4",
         title="List IPv4 DHCP leases",
         description=(
-            "List the active IPv4 DHCP leases. This is live state, not configuration. The "
-            "contract declares no page/pageSize parameters for this operation (it returns "
+            "List the active IPv4 DHCP leases. This is live state, not configuration. The API "
+            "declares no page/pageSize parameters for this operation (it returns "
             "keyset metadata), so the call takes no pagination input and returns one page with "
             "its pages metadata preserved. Only the first page is reachable: a non-null "
             "pages.nextKey means the list is incomplete and the remaining leases cannot be "
             "fetched through this server. pages.maxSize is not a page-size bound here -- the "
             "appliance reports the item count of the returned page in it (21 items and "
-            "maxSize 21 on the lab appliance) -- and the value is preserved as returned. "
+            "maxSize 21 on the tested appliance) -- and the value is preserved as returned. "
             "Read-only."
         ),
     )
@@ -862,8 +862,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         name="dhcp_lease_list_ipv6",
         title="List IPv6 DHCP leases",
         description=(
-            "List the active IPv6 DHCP leases. This is live state, not configuration. The "
-            "contract declares no page/pageSize parameters for this operation, so the call "
+            "List the active IPv6 DHCP leases. This is live state, not configuration. The API "
+            "declares no page/pageSize parameters for this operation, so the call "
             "takes no pagination input and returns one page with its pages metadata preserved. "
             "Only the first page is reachable: a non-null pages.nextKey means the list is "
             "incomplete and the remaining leases cannot be fetched through this server. "
@@ -907,7 +907,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         name="dhcp_relay_get_ipv4",
         title="Get an IPv4 DHCP relay",
         description=(
-            "Read one IPv4 DHCP relay by UUID. The contract declares format uuid for this path "
+            "Read one IPv4 DHCP relay by UUID. The API declares format uuid for this path "
             "parameter, so a relay name is rejected before any request is sent, even though "
             "the operation's path is {idOrName} and its description says 'ID or name'. "
             "The appliance may answer 401 for this sub-resource even for a real, listed relay: "
@@ -950,7 +950,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         name="dhcp_relay_get_ipv6",
         title="Get an IPv6 DHCP relay",
         description=(
-            "Read one IPv6 DHCP relay by UUID. The contract declares format uuid for this path "
+            "Read one IPv6 DHCP relay by UUID. The API declares format uuid for this path "
             "parameter, so a relay name is rejected before any request is sent. The appliance "
             "may answer 401 for this sub-resource even for a real, listed relay: on SFOS "
             "23.0.0 GA-Build371 the collection returns 200 with the same token while GET on "
@@ -1123,7 +1123,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         )
         return _project(payload, models.StaticNeighborIpv6, _STATIC_NEIGHBORS_IPV6)
 
-    # -- The other two read-only surfaces of issue #31 ---------------------------------
+    # -- The other two read-only surfaces of the network domain ------------------------
 
     register_vpn_tools(server, read_only=read_only)
     register_status_tools(server, read_only=read_only)

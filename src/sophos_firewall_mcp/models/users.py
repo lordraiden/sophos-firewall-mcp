@@ -1,6 +1,6 @@
 """Pydantic models for the Sophos Firewall authentication-user and live-session domain.
 
-The contract keeps three families apart, and so does this module (#30):
+The API keeps three families apart, and so does this module (#30):
 
 * **general authentication users** -- ``getUsers`` returns a paginated *basic summary* that
   also reports ``administrativeAccess``; it is a read-only view in v1;
@@ -19,7 +19,7 @@ The ``*Wire`` models parse the appliance payload (``extra="ignore"``, forward-co
 and are never returned to a model; the ``project_*`` functions turn them into the bounded
 DTOs the tools publish.
 
-Naming (phase 5, M2): the **inputs** are snake_case because the model writes them, and the
+Naming (phase 5): the **inputs** are snake_case because the model writes them, and the
 **outputs** keep the Sophos wire names (camelCase) because they are projections of the
 appliance payload. The two conventions meet only in the ``project_*`` functions, which map
 one onto the other explicitly.
@@ -79,10 +79,10 @@ __all__ = [
     "validate_object_name_or_id",
 ]
 
-#: The 20 ``clientType`` values the contract declares for a live session. The output model
+#: The 20 ``clientType`` values the API declares for a live session. The output model
 #: keeps ``clientType`` a plain ``str`` so a future firmware value is passed through
 #: instead of failing the whole listing; this constant is the documented vocabulary and is
-#: asserted against the contract by the tests.
+#: asserted against the API by the tests.
 LIVE_USER_CLIENT_TYPES = frozenset(
     {
         "adSsoKerberos",
@@ -122,7 +122,7 @@ _UNSAFE_PATH_SEQUENCES = ("..", "\\", "?", "#", "://", "%2e")
 
 
 def _validate_ipv4(value: str) -> str:
-    """Validate the contract's ``ipv4`` format."""
+    """Validate the API's ``ipv4`` format."""
     try:
         ipaddress.IPv4Address(value)
     except ValueError as exc:
@@ -131,7 +131,7 @@ def _validate_ipv4(value: str) -> str:
 
 
 def _validate_ipv6(value: str) -> str:
-    """Validate the contract's ``ipv6`` format."""
+    """Validate the API's ``ipv6`` format."""
     try:
         ipaddress.IPv6Address(value)
     except ValueError as exc:
@@ -198,7 +198,7 @@ class _NameFilterPageInput(BaseModel):
     Shared by ``getUsers`` and ``getNetworkUsers``; the two operations have the same query
     contract but expose different resources, so each keeps its own public subclass.
 
-    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    ``page_size`` defaults to 10: a default call must stay small enough for a model
     context, and the caller raises it explicitly when it wants a bigger page.
     """
 
@@ -215,7 +215,7 @@ class _NameFilterPageInput(BaseModel):
         le=100,
         description=(
             "Page size, 1-100. Defaults to 10 so a default call stays small; raise it "
-            "explicitly for a bigger page. The contract declares a maximum of 100."
+            "explicitly for a bigger page. The API declares a maximum of 100."
         ),
     )
     page_total: bool = Field(
@@ -261,7 +261,7 @@ class NetworkUserListInput(_NameFilterPageInput):
 class PolicyRefInput(BaseModel):
     """A policy reference by name, or an explicit ``noPolicy`` marker.
 
-    The contract models this as ``oneOf [{name}, {noPolicy: true}]``; exactly one variant is
+    The API models this as ``oneOf [{name}, {noPolicy: true}]``; exactly one variant is
     sent, never both and never an empty object.
     """
 
@@ -284,7 +284,7 @@ class PolicyRefInput(BaseModel):
 class UserGroupRefInput(BaseModel):
     """A user-group reference by name: ``{"name": "<group>"}``.
 
-    The contract models ``group`` as an object with a required ``name`` member, not as a
+    The API models ``group`` as an object with a required ``name`` member, not as a
     bare string. A string is rejected by the appliance with ``400 invalidRequest``
     ("Invalid group."), so the reference object is the only accepted shape.
     """
@@ -425,7 +425,7 @@ class NetworkUserVpnAccessInput(BaseModel):
 
 class NetworkUserCreateInput(BaseModel):
     """Body of ``createNetworkUser``: ``name``, ``displayName``, ``password`` and ``group``
-    are required by the contract; everything else is optional.
+    are required by the API; everything else is optional.
 
     ``password`` is a :class:`~pydantic.SecretStr`: it is sent once, never returned, never
     logged and never included in an error message.
@@ -529,8 +529,8 @@ class NetworkUserDeleteInput(BaseModel):
 class LiveUserListInput(BaseModel):
     """Input of ``getLiveUsers``.
 
-    The contract declares no request parameters for ``/authentication/live-users``. The
-    appliance accepts ``page``/``pageSize``/``pageTotal`` (live observation, 2026-11-15) but
+    The API declares no request parameters for ``/authentication/live-users``. The
+    appliance accepts ``page``/``pageSize``/``pageTotal`` (observed on the appliance) but
     v1 does not expose them, so this input is deliberately empty and closed.
     """
 
@@ -560,7 +560,7 @@ class LiveUserDisconnectInput(BaseModel):
 class UserSummaryOutput(BaseModel):
     """One row of the general authentication-user list (``getUsers``).
 
-    This is the contract's *basic summary*, not a network-user detail: it has no policies
+    This is the API's *basic summary*, not a network-user detail: it has no policies
     and no VPN access. The field names are the appliance's wire names (camelCase), like
     every other output projection in this server. The epoch "never" sentinel is published
     as ``null`` (L6); see

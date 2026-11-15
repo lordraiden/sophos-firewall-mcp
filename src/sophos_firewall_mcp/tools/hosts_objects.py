@@ -945,7 +945,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         description=(
             "Create an FQDN address group from existing FQDN address objects. `name` is "
             'required; `fqdns` is a list of `{"name": ...}` references and is nullable '
-            "in the contract. Members must already exist and must be FQDN address objects."
+            "in the API. Members must already exist and must be FQDN address objects."
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_create_fqdn,

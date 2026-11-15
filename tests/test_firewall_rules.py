@@ -357,7 +357,7 @@ async def test_list_rejects_a_malformed_rule_payload(router: Any) -> None:
     result = await call(make_server(), "firewall_rule_list_ipv4", {})
 
     assert result.is_error is True
-    assert "does not match the contract" in result.content[0].text
+    assert "does not match the API" in result.content[0].text
 
 
 async def test_list_maps_401_to_a_sanitized_auth_tool_error(router: Any) -> None:

@@ -37,7 +37,7 @@ _UUID_PATTERN = re.compile(
 class Pages(BaseModel):
     """The ``pages`` metadata a paginated Sophos collection returns.
 
-    The contract's shape varies by operation: ``current``, ``size`` and ``maxSize`` are the
+    The API's shape varies by operation: ``current``, ``size`` and ``maxSize`` are the
     common fields, while ``total`` and ``items`` appear only when ``pageTotal=true`` (live
     observation, 2026-11-15). Every field is optional so an operation that omits one is not
     rejected; unknown fields are ignored rather than echoed.
@@ -84,7 +84,7 @@ ItemT = TypeVar("ItemT")
 class ListPage(BaseModel, Generic[ItemT]):
     """One page of a Sophos collection: ``items`` plus optional ``pages`` metadata.
 
-    ``pages`` is optional because the contract declares it optional for at least one
+    ``pages`` is optional because the API declares it optional for at least one
     in-scope operation (``listNetworkInterfaces``). The metadata is preserved exactly and
     never invented.
     """

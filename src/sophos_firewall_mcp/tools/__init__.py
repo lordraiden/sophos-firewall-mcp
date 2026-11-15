@@ -29,8 +29,8 @@ Every domain module exposes exactly one function with this signature::
     def register_<domain>_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
         ...
 
-and registers each tool through :func:`register_tool`. Issue #26 illustrates the second
-parameter as a ``Callable[[], AppContext]``; this project uses the SDK's typed
+and registers each tool through :func:`register_tool`. The second parameter is illustrated
+as a ``Callable[[], AppContext]``; this project uses the SDK's typed
 ``Context[AppContext]`` injection instead, because the pinned SDK v2 lifespan guide makes
 that the documented way to reach the lifespan object and the issue requires it. The
 read-only flag is passed explicitly because the tool set is fixed at construction, before

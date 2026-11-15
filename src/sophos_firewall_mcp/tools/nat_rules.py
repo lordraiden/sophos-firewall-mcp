@@ -1,4 +1,4 @@
-"""NAT-rule tools for the Sophos Firewall MCP server (issue #28, IPv4 and IPv6).
+"""NAT-rule tools for the Sophos Firewall MCP server (IPv4 and IPv6).
 
 Twelve tools map one-to-one to the twelve audited NAT-rule operations in
 ``docs/API-COVERAGE.md`` §5.2 and ADR-001 §10:
@@ -31,7 +31,7 @@ the bounded models in :mod:`sophos_firewall_mcp.models.nat`. Every transport fai
 mapped through :func:`~sophos_firewall_mcp.tools.tool_error` so the model receives a
 sanitized, actionable message.
 
-Update is a PATCH with JSON Merge Patch semantics and ``application/json`` (the contract
+Update is a PATCH with JSON Merge Patch semantics and ``application/json`` (the API
 declares no exception for these operations): the body is serialized with
 ``exclude_unset=True`` so omitted properties keep their persisted value and an explicit
 ``null`` removes a property.
@@ -125,7 +125,7 @@ class NatAdapter(DomainAdapter):
         """Read one page of a NAT rule base (``getAllNatRulesIpv4``/``Ipv6``).
 
         Each projected rule carries its 1-based evaluation ``position``, derived from the
-        requested page and the item index (M12).
+        requested page and the item index.
         """
         params: dict[str, Any] = {}
         if request.name_contains is not None:
@@ -154,7 +154,7 @@ class NatAdapter(DomainAdapter):
         """Read one NAT rule by name or UUID (``getNatRule*ByIdOrName``).
 
         ``position`` is ``None``: the get operation does not return the rule's evaluation
-        position, and the contract exposes no way to obtain it for a single rule.
+        position, and the API exposes no way to obtain it for a single rule.
         """
         try:
             payload = await self.client.get(_rule_path(collection_path, id_or_name))
@@ -169,7 +169,7 @@ class NatAdapter(DomainAdapter):
     ) -> NatRuleOutput:
         """Create one NAT rule (``createNatRuleIpv4``/``Ipv6``).
 
-        The contract declares ``enabled`` with a default of ``true``; the resolved value is
+        The API declares ``enabled`` with a default of ``true``; the resolved value is
         always sent so the created state is explicit rather than implied. No follow-up
         mutation (enable, move) is performed.
         """
@@ -256,7 +256,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
             "plus the page metadata. Use page/page_size to walk the rule base; one page per "
             "call, and page_size defaults to 10. name_contains and name_not_equals are "
-            "mutually exclusive. Size: the lab appliance's 28-rule base is ~44 KB of JSON, "
+            "mutually exclusive. Size: the tested appliance's 28-rule base is ~44 KB of JSON, "
             "so keep page_size small. The MCP SDK returns the payload both as a text block "
             "and as structuredContent; read one of them, not both."
         ),
@@ -296,7 +296,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "Create an IPv4 NAT rule (operationId createNatRuleIpv4). Requires name, "
             "original_services_or_groups, inbound_interfaces, outbound_interfaces, "
             "original_source_networks and original_destination_networks; translation fields "
-            "are optional because the contract defines no SNAT/DNAT discriminator. enabled "
+            "are optional because the API defines no SNAT/DNAT discriminator. enabled "
             "defaults to true and is always sent. The rule is not moved or enabled by a "
             "follow-up call."
         ),
@@ -376,7 +376,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
             "plus the page metadata. Use page/page_size to walk the rule base; one page per "
             "call, and page_size defaults to 10. name_contains and name_not_equals are "
-            "mutually exclusive. Size: the lab appliance's 28-rule base is ~44 KB of JSON, "
+            "mutually exclusive. Size: the tested appliance's 28-rule base is ~44 KB of JSON, "
             "so keep page_size small. The MCP SDK returns the payload both as a text block "
             "and as structuredContent; read one of them, not both."
         ),
@@ -416,7 +416,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "Create an IPv6 NAT rule (operationId createNatRuleIpv6). Requires name, "
             "original_services_or_groups, inbound_interfaces, outbound_interfaces, "
             "original_source_networks and original_destination_networks; translation fields "
-            "are optional because the contract defines no SNAT/DNAT discriminator. enabled "
+            "are optional because the API defines no SNAT/DNAT discriminator. enabled "
             "defaults to true and is always sent. The rule is not moved or enabled by a "
             "follow-up call."
         ),
