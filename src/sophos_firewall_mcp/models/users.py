@@ -265,6 +265,19 @@ class PolicyRefInput(BaseModel):
         return self
 
 
+class UserGroupRefInput(BaseModel):
+    """A user-group reference by name: ``{"name": "<group>"}``.
+
+    The contract models ``group`` as an object with a required ``name`` member, not as a
+    bare string. A string is rejected by the appliance with ``400 invalidRequest``
+    ("Invalid group."), so the reference object is the only accepted shape.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: UserGroupName = Field(description="User group name (OUGROUPNAME token).")
+
+
 class AllowedNetworksIpv4Input(BaseModel):
     """Allowed login networks: any address, a list of addresses, or an inclusive range."""
 
@@ -416,7 +429,9 @@ class NetworkUserCreateInput(BaseModel):
         max_length=50,
         description="Write-only login password; never returned or logged.",
     )
-    group: UserGroupName = Field(description="Primary user group of the network user.")
+    group: UserGroupRefInput = Field(
+        description="Primary user group of the network user, as a `{name}` reference."
+    )
     description: str | None = Field(default=None, description="Free-text description.")
     active: bool | None = Field(default=None, description="Whether the account is active.")
     email_addresses: list[str] | None = Field(default=None, serialization_alias="emailAddresses")
@@ -456,7 +471,9 @@ class NetworkUserUpdateInput(BaseModel):
     description: str | None = Field(default=None, description="Free-text description.")
     active: bool | None = Field(default=None, description="Whether the account is active.")
     email_addresses: list[str] | None = Field(default=None, serialization_alias="emailAddresses")
-    group: UserGroupName | None = Field(default=None, description="Primary user group.")
+    group: UserGroupRefInput | None = Field(
+        default=None, description="Primary user group, as a `{name}` reference."
+    )
     policies: NetworkUserPoliciesInput | None = None
     vpn_access: NetworkUserVpnAccessInput | None = Field(
         default=None, serialization_alias="vpnAccess"

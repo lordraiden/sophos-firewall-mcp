@@ -182,8 +182,8 @@ def _clone_body(
     candidate["name"] = request.name
     candidate["enabled"] = request.enabled
     candidate["position"] = request.position
-    if request.referenceItem is not None:
-        candidate["referenceItem"] = request.referenceItem.model_dump()
+    if request.reference_item is not None:
+        candidate["referenceItem"] = request.reference_item.model_dump(by_alias=True)
     try:
         validated = model.model_validate(candidate)
     except ValidationError as exc:
@@ -191,7 +191,7 @@ def _clone_body(
             "the source rule cannot be cloned because its payload is not a valid create "
             "body for this IP family"
         ) from exc
-    return validated.model_dump(exclude_none=True)
+    return validated.model_dump(by_alias=True, exclude_none=True)
 
 
 class FirewallRuleAdapter(DomainAdapter):
@@ -212,16 +212,16 @@ class FirewallRuleAdapter(DomainAdapter):
     ) -> tuple[list[RuleT], Pages | None, int]:
         """Read one page and project it, counting the rules the projection skipped."""
         params: dict[str, str] = {}
-        if request.nameContains is not None:
-            params["nameContains"] = request.nameContains
-        if request.nameNotEquals is not None:
-            params["nameNotEquals"] = request.nameNotEquals
+        if request.name_contains is not None:
+            params["nameContains"] = request.name_contains
+        if request.name_not_equals is not None:
+            params["nameNotEquals"] = request.name_not_equals
         try:
             payload = await self.client.get_page(
                 path,
                 page=request.page,
-                page_size=request.pageSize,
-                page_total=request.pageTotal,
+                page_size=request.page_size,
+                page_total=request.page_total,
                 params=params,
             )
         except SophosAPIError as exc:
@@ -295,32 +295,34 @@ class FirewallRuleAdapter(DomainAdapter):
         return ListFirewallRulesIpv4Output(items=items, pages=pages, wafRulesSkipped=skipped)
 
     async def get_ipv4(self, request: GetFirewallRuleInput) -> FirewallRuleIpv4Output:
-        payload = await self._get(_IPV4_ITEM, request.idOrName)
+        payload = await self._get(_IPV4_ITEM, request.id_or_name)
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
     async def create_ipv4(self, request: CreateFirewallRuleIpv4Input) -> FirewallRuleIpv4Output:
-        payload = await self._post(_IPV4_COLLECTION, request.model_dump(exclude_none=True))
+        payload = await self._post(
+            _IPV4_COLLECTION, request.model_dump(by_alias=True, exclude_none=True)
+        )
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
     async def update_ipv4(self, request: UpdateFirewallRuleIpv4Input) -> FirewallRuleIpv4Output:
-        body = request.model_dump(exclude_unset=True, exclude={"idOrName"})
+        body = request.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"})
         if not body:
             raise ToolError(_NO_UPDATE_FIELDS)
-        payload = await self._patch(_IPV4_ITEM, request.idOrName, body)
+        payload = await self._patch(_IPV4_ITEM, request.id_or_name, body)
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
     async def delete_ipv4(self, request: DeleteFirewallRuleInput) -> DeleteFirewallRuleOutput:
-        payload = await self._delete(_IPV4_ITEM, request.idOrName)
-        return _delete_output(payload, request.idOrName)
+        payload = await self._delete(_IPV4_ITEM, request.id_or_name)
+        return _delete_output(payload, request.id_or_name)
 
     async def move_ipv4(self, request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
-        await self._move(_IPV4_MOVE, request.model_dump(exclude_none=True))
+        await self._move(_IPV4_MOVE, request.model_dump(by_alias=True, exclude_none=True))
         return _move_output(request)
 
     async def set_enabled_ipv4(
         self, request: SetFirewallRuleEnabledInput
     ) -> FirewallRuleIpv4Output:
-        payload = await self._patch(_IPV4_ITEM, request.idOrName, {"enabled": request.enabled})
+        payload = await self._patch(_IPV4_ITEM, request.id_or_name, {"enabled": request.enabled})
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
     async def clone_ipv4(self, request: CloneFirewallRuleInput) -> FirewallRuleIpv4Output:
@@ -338,32 +340,34 @@ class FirewallRuleAdapter(DomainAdapter):
         return ListFirewallRulesIpv6Output(items=items, pages=pages)
 
     async def get_ipv6(self, request: GetFirewallRuleInput) -> FirewallRuleIpv6Output:
-        payload = await self._get(_IPV6_ITEM, request.idOrName)
+        payload = await self._get(_IPV6_ITEM, request.id_or_name)
         return _parse_ipv6_rule(payload)
 
     async def create_ipv6(self, request: CreateFirewallRuleIpv6Input) -> FirewallRuleIpv6Output:
-        payload = await self._post(_IPV6_COLLECTION, request.model_dump(exclude_none=True))
+        payload = await self._post(
+            _IPV6_COLLECTION, request.model_dump(by_alias=True, exclude_none=True)
+        )
         return _parse_ipv6_rule(payload)
 
     async def update_ipv6(self, request: UpdateFirewallRuleIpv6Input) -> FirewallRuleIpv6Output:
-        body = request.model_dump(exclude_unset=True, exclude={"idOrName"})
+        body = request.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"})
         if not body:
             raise ToolError(_NO_UPDATE_FIELDS)
-        payload = await self._patch(_IPV6_ITEM, request.idOrName, body)
+        payload = await self._patch(_IPV6_ITEM, request.id_or_name, body)
         return _parse_ipv6_rule(payload)
 
     async def delete_ipv6(self, request: DeleteFirewallRuleInput) -> DeleteFirewallRuleOutput:
-        payload = await self._delete(_IPV6_ITEM, request.idOrName)
-        return _delete_output(payload, request.idOrName)
+        payload = await self._delete(_IPV6_ITEM, request.id_or_name)
+        return _delete_output(payload, request.id_or_name)
 
     async def move_ipv6(self, request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
-        await self._move(_IPV6_MOVE, request.model_dump(exclude_none=True))
+        await self._move(_IPV6_MOVE, request.model_dump(by_alias=True, exclude_none=True))
         return _move_output(request)
 
     async def set_enabled_ipv6(
         self, request: SetFirewallRuleEnabledInput
     ) -> FirewallRuleIpv6Output:
-        payload = await self._patch(_IPV6_ITEM, request.idOrName, {"enabled": request.enabled})
+        payload = await self._patch(_IPV6_ITEM, request.id_or_name, {"enabled": request.enabled})
         return _parse_ipv6_rule(payload)
 
     async def clone_ipv6(self, request: CloneFirewallRuleInput) -> FirewallRuleIpv6Output:
@@ -385,7 +389,7 @@ def _delete_output(payload: Any, identifier: str) -> DeleteFirewallRuleOutput:
 
 def _move_output(request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
     """Echo the accepted move request; the operation's 200 body is empty."""
-    anchor = None if request.referenceItem is None else ObjectRef(name=request.referenceItem.name)
+    anchor = None if request.reference_item is None else ObjectRef(name=request.reference_item.name)
     return MoveFirewallRuleOutput(
         name=request.name, position=request.position, referenceItem=anchor
     )

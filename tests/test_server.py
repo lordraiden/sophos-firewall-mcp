@@ -11,6 +11,7 @@ one mutation tool registered through the real contract.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import os
 import subprocess
@@ -24,7 +25,7 @@ from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 from mcp.types import ToolAnnotations
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sophos_firewall_mcp import server as server_module
 from sophos_firewall_mcp.client import SophosRestClient
@@ -48,6 +49,7 @@ from sophos_firewall_mcp.server import (
 from sophos_firewall_mcp.tools import (
     DomainAdapter,
     ToolKind,
+    _registered_tool,
     register_tool,
     tool_error,
 )
@@ -730,6 +732,177 @@ def test_tool_error_sanitizes_untrusted_text_and_bounds_the_length():
     assert "\x00" not in message
     assert "<script>" not in message
     assert len(message) <= 300
+
+
+def test_tool_error_reports_401_as_an_authentication_failure():
+    """H3: a 401 is a bad key, not a permission problem."""
+    exc = SophosAuthError(
+        "GET /x failed with HTTP 401",
+        method="GET",
+        path="/x",
+        status=401,
+        error_code="unauthenticated",
+    )
+
+    message = str(tool_error(exc))
+
+    assert "authentication failed" in message
+    assert "SOPHOS_API_KEY" in message
+    assert "SOPHOS_API_KEY_FILE" in message
+    assert "(HTTP 401)" in message
+    assert "[error: unauthenticated]" in message
+    # The old shared wording sent the caller to the administrator profile.
+    assert "not allowed" not in message
+    assert "profile permissions" not in message
+
+
+def test_tool_error_reports_403_as_an_authorization_failure():
+    """H3: a 403 is the profile, not the key."""
+    exc = SophosAuthError(
+        "GET /x failed with HTTP 403",
+        method="GET",
+        path="/x",
+        status=403,
+    )
+
+    message = str(tool_error(exc))
+
+    assert "not allowed" in message
+    assert "profile permissions" in message
+    assert "(HTTP 403)" in message
+    assert "authentication failed" not in message
+
+
+def test_tool_error_reports_an_auth_failure_without_a_status_neutrally():
+    """Neither message is safe to guess when the status is unknown."""
+    message = str(tool_error(SophosAuthError("GET /x failed")))
+
+    assert "authentication or authorization failed" in message
+    assert "not allowed" not in message
+    assert "authentication failed" not in message
+
+
+# -- Argument validation ---------------------------------------------------------------
+
+
+async def test_unknown_argument_is_rejected_with_a_sanitized_message():
+    """L4: the model sees the field and the rule, not the pydantic dump."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "sophos_synthetic_echo", {"request": {"name": "x", "bogus": 1}}
+        )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "request.bogus is not an accepted argument" in text
+    assert "accepted arguments are name" in text
+    # Nothing from the raw pydantic dump may reach the model.
+    assert "validation error for" not in text
+    assert "Arguments" not in text
+    assert "https://" not in text
+    assert "input_value" not in text
+
+
+async def test_argument_rule_violation_names_the_field_and_the_rule():
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_synthetic_echo", {"request": {"name": ""}})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "request.name must be at least 1 characters" in text
+    assert "https://" not in text
+
+
+async def test_missing_argument_is_reported_as_required():
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_synthetic_echo", {})
+
+    assert result.is_error is True
+    assert "request is required" in result.content[0].text
+
+
+async def test_no_argument_tool_rejects_unknown_arguments():
+    """L5: a typo on a no-argument tool is reported, not silently ignored."""
+    server = create_server(make_settings(), domains=[register_error_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_test_tool_error", {"bogus": 1})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "bogus is not an accepted argument" in text
+    assert "this tool accepts no arguments" in text
+    assert "https://" not in text
+
+
+async def test_published_input_schema_rejects_unknown_arguments():
+    """The published contract must say what the runtime enforces."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        tools = (await client.list_tools()).tools
+
+    echo = next(tool for tool in tools if tool.name == "sophos_synthetic_echo")
+    assert echo.input_schema["additionalProperties"] is False
+
+
+# -- Private SDK seam (L4) -------------------------------------------------------------
+#
+# ``tools/__init__.py`` closes each tool's argument model through the SDK's private
+# ``MCPServer._tool_manager``. mcp 2.3.0 has no public equivalent, so the seam is pinned
+# here: these tests fail loudly if the SDK moves it, and they assert the mutation landed
+# on the object the SDK actually validates with -- not merely that the seam is readable.
+
+
+def test_argument_model_seam_mutates_the_object_the_sdk_validates_with():
+    """L4: the seam must change the model the SDK validates with, not just be readable."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    tool = _registered_tool(server, "sophos_synthetic_echo")
+
+    assert tool is not None
+    # The accessor must return the very object the SDK keeps in its registry.
+    assert tool is server._tool_manager.get_tool("sophos_synthetic_echo")
+    # The mutation: ``Tool.run`` validates every call against this model...
+    assert tool.fn_metadata.arg_model.model_config.get("extra") == "forbid"
+    with pytest.raises(ValidationError) as rejected:
+        tool.fn_metadata.arg_model.model_validate({"request": {"name": "x", "bogus": 1}})
+    assert "request.bogus is not an accepted argument" in str(rejected.value)
+    # ...and ``MCPServer.list_tools`` publishes this schema.
+    assert tool.parameters["additionalProperties"] is False
+
+
+def test_the_private_sdk_seam_is_confined_to_one_accessor():
+    """L4: one accessor, so a future SDK move is a one-line fix rather than a hunt."""
+    source = (SRC_DIR / "sophos_firewall_mcp" / "tools" / "__init__.py").read_text(encoding="utf-8")
+    # The accessor reaches the attribute through ``getattr``, so both the attribute form
+    # and the string form count as a reference to the seam.
+    references = [
+        node
+        for node in ast.walk(ast.parse(source))
+        if (isinstance(node, ast.Attribute) and node.attr == "_tool_manager")
+        or (isinstance(node, ast.Constant) and node.value == "_tool_manager")
+    ]
+
+    assert len(references) == 1, "the private SDK seam must stay inside _registered_tool"
+
+
+def test_the_private_sdk_seam_fails_loudly_when_it_moves(monkeypatch):
+    """L4: a missing seam must not silently leave every tool's arguments open."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+    monkeypatch.delattr(server, "_tool_manager")
+
+    with pytest.raises(RuntimeError) as moved:
+        _registered_tool(server, "sophos_synthetic_echo")
+
+    assert "MCPServer._tool_manager" in str(moved.value)
+    assert "mcp 2.3.0" in str(moved.value)
 
 
 # -- STDIO transport -------------------------------------------------------------------

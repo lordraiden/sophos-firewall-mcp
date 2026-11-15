@@ -25,7 +25,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from .common import ObjectNameOrId, ObjectRef
 
@@ -213,11 +213,17 @@ class VpnPageInput(_Input):
 
     page: int = Field(default=1, ge=1, description="1-based page number.")
     page_size: int = Field(
-        default=50, ge=1, le=100, alias="pageSize", description="Page size, 1-100."
+        default=50,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("page_size", "pageSize"),
+        serialization_alias="pageSize",
+        description="Page size, 1-100.",
     )
     page_total: bool = Field(
         default=False,
-        alias="pageTotal",
+        validation_alias=AliasChoices("page_total", "pageTotal"),
+        serialization_alias="pageTotal",
         description="Ask the appliance for pages.total and pages.items.",
     )
 
@@ -227,14 +233,16 @@ class VpnFilteredPageInput(VpnPageInput):
 
     name_contains: str | None = Field(
         default=None,
-        alias="nameContains",
+        validation_alias=AliasChoices("name_contains", "nameContains"),
+        serialization_alias="nameContains",
         min_length=1,
         max_length=255,
         description="Only return objects whose name contains this text.",
     )
     name_not_equals: str | None = Field(
         default=None,
-        alias="nameNotEquals",
+        validation_alias=AliasChoices("name_not_equals", "nameNotEquals"),
+        serialization_alias="nameNotEquals",
         min_length=1,
         max_length=255,
         description="Exclude the object with exactly this name.",
@@ -245,7 +253,7 @@ class VpnFilteredPageInput(VpnPageInput):
         """Reject both name filters: the contract declares them mutually exclusive."""
         if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
-                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+                "name_contains and name_not_equals are mutually exclusive; set at most one"
             )
         return self
 
@@ -287,7 +295,9 @@ class VpnProfileRefInput(_Input):
     """Identify one IPsec profile by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=50)] = Field(
-        alias="idOrName", description="Profile name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Profile name or UUID.",
     )
 
 
@@ -295,7 +305,9 @@ class VpnFailoverGroupRefInput(_Input):
     """Identify one IPsec failover group by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=50)] = Field(
-        alias="idOrName", description="Failover group name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Failover group name or UUID.",
     )
 
 
@@ -303,7 +315,9 @@ class VpnPolicyBasedConnectionRefInput(_Input):
     """Identify one policy-based IPv4 site-to-site connection by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=100)] = Field(
-        alias="idOrName", description="Connection name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Connection name or UUID.",
     )
 
 
@@ -311,7 +325,9 @@ class VpnRouteBasedConnectionRefInput(_Input):
     """Identify one route-based IPv4 site-to-site connection by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=100)] = Field(
-        alias="idOrName", description="Connection name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Connection name or UUID.",
     )
 
 
@@ -319,7 +335,9 @@ class VpnRemoteAccessPolicyRefInput(_Input):
     """Identify one SSL VPN remote-access policy by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=50)] = Field(
-        alias="idOrName", description="Policy name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Policy name or UUID.",
     )
 
 
@@ -327,7 +345,9 @@ class VpnBookmarkGroupRefInput(_Input):
     """Identify one clientless bookmark group by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=50)] = Field(
-        alias="idOrName", description="Bookmark group name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Bookmark group name or UUID.",
     )
 
 
@@ -335,7 +355,9 @@ class VpnBookmarkRefInput(_Input):
     """Identify one clientless bookmark by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=50)] = Field(
-        alias="idOrName", description="Bookmark name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Bookmark name or UUID.",
     )
 
 
@@ -343,7 +365,9 @@ class VpnClientlessPolicyRefInput(_Input):
     """Identify one clientless policy by name or UUID."""
 
     id_or_name: Annotated[ObjectNameOrId, Field(min_length=1, max_length=50)] = Field(
-        alias="idOrName", description="Clientless policy name or UUID."
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+        description="Clientless policy name or UUID.",
     )
 
 

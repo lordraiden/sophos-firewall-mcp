@@ -36,7 +36,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Literal, Self
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AfterValidator,
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    model_validator,
+)
 
 from sophos_firewall_mcp.models.common import (
     ListPage,
@@ -203,9 +210,16 @@ DscpMarking = Literal[
 
 
 class _ClosedModel(BaseModel):
-    """Base for MCP-facing request models: the contract is closed."""
+    """Base for MCP-facing request models: the contract is closed.
 
-    model_config = ConfigDict(extra="forbid")
+    The published MCP input names are snake_case (M1, 0.5.0). Every field that the Sophos
+    contract spells in camelCase keeps that spelling as its *serialization* alias, so
+    ``model_dump(by_alias=True)`` still produces the exact wire body the contract requires
+    while the published JSON schema shows the snake_case name. ``populate_by_name`` lets a
+    caller use either spelling on input.
+    """
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
 class _WireModel(BaseModel):
@@ -218,7 +232,7 @@ def _require_anchor(position: RulePosition, reference_item: ObjectReference | No
     """Reject ``after``/``before`` without an anchor; ``top``/``bottom`` need none."""
     if position in ("after", "before") and reference_item is None:
         raise ValueError(
-            "position 'after' or 'before' requires referenceItem; use 'top' or 'bottom' "
+            "position 'after' or 'before' requires reference_item; use 'top' or 'bottom' "
             "to move without an anchor"
         )
 
@@ -254,18 +268,42 @@ class Ipv4Networks(_ClosedModel):
     """The selected-network members of an IPv4 match (no ``any`` variant)."""
 
     countries: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    countryGroups: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    country_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("country_groups", "countryGroups"),
+        serialization_alias="countryGroups",
     )
-    fqdnAddresses: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    fqdn_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("fqdn_addresses", "fqdnAddresses"),
+        serialization_alias="fqdnAddresses",
     )
-    fqdnGroups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    ipv4Addresses: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    fqdn_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("fqdn_groups", "fqdnGroups"),
+        serialization_alias="fqdnGroups",
     )
-    ipv4Groups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    macAddresses: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
+    ipv4_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
+    ipv4_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv4_groups", "ipv4Groups"),
+        serialization_alias="ipv4Groups",
+    )
+    mac_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
+    )
 
     @model_validator(mode="after")
     def _require_at_least_one_member(self) -> Self:
@@ -277,11 +315,24 @@ class Ipv4Networks(_ClosedModel):
 class Ipv6Networks(_ClosedModel):
     """The selected-network members of an IPv6 match (no ``any`` variant)."""
 
-    ipv6Addresses: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    ipv6_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
     )
-    ipv6Groups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    macAddresses: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
+    ipv6_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("ipv6_groups", "ipv6Groups"),
+        serialization_alias="ipv6Groups",
+    )
+    mac_addresses: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
+    )
 
     @model_validator(mode="after")
     def _require_at_least_one_member(self) -> Self:
@@ -294,8 +345,11 @@ class Services(_ClosedModel):
     """The selected service members of a match (no ``any`` variant)."""
 
     services: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    serviceGroups: list[ObjectReference] | None = Field(
-        default=None, max_length=MAX_SELECTION_ITEMS
+    service_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("service_groups", "serviceGroups"),
+        serialization_alias="serviceGroups",
     )
 
     @model_validator(mode="after")
@@ -319,18 +373,39 @@ ServiceMatch = AnySelection | Services
 
 
 class SelectedUsers(_ClosedModel):
-    """An explicit user/user-group selection for ``userAuthentication.usersOrGroups``."""
+    """An explicit user/user-group selection for ``user_authentication.users_or_groups``."""
 
     users: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
-    userGroups: list[ObjectReference] | None = Field(default=None, max_length=MAX_SELECTION_ITEMS)
+    user_groups: list[ObjectReference] | None = Field(
+        default=None,
+        max_length=MAX_SELECTION_ITEMS,
+        validation_alias=AliasChoices("user_groups", "userGroups"),
+        serialization_alias="userGroups",
+    )
 
 
 class UserAuthentication(_ClosedModel):
     """The rule's user-authentication settings."""
 
-    usersOrGroups: AnySelection | SelectedUsers | None = None
-    excludeUsersFromAccounting: bool = False
-    webAuthenticationForUnknownUsers: bool = False
+    users_or_groups: AnySelection | SelectedUsers | None = Field(
+        default=None,
+        validation_alias=AliasChoices("users_or_groups", "usersOrGroups"),
+        serialization_alias="usersOrGroups",
+    )
+    exclude_users_from_accounting: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "exclude_users_from_accounting", "excludeUsersFromAccounting"
+        ),
+        serialization_alias="excludeUsersFromAccounting",
+    )
+    web_authentication_for_unknown_users: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "web_authentication_for_unknown_users", "webAuthenticationForUnknownUsers"
+        ),
+        serialization_alias="webAuthenticationForUnknownUsers",
+    )
 
 
 class ExclusionZones(_ClosedModel):
@@ -342,28 +417,78 @@ class ExclusionZones(_ClosedModel):
 class ExclusionsIpv4(_ClosedModel):
     """IPv4 exclusions: traffic that matches the rule but is excluded from it."""
 
-    sourceZones: ExclusionZones | None = None
-    destinationZones: ExclusionZones | None = None
-    sourceNetworks: Ipv4Networks | None = None
-    destinationNetworks: Ipv4Networks | None = None
-    servicesOrGroups: Services | None = None
+    source_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    source_networks: Ipv4Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv4Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
+    services_or_groups: Services | None = Field(
+        default=None,
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
 
 
 class ExclusionsIpv6(_ClosedModel):
     """IPv6 exclusions: traffic that matches the rule but is excluded from it."""
 
-    sourceZones: ExclusionZones | None = None
-    destinationZones: ExclusionZones | None = None
-    sourceNetworks: Ipv6Networks | None = None
-    destinationNetworks: Ipv6Networks | None = None
-    servicesOrGroups: Services | None = None
+    source_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ExclusionZones | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    source_networks: Ipv6Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv6Networks | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
+    services_or_groups: Services | None = Field(
+        default=None,
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
 
 
 class HeartbeatEndpoint(_ClosedModel):
     """One side of a synchronized-security heartbeat configuration."""
 
-    blockClientsWithNoHeartbeat: bool = False
-    minimumLevel: Literal["green", "noRestriction", "yellow"] | None = None
+    block_clients_with_no_heartbeat: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "block_clients_with_no_heartbeat", "blockClientsWithNoHeartbeat"
+        ),
+        serialization_alias="blockClientsWithNoHeartbeat",
+    )
+    minimum_level: Literal["green", "noRestriction", "yellow"] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("minimum_level", "minimumLevel"),
+        serialization_alias="minimumLevel",
+    )
 
 
 class SynchronizedSecurityHeartbeat(_ClosedModel):
@@ -374,36 +499,132 @@ class SynchronizedSecurityHeartbeat(_ClosedModel):
 
 
 class SecurityFeaturesIpv4(_ClosedModel):
-    """The IPv4 rule's security-feature settings (includes ``scanFtp``)."""
+    """The IPv4 rule's security-feature settings (includes ``scan_ftp``)."""
 
-    applicationBasedQosPolicy: bool = False
-    applicationPolicy: ObjectReference | None = None
-    blockQuicProtocol: bool = False
-    decryptHTTPSWebProxyMode: bool = False
-    ipsPolicy: ObjectReference | None = None
-    scanFtp: bool = False
-    scanHttpAndDecryptedHttps: bool = False
-    scanWithNdrActiveThreatIntelligence: bool = False
-    webCategoryBasedQosPolicy: bool = False
-    webPolicy: ObjectReference | None = None
-    webProxy: bool = False
-    zeroDayProtection: bool = False
+    application_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("application_based_qos_policy", "applicationBasedQosPolicy"),
+        serialization_alias="applicationBasedQosPolicy",
+    )
+    application_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_policy", "applicationPolicy"),
+        serialization_alias="applicationPolicy",
+    )
+    block_quic_protocol: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("block_quic_protocol", "blockQuicProtocol"),
+        serialization_alias="blockQuicProtocol",
+    )
+    decrypt_https_web_proxy_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("decrypt_https_web_proxy_mode", "decryptHTTPSWebProxyMode"),
+        serialization_alias="decryptHTTPSWebProxyMode",
+    )
+    ips_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ips_policy", "ipsPolicy"),
+        serialization_alias="ipsPolicy",
+    )
+    scan_ftp: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_ftp", "scanFtp"),
+        serialization_alias="scanFtp",
+    )
+    scan_http_and_decrypted_https: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_http_and_decrypted_https", "scanHttpAndDecryptedHttps"),
+        serialization_alias="scanHttpAndDecryptedHttps",
+    )
+    scan_with_ndr_active_threat_intelligence: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "scan_with_ndr_active_threat_intelligence", "scanWithNdrActiveThreatIntelligence"
+        ),
+        serialization_alias="scanWithNdrActiveThreatIntelligence",
+    )
+    web_category_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_category_based_qos_policy", "webCategoryBasedQosPolicy"),
+        serialization_alias="webCategoryBasedQosPolicy",
+    )
+    web_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("web_policy", "webPolicy"),
+        serialization_alias="webPolicy",
+    )
+    web_proxy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_proxy", "webProxy"),
+        serialization_alias="webProxy",
+    )
+    zero_day_protection: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("zero_day_protection", "zeroDayProtection"),
+        serialization_alias="zeroDayProtection",
+    )
 
 
 class SecurityFeaturesIpv6(_ClosedModel):
-    """The IPv6 rule's security-feature settings (the IPv6 schema has no ``scanFtp``)."""
+    """The IPv6 rule's security-feature settings (the IPv6 schema has no ``scan_ftp``)."""
 
-    applicationBasedQosPolicy: bool = False
-    applicationPolicy: ObjectReference | None = None
-    blockQuicProtocol: bool = False
-    decryptHTTPSWebProxyMode: bool = False
-    ipsPolicy: ObjectReference | None = None
-    scanHttpAndDecryptedHttps: bool = False
-    scanWithNdrActiveThreatIntelligence: bool = False
-    webCategoryBasedQosPolicy: bool = False
-    webPolicy: ObjectReference | None = None
-    webProxy: bool = False
-    zeroDayProtection: bool = False
+    application_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("application_based_qos_policy", "applicationBasedQosPolicy"),
+        serialization_alias="applicationBasedQosPolicy",
+    )
+    application_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("application_policy", "applicationPolicy"),
+        serialization_alias="applicationPolicy",
+    )
+    block_quic_protocol: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("block_quic_protocol", "blockQuicProtocol"),
+        serialization_alias="blockQuicProtocol",
+    )
+    decrypt_https_web_proxy_mode: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("decrypt_https_web_proxy_mode", "decryptHTTPSWebProxyMode"),
+        serialization_alias="decryptHTTPSWebProxyMode",
+    )
+    ips_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("ips_policy", "ipsPolicy"),
+        serialization_alias="ipsPolicy",
+    )
+    scan_http_and_decrypted_https: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("scan_http_and_decrypted_https", "scanHttpAndDecryptedHttps"),
+        serialization_alias="scanHttpAndDecryptedHttps",
+    )
+    scan_with_ndr_active_threat_intelligence: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "scan_with_ndr_active_threat_intelligence", "scanWithNdrActiveThreatIntelligence"
+        ),
+        serialization_alias="scanWithNdrActiveThreatIntelligence",
+    )
+    web_category_based_qos_policy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_category_based_qos_policy", "webCategoryBasedQosPolicy"),
+        serialization_alias="webCategoryBasedQosPolicy",
+    )
+    web_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("web_policy", "webPolicy"),
+        serialization_alias="webPolicy",
+    )
+    web_proxy: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("web_proxy", "webProxy"),
+        serialization_alias="webProxy",
+    )
+    zero_day_protection: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("zero_day_protection", "zeroDayProtection"),
+        serialization_alias="zeroDayProtection",
+    )
 
 
 class EmailScanning(_ClosedModel):
@@ -420,8 +641,16 @@ class EmailScanning(_ClosedModel):
 class Qos(_ClosedModel):
     """The rule's traffic-shaping and DSCP settings."""
 
-    trafficShapingPolicy: ObjectReference | None = None
-    dscpMarking: DscpMarking | None = None
+    traffic_shaping_policy: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("traffic_shaping_policy", "trafficShapingPolicy"),
+        serialization_alias="trafficShapingPolicy",
+    )
+    dscp_marking: DscpMarking | None = Field(
+        default=None,
+        validation_alias=AliasChoices("dscp_marking", "dscpMarking"),
+        serialization_alias="dscpMarking",
+    )
 
 
 # -- Create requests -------------------------------------------------------------------
@@ -433,33 +662,78 @@ class CreateFirewallRuleIpv4Input(_ClosedModel):
     ``enabled`` defaults to ``false`` so a created rule is never enabled by relying on the
     schema's ``true`` default; the adapter always sends the explicit value. ``position`` is
     required: the appliance needs the insertion point, and ``after``/``before`` require a
-    ``referenceItem`` anchor. ``ruleType`` accepts only ``firewall`` (WAF is out of scope).
+    ``reference_item`` anchor. ``rule_type`` accepts only ``firewall`` (WAF is out of scope).
     """
 
     name: RuleName
     description: Description | None = None
-    ruleType: Literal["firewall"] = "firewall"
+    rule_type: Literal["firewall"] = Field(
+        default="firewall",
+        validation_alias=AliasChoices("rule_type", "ruleType"),
+        serialization_alias="ruleType",
+    )
     enabled: bool = False
     action: FirewallAction = "accept"
-    sourceZones: ZoneMatch
-    destinationZones: ZoneMatch
-    sourceNetworks: Ipv4NetworkMatch
-    destinationNetworks: Ipv4NetworkMatch
-    servicesOrGroups: ServiceMatch
-    userAuthentication: UserAuthentication | None = None
+    source_zones: ZoneMatch = Field(
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ZoneMatch = Field(
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    source_networks: Ipv4NetworkMatch = Field(
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv4NetworkMatch = Field(
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
+    services_or_groups: ServiceMatch = Field(
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
+    user_authentication: UserAuthentication | None = Field(
+        default=None,
+        validation_alias=AliasChoices("user_authentication", "userAuthentication"),
+        serialization_alias="userAuthentication",
+    )
     exclusions: ExclusionsIpv4 | None = None
-    synchronizedSecurityHeartbeat: SynchronizedSecurityHeartbeat | None = None
-    securityFeatures: SecurityFeaturesIpv4 | None = None
-    emailScanning: EmailScanning | None = None
+    synchronized_security_heartbeat: SynchronizedSecurityHeartbeat | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "synchronized_security_heartbeat", "synchronizedSecurityHeartbeat"
+        ),
+        serialization_alias="synchronizedSecurityHeartbeat",
+    )
+    security_features: SecurityFeaturesIpv4 | None = Field(
+        default=None,
+        validation_alias=AliasChoices("security_features", "securityFeatures"),
+        serialization_alias="securityFeatures",
+    )
+    email_scanning: EmailScanning | None = Field(
+        default=None,
+        validation_alias=AliasChoices("email_scanning", "emailScanning"),
+        serialization_alias="emailScanning",
+    )
     qos: Qos | None = None
-    logTraffic: bool = False
+    log_traffic: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("log_traffic", "logTraffic"),
+        serialization_alias="logTraffic",
+    )
     schedule: ObjectReference | None = None
     position: RulePosition
-    referenceItem: ObjectReference | None = None
+    reference_item: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reference_item", "referenceItem"),
+        serialization_alias="referenceItem",
+    )
 
     @model_validator(mode="after")
     def _check_position(self) -> Self:
-        _require_anchor(self.position, self.referenceItem)
+        _require_anchor(self.position, self.reference_item)
         return self
 
 
@@ -472,27 +746,66 @@ class CreateFirewallRuleIpv6Input(_ClosedModel):
 
     name: RuleName
     description: Description | None = None
-    ruleType: Literal["firewall"] = "firewall"
+    rule_type: Literal["firewall"] = Field(
+        default="firewall",
+        validation_alias=AliasChoices("rule_type", "ruleType"),
+        serialization_alias="ruleType",
+    )
     enabled: bool = False
     action: FirewallAction = "accept"
-    sourceZones: ZoneMatch
-    destinationZones: ZoneMatch
-    sourceNetworks: Ipv6NetworkMatch
-    destinationNetworks: Ipv6NetworkMatch
-    servicesOrGroups: ServiceMatch
-    userAuthentication: UserAuthentication | None = None
+    source_zones: ZoneMatch = Field(
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ZoneMatch = Field(
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    source_networks: Ipv6NetworkMatch = Field(
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv6NetworkMatch = Field(
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
+    services_or_groups: ServiceMatch = Field(
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
+    user_authentication: UserAuthentication | None = Field(
+        default=None,
+        validation_alias=AliasChoices("user_authentication", "userAuthentication"),
+        serialization_alias="userAuthentication",
+    )
     exclusions: ExclusionsIpv6 | None = None
-    securityFeatures: SecurityFeaturesIpv6 | None = None
-    emailScanning: EmailScanning | None = None
+    security_features: SecurityFeaturesIpv6 | None = Field(
+        default=None,
+        validation_alias=AliasChoices("security_features", "securityFeatures"),
+        serialization_alias="securityFeatures",
+    )
+    email_scanning: EmailScanning | None = Field(
+        default=None,
+        validation_alias=AliasChoices("email_scanning", "emailScanning"),
+        serialization_alias="emailScanning",
+    )
     qos: Qos | None = None
-    logTraffic: bool = False
+    log_traffic: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("log_traffic", "logTraffic"),
+        serialization_alias="logTraffic",
+    )
     schedule: ObjectReference | None = None
     position: RulePosition
-    referenceItem: ObjectReference | None = None
+    reference_item: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reference_item", "referenceItem"),
+        serialization_alias="referenceItem",
+    )
 
     @model_validator(mode="after")
     def _check_position(self) -> Self:
-        _require_anchor(self.position, self.referenceItem)
+        _require_anchor(self.position, self.reference_item)
         return self
 
 
@@ -504,11 +817,11 @@ _REMOVABLE_UPDATE_FIELDS = frozenset(
     {
         "description",
         "schedule",
-        "userAuthentication",
+        "user_authentication",
         "exclusions",
-        "synchronizedSecurityHeartbeat",
-        "securityFeatures",
-        "emailScanning",
+        "synchronized_security_heartbeat",
+        "security_features",
+        "email_scanning",
         "qos",
     }
 )
@@ -518,22 +831,49 @@ class _UpdateFirewallRuleBase(_ClosedModel):
     """Members shared by the IPv4 and IPv6 JSON Merge Patch bodies.
 
     Every member is optional and the adapter serializes with ``exclude_unset=True``, so an
-    omitted member keeps its persisted value. ``idOrName`` identifies the target and is
+    omitted member keeps its persisted value. ``id_or_name`` identifies the target and is
     never part of the body.
     """
 
-    idOrName: ObjectNameOrId
+    id_or_name: ObjectNameOrId = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+    )
     name: RuleName | None = None
     description: Description | None = None
     enabled: bool | None = None
     action: FirewallAction | None = None
-    sourceZones: ZoneMatch | None = None
-    destinationZones: ZoneMatch | None = None
-    servicesOrGroups: ServiceMatch | None = None
-    userAuthentication: UserAuthentication | None = None
-    emailScanning: EmailScanning | None = None
+    source_zones: ZoneMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_zones", "sourceZones"),
+        serialization_alias="sourceZones",
+    )
+    destination_zones: ZoneMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_zones", "destinationZones"),
+        serialization_alias="destinationZones",
+    )
+    services_or_groups: ServiceMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("services_or_groups", "servicesOrGroups"),
+        serialization_alias="servicesOrGroups",
+    )
+    user_authentication: UserAuthentication | None = Field(
+        default=None,
+        validation_alias=AliasChoices("user_authentication", "userAuthentication"),
+        serialization_alias="userAuthentication",
+    )
+    email_scanning: EmailScanning | None = Field(
+        default=None,
+        validation_alias=AliasChoices("email_scanning", "emailScanning"),
+        serialization_alias="emailScanning",
+    )
     qos: Qos | None = None
-    logTraffic: bool | None = None
+    log_traffic: bool | None = Field(
+        default=None,
+        validation_alias=AliasChoices("log_traffic", "logTraffic"),
+        serialization_alias="logTraffic",
+    )
     schedule: ObjectReference | None = None
 
     @model_validator(mode="after")
@@ -551,20 +891,50 @@ class _UpdateFirewallRuleBase(_ClosedModel):
 class UpdateFirewallRuleIpv4Input(_UpdateFirewallRuleBase):
     """Partially update an IPv4 firewall rule (``updateFirewallRuleIpv4``)."""
 
-    sourceNetworks: Ipv4NetworkMatch | None = None
-    destinationNetworks: Ipv4NetworkMatch | None = None
+    source_networks: Ipv4NetworkMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv4NetworkMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
     exclusions: ExclusionsIpv4 | None = None
-    synchronizedSecurityHeartbeat: SynchronizedSecurityHeartbeat | None = None
-    securityFeatures: SecurityFeaturesIpv4 | None = None
+    synchronized_security_heartbeat: SynchronizedSecurityHeartbeat | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "synchronized_security_heartbeat", "synchronizedSecurityHeartbeat"
+        ),
+        serialization_alias="synchronizedSecurityHeartbeat",
+    )
+    security_features: SecurityFeaturesIpv4 | None = Field(
+        default=None,
+        validation_alias=AliasChoices("security_features", "securityFeatures"),
+        serialization_alias="securityFeatures",
+    )
 
 
 class UpdateFirewallRuleIpv6Input(_UpdateFirewallRuleBase):
     """Partially update an IPv6 firewall rule (``updateFirewallRuleIpv6``)."""
 
-    sourceNetworks: Ipv6NetworkMatch | None = None
-    destinationNetworks: Ipv6NetworkMatch | None = None
+    source_networks: Ipv6NetworkMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("source_networks", "sourceNetworks"),
+        serialization_alias="sourceNetworks",
+    )
+    destination_networks: Ipv6NetworkMatch | None = Field(
+        default=None,
+        validation_alias=AliasChoices("destination_networks", "destinationNetworks"),
+        serialization_alias="destinationNetworks",
+    )
     exclusions: ExclusionsIpv6 | None = None
-    securityFeatures: SecurityFeaturesIpv6 | None = None
+    security_features: SecurityFeaturesIpv6 | None = Field(
+        default=None,
+        validation_alias=AliasChoices("security_features", "securityFeatures"),
+        serialization_alias="securityFeatures",
+    )
 
 
 # -- Other operation requests ----------------------------------------------------------
@@ -573,22 +943,44 @@ class UpdateFirewallRuleIpv6Input(_UpdateFirewallRuleBase):
 class ListFirewallRulesInput(_ClosedModel):
     """One page of a firewall-rule collection (``getAllFirewallRulesIpv4/Ipv6``).
 
-    ``nameContains`` and ``nameNotEquals`` are mutually exclusive in the contract, so at
+    ``name_contains`` and ``name_not_equals`` are mutually exclusive in the contract, so at
     most one may be supplied. Pagination is one explicit page per call; the adapter never
     walks the collection automatically.
     """
 
     page: int = Field(default=1, ge=1)
-    pageSize: int = Field(default=50, ge=1, le=100)
-    pageTotal: bool = False
-    nameContains: str | None = Field(default=None, min_length=1, max_length=MAX_NAME_FILTER_LENGTH)
-    nameNotEquals: str | None = Field(default=None, min_length=1, max_length=MAX_NAME_FILTER_LENGTH)
+    page_size: int = Field(
+        default=50,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("page_size", "pageSize"),
+        serialization_alias="pageSize",
+    )
+    page_total: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("page_total", "pageTotal"),
+        serialization_alias="pageTotal",
+    )
+    name_contains: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME_FILTER_LENGTH,
+        validation_alias=AliasChoices("name_contains", "nameContains"),
+        serialization_alias="nameContains",
+    )
+    name_not_equals: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=MAX_NAME_FILTER_LENGTH,
+        validation_alias=AliasChoices("name_not_equals", "nameNotEquals"),
+        serialization_alias="nameNotEquals",
+    )
 
     @model_validator(mode="after")
     def _check_name_filters(self) -> Self:
-        if self.nameContains is not None and self.nameNotEquals is not None:
+        if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
-                "nameContains and nameNotEquals are mutually exclusive; set at most one"
+                "name_contains and name_not_equals are mutually exclusive; set at most one"
             )
         return self
 
@@ -596,29 +988,39 @@ class ListFirewallRulesInput(_ClosedModel):
 class GetFirewallRuleInput(_ClosedModel):
     """Read one firewall rule by id or name (``getFirewallRuleIpv4/Ipv6``)."""
 
-    idOrName: ObjectNameOrId
+    id_or_name: ObjectNameOrId = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+    )
 
 
 class DeleteFirewallRuleInput(_ClosedModel):
     """Delete one firewall rule by id or name (``deleteFirewallRuleIpv4/Ipv6``)."""
 
-    idOrName: ObjectNameOrId
+    id_or_name: ObjectNameOrId = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+    )
 
 
 class MoveFirewallRuleInput(_ClosedModel):
     """Move one firewall rule (``moveFirewallRuleIpv4/Ipv6``).
 
-    The operation requires the rule to be identified by **name**; ``idOrName`` is not
-    accepted here. ``after``/``before`` require a ``referenceItem`` anchor.
+    The operation requires the rule to be identified by **name**; ``id_or_name`` is not
+    accepted here. ``after``/``before`` require a ``reference_item`` anchor.
     """
 
     name: RuleName
     position: RulePosition
-    referenceItem: ObjectReference | None = None
+    reference_item: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reference_item", "referenceItem"),
+        serialization_alias="referenceItem",
+    )
 
     @model_validator(mode="after")
     def _check_position(self) -> Self:
-        _require_anchor(self.position, self.referenceItem)
+        _require_anchor(self.position, self.reference_item)
         return self
 
 
@@ -629,7 +1031,10 @@ class SetFirewallRuleEnabledInput(_ClosedModel):
     can never silently disable a rule.
     """
 
-    idOrName: ObjectNameOrId
+    id_or_name: ObjectNameOrId = Field(
+        validation_alias=AliasChoices("id_or_name", "idOrName"),
+        serialization_alias="idOrName",
+    )
     enabled: bool
 
 
@@ -643,12 +1048,16 @@ class CloneFirewallRuleInput(_ClosedModel):
     source: ObjectNameOrId
     name: RuleName
     position: RulePosition
-    referenceItem: ObjectReference | None = None
+    reference_item: ObjectReference | None = Field(
+        default=None,
+        validation_alias=AliasChoices("reference_item", "referenceItem"),
+        serialization_alias="referenceItem",
+    )
     enabled: bool = False
 
     @model_validator(mode="after")
     def _check_position(self) -> Self:
-        _require_anchor(self.position, self.referenceItem)
+        _require_anchor(self.position, self.reference_item)
         return self
 
 

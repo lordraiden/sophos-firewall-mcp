@@ -643,6 +643,36 @@ async def test_get_percent_encodes_the_identifier(router: Any):
     )
 
 
+@pytest.mark.parametrize(
+    ("identifier", "encoded"),
+    [
+        ("##ALL_RW", "%23%23ALL_RW"),
+        ("FQDN Group - Pipeline/parsing errors", "FQDN%20Group%20-%20Pipeline%2Fparsing%20errors"),
+    ],
+)
+async def test_get_accepts_builtin_and_slash_names(
+    router: Any, identifier: str, encoded: str
+) -> None:
+    """M3: a name the list tools return must be usable by the get tools.
+
+    Built-in names start with ``##`` and some names contain ``/``; the adapter
+    percent-encodes the path segment, so both are addressable.
+    """
+    route = router.get(f"{BASE}/network/addresses/ipv4/{encoded}").mock(
+        return_value=httpx.Response(200, json={**IPV4_ITEM, "name": identifier})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("address_get_ipv4", {"request": {"id_or_name": identifier}})
+
+    assert result.is_error is False
+    assert (
+        route.calls.last.request.url.raw_path
+        == f"/api/firewall-config/v1/network/addresses/ipv4/{encoded}".encode()
+    )
+    assert result.structured_content["address"]["name"] == identifier
+
+
 # -- Create contract -------------------------------------------------------------------
 
 
@@ -1089,7 +1119,16 @@ def test_object_id_or_name_accepts_a_uuid_and_a_name():
     assert ObjectIdentifierInput(id_or_name="web server").id_or_name == "web server"
 
 
-@pytest.mark.parametrize("value", ["", "bad,name", "bad;name", " leading", "trailing "])
+@pytest.mark.parametrize(
+    "value",
+    ["##ALL_RW", "##ALL_IPSEC_RW6", "FQDN Group - Pipeline/parsing errors", "a/b", "a#b"],
+)
+def test_object_id_or_name_accepts_builtin_and_slash_names(value: str):
+    """M3: every name the list tools return must be accepted by the get tools."""
+    assert ObjectIdentifierInput(id_or_name=value).id_or_name == value
+
+
+@pytest.mark.parametrize("value", ["", "bad,name", "bad;name", " leading", "trailing ", "a..b"])
 def test_object_id_or_name_rejects_an_invalid_value(value: str):
     with pytest.raises(ValidationError):
         ObjectIdentifierInput(id_or_name=value)
@@ -1145,3 +1184,122 @@ def test_country_group_output_keeps_country_references():
     group = CountryGroup.model_validate(COUNTRY_ITEM)
 
     assert [country.name for country in group.countries] == ["Germany", "France"]
+
+
+# -- M1: nested input naming -----------------------------------------------------------
+
+
+def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names():
+    """M1: the address and MAC create bodies publish snake_case, dump the contract names.
+
+    The published schema is what an agent reads, so every nested property must be
+    snake_case; the wire body must still be the contract's camelCase document.
+    """
+    ipv4_cases = [
+        (
+            Ipv4AddressCreateIp,
+            {"name": "web", "type": "ipv4Address", "ipv4_address": "203.0.113.10"},
+            {"name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"},
+        ),
+        (
+            Ipv4AddressCreateNetwork,
+            {"name": "net", "type": "ipv4Network", "ipv4_network_address": "10.0.0.0", "cidr": 8},
+            {"name": "net", "type": "ipv4Network", "ipv4NetworkAddress": "10.0.0.0", "cidr": 8},
+        ),
+        (
+            Ipv4AddressCreateIpRange,
+            {
+                "name": "range",
+                "type": "ipv4Range",
+                "ipv4_address_start": "203.0.113.10",
+                "ipv4_address_end": "203.0.113.20",
+            },
+            {
+                "name": "range",
+                "type": "ipv4Range",
+                "ipv4AddressStart": "203.0.113.10",
+                "ipv4AddressEnd": "203.0.113.20",
+            },
+        ),
+        (
+            Ipv4AddressCreateIpList,
+            {"name": "list", "type": "ipv4List", "ipv4_addresses": ["203.0.113.10"]},
+            {"name": "list", "type": "ipv4List", "ipv4Addresses": ["203.0.113.10"]},
+        ),
+    ]
+    for model, snake_case, wire in ipv4_cases:
+        body = model(**snake_case).model_dump(mode="json", by_alias=True, exclude_unset=True)
+        assert body == wire, model.__name__
+        assert set(model.model_json_schema(by_alias=True)["properties"]) == set(model.model_fields)
+
+    ipv6_cases = [
+        (
+            Ipv6AddressCreateIp,
+            {"name": "web6", "type": "ipv6Address", "ipv6_address": "2001:db8::1"},
+            {"name": "web6", "type": "ipv6Address", "ipv6Address": "2001:db8::1"},
+        ),
+        (
+            Ipv6AddressCreateNetwork,
+            {
+                "name": "net6",
+                "type": "ipv6Network",
+                "ipv6_network_address": "2001:db8::",
+                "prefix_length": 64,
+            },
+            {
+                "name": "net6",
+                "type": "ipv6Network",
+                "ipv6NetworkAddress": "2001:db8::",
+                "prefixLength": 64,
+            },
+        ),
+        (
+            Ipv6AddressCreateIpRange,
+            {
+                "name": "range6",
+                "type": "ipv6Range",
+                "ipv6_address_start": "2001:db8::1",
+                "ipv6_address_end": "2001:db8::9",
+            },
+            {
+                "name": "range6",
+                "type": "ipv6Range",
+                "ipv6AddressStart": "2001:db8::1",
+                "ipv6AddressEnd": "2001:db8::9",
+            },
+        ),
+        (
+            Ipv6AddressCreateIpList,
+            {"name": "list6", "type": "ipv6List", "ipv6_addresses": ["2001:db8::1"]},
+            {"name": "list6", "type": "ipv6List", "ipv6Addresses": ["2001:db8::1"]},
+        ),
+    ]
+    for model, snake_case, wire in ipv6_cases:
+        body = model(**snake_case).model_dump(mode="json", by_alias=True, exclude_unset=True)
+        assert body == wire, model.__name__
+        assert set(model.model_json_schema(by_alias=True)["properties"]) == set(model.model_fields)
+
+    mac_cases = [
+        (
+            MacAddressCreateSingle,
+            {"name": "printer", "mac_address": "00:11:22:33:44:55"},
+            {"name": "printer", "macAddress": "00:11:22:33:44:55"},
+        ),
+        (
+            MacAddressCreateList,
+            {"name": "printers", "mac_addresses": ["00:11:22:33:44:55"]},
+            {"name": "printers", "macAddresses": ["00:11:22:33:44:55"]},
+        ),
+    ]
+    for model, snake_case, wire in mac_cases:
+        body = model(**snake_case).model_dump(mode="json", by_alias=True, exclude_unset=True)
+        assert body == wire, model.__name__
+        assert set(model.model_json_schema(by_alias=True)["properties"]) == set(model.model_fields)
+
+    # The camelCase spelling is still accepted on input, so the alias is a choice.
+    assert TypeAdapter(Ipv4AddressCreate).validate_python(
+        {"name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"}
+    ) == Ipv4AddressCreateIp(name="web", type="ipv4Address", ipv4_address="203.0.113.10")
+    assert TypeAdapter(MacAddressCreate).validate_python(
+        {"name": "printer", "macAddress": "00:11:22:33:44:55"}
+    ) == MacAddressCreateSingle(name="printer", mac_address="00:11:22:33:44:55")

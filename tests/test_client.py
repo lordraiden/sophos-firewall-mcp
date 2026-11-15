@@ -955,6 +955,44 @@ async def test_api_key_is_redacted_from_auth_errors(router: Any) -> None:
     assert_no_key(info.value)
 
 
+async def test_401_keeps_its_status_and_does_not_claim_a_permission_problem(router: Any) -> None:
+    """H3: the transport must not pre-judge a 401 as an authorization failure.
+
+    ``tool_error`` branches on ``status`` to pick the model-facing wording, so the client
+    has to preserve it and keep its own message neutral.
+    """
+    path = "/network/dns/protection/status"
+    router.get(f"{BASE}{path}").mock(
+        return_value=httpx.Response(401, json={"error": "unauthenticated"})
+    )
+    client = make_client()
+    try:
+        with pytest.raises(SophosAuthError) as info:
+            await client.get(path)
+    finally:
+        await client.aclose()
+
+    assert info.value.status == 401
+    message = str(info.value)
+    assert "HTTP 401" in message
+    assert "not allowed" not in message
+    assert "permission" not in message
+
+
+async def test_403_keeps_its_status(router: Any) -> None:
+    path = "/firewall/rules/ipv4"
+    router.get(f"{BASE}{path}").mock(return_value=httpx.Response(403, json={"error": "forbidden"}))
+    client = make_client()
+    try:
+        with pytest.raises(SophosAuthError) as info:
+            await client.get(path)
+    finally:
+        await client.aclose()
+
+    assert info.value.status == 403
+    assert "HTTP 403" in str(info.value)
+
+
 async def test_api_key_is_redacted_from_transport_errors(router: Any) -> None:
     path = "/network/dns/protection/status"
     router.get(f"{BASE}{path}").mock(side_effect=httpx.ConnectError(f"proxy rejected token {KEY}"))

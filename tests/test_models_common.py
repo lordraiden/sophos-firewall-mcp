@@ -93,17 +93,52 @@ def test_object_name_annotation_is_enforced_by_pydantic():
         Model(name="bad,name")
 
 
-@pytest.mark.parametrize("value", ["LAN", "allow.lan.to.wan", UUID, UUID.upper()])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "LAN",
+        "allow.lan.to.wan",
+        UUID,
+        UUID.upper(),
+        # Built-in names the appliance returns from its list operations (M3).
+        "##ALL_RW",
+        "##ALL_IPSEC_RW6",
+        # The adapters percent-encode the path segment, so these are addressable.
+        "FQDN Group - Pipeline/parsing errors",
+        "a/b",
+        "a\\b",
+        "a?b",
+        "a#b",
+        "a://b",
+    ],
+)
 def test_object_name_or_id_accepts_names_and_uuids(value: str):
     assert validate_object_name_or_id(value) == value
 
 
 @pytest.mark.parametrize(
-    "value", ["", " leading", "a,b", "a;b", "a\x00b", "a/b", "a\\b", "a..b", "a?b", "a#b"]
+    "value",
+    [
+        "",
+        " leading",
+        "a,b",
+        "a;b",
+        "a\x00b",
+        # Only the sequences that survive percent-encoding are rejected.
+        "..",
+        "a..b",
+        "a%2eb",
+        "a%2Eb",
+    ],
 )
 def test_object_name_or_id_rejects_invalid_names(value: str):
     with pytest.raises(ValueError):
         validate_object_name_or_id(value)
+
+
+def test_object_name_or_id_rejection_names_the_uuid_fallback():
+    with pytest.raises(ValueError, match="UUID"):
+        validate_object_name_or_id("a..b")
 
 
 def test_object_name_or_id_annotation_is_enforced_by_pydantic():

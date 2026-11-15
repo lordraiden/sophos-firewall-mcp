@@ -22,7 +22,7 @@ import pytest
 import respx
 import yaml
 from mcp import Client
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.models.common import validate_object_name_or_id  # noqa: F401
@@ -317,7 +317,7 @@ async def test_list_maps_401_to_a_sanitized_auth_tool_error(router: Any) -> None
 
     assert result.is_error is True
     text = result.content[0].text
-    assert "not allowed" in text
+    assert "authentication failed" in text
     assert "unauthenticated" in text
     assert KEY not in text
 
@@ -494,7 +494,7 @@ async def test_create_relative_position_requires_an_anchor(router: Any) -> None:
     )
 
     assert result.is_error is True
-    assert "referenceItem" in result.content[0].text
+    assert "reference_item" in result.content[0].text
     assert router.calls == []
 
 
@@ -730,7 +730,7 @@ async def test_move_relative_position_requires_an_anchor(router: Any) -> None:
     )
 
     assert result.is_error is True
-    assert "referenceItem" in result.content[0].text
+    assert "reference_item" in result.content[0].text
     assert router.calls == []
 
 
@@ -982,7 +982,7 @@ async def test_create_input_schema_is_closed_and_requires_position() -> None:
     assert schema["additionalProperties"] is False
     assert "position" in schema["required"]
     assert schema["properties"]["enabled"]["default"] is False
-    assert schema["properties"]["ruleType"]["const"] == "firewall"
+    assert schema["properties"]["rule_type"]["const"] == "firewall"
     assert schema["properties"]["position"]["enum"] == ["after", "before", "bottom", "top"]
 
 
@@ -1027,7 +1027,7 @@ def test_create_requires_a_position() -> None:
 
 
 def test_create_model_requires_an_anchor_for_relative_position() -> None:
-    with pytest.raises(ValidationError, match="referenceItem"):
+    with pytest.raises(ValidationError, match="reference_item"):
         CreateFirewallRuleIpv4Input(**{**MINIMAL_CREATE, "position": "after"})
 
 
@@ -1070,7 +1070,13 @@ def test_object_name_or_id_accepts_a_uuid_and_a_name() -> None:
     assert validate_object_name_or_id("allow-lan-to-wan") == "allow-lan-to-wan"
 
 
-@pytest.mark.parametrize("value", ["a/b", "a\\b", "..", "bad,name", " leading"])
+@pytest.mark.parametrize("value", ["##ALL_RW", "a/b", "a\\b", "a#b", "a?b"])
+def test_object_name_or_id_accepts_percent_encoded_identifiers(value: str) -> None:
+    # The adapters percent-encode the path segment, so these names are addressable (M3).
+    assert validate_object_name_or_id(value) == value
+
+
+@pytest.mark.parametrize("value", ["..", "a..b", "a%2eb", "bad,name", " leading"])
 def test_object_name_or_id_rejects_unsafe_identifiers(value: str) -> None:
     with pytest.raises(ValueError):
         validate_object_name_or_id(value)
@@ -1109,7 +1115,7 @@ def test_update_model_rejects_null_for_a_member_that_cannot_be_removed() -> None
 def test_update_allows_null_for_a_removable_member() -> None:
     model = UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", description=None)
 
-    assert model.model_dump(exclude_unset=True) == {
+    assert model.model_dump(by_alias=True, exclude_unset=True) == {
         "idOrName": "allow-lan-to-wan",
         "description": None,
     }
@@ -1118,7 +1124,9 @@ def test_update_allows_null_for_a_removable_member() -> None:
 def test_update_excludes_members_the_caller_did_not_set() -> None:
     model = UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", enabled=True)
 
-    assert model.model_dump(exclude_unset=True, exclude={"idOrName"}) == {"enabled": True}
+    assert model.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
+        "enabled": True
+    }
 
 
 def test_move_input_requires_a_name() -> None:
@@ -1191,6 +1199,11 @@ def _properties(schema: dict[str, Any]) -> set[str]:
     return set(schema.get("properties", {}))
 
 
+def _wire_names(model: type[BaseModel]) -> set[str]:
+    """The Sophos wire names the model serializes to (the contract's property names)."""
+    return {field.serialization_alias or name for name, field in model.model_fields.items()}
+
+
 def _resolve(node: dict[str, Any]) -> dict[str, Any]:
     """Resolve one local ``$ref`` against the audited document."""
     ref = node.get("$ref")
@@ -1211,12 +1224,12 @@ def test_create_models_cover_exactly_the_contract_properties() -> None:
         _properties(ipv4_variant["allOf"][0]),
         _properties(ipv4_variant["allOf"][1]),
     )
-    assert set(CreateFirewallRuleIpv4Input.model_fields) == rule_fields | position_fields
+    assert _wire_names(CreateFirewallRuleIpv4Input) == rule_fields | position_fields
 
     ipv6_schema = _spec()["paths"]["/firewall/rules/ipv6"]["post"]["requestBody"]["content"][
         "application/json"
     ]["schema"]["allOf"]
-    assert set(CreateFirewallRuleIpv6Input.model_fields) == (
+    assert _wire_names(CreateFirewallRuleIpv6Input) == (
         _properties(ipv6_schema[0]) | _properties(ipv6_schema[1])
     )
 
@@ -1229,15 +1242,13 @@ def test_update_models_cover_exactly_the_contract_properties() -> None:
         schema = _spec()["paths"][f"/firewall/rules/{family}/{{idOrName}}"]["patch"]["requestBody"][
             "content"
         ]["application/json"]["schema"]
-        assert set(model.model_fields) == _properties(schema) | {"idOrName"}
+        assert _wire_names(model) == _properties(schema) | {"idOrName"}
 
 
 def test_list_input_covers_exactly_the_contract_query_parameters() -> None:
     parameters = _spec()["paths"]["/firewall/rules/ipv4"]["get"]["parameters"]
 
-    assert set(ListFirewallRulesInput.model_fields) == {
-        parameter["name"] for parameter in parameters
-    }
+    assert _wire_names(ListFirewallRulesInput) == {parameter["name"] for parameter in parameters}
 
 
 def test_move_input_covers_exactly_the_contract_body() -> None:
@@ -1245,7 +1256,7 @@ def test_move_input_covers_exactly_the_contract_body() -> None:
         "application/json"
     ]["schema"]
 
-    assert set(MoveFirewallRuleInput.model_fields) == _properties(schema)
+    assert _wire_names(MoveFirewallRuleInput) == _properties(schema)
 
 
 def test_dscp_marking_enum_matches_the_contract() -> None:
@@ -1255,3 +1266,123 @@ def test_dscp_marking_enum_matches_the_contract() -> None:
     expected = schema["properties"]["qos"]["allOf"][0]["properties"]["dscpMarking"]["enum"]
 
     assert list(get_args(DscpMarking)) == expected
+
+
+# -- M1: nested input naming -----------------------------------------------------------
+
+
+def test_nested_input_models_publish_snake_case_and_serialize_to_the_wire_names() -> None:
+    """M1: the nested request-body models publish snake_case and dump the contract names.
+
+    The published schema is what an agent reads, so every nested property must be
+    snake_case; the wire body must still be the contract's camelCase document. The
+    camelCase spelling stays accepted on input, so an existing caller keeps working.
+    """
+    request = CreateFirewallRuleIpv4Input(
+        name="allow-lan-to-wan",
+        source_zones={"zones": [{"name": "LAN"}]},
+        destination_zones={"any": True},
+        source_networks={"ipv4_addresses": [{"name": "LAN-10.0.0.0/8"}]},
+        destination_networks={"any": True},
+        services_or_groups={
+            "services": [{"name": "HTTP"}],
+            "service_groups": [{"name": "WEB"}],
+        },
+        user_authentication={
+            "users_or_groups": {"user_groups": [{"name": "staff"}]},
+            "exclude_users_from_accounting": True,
+            "web_authentication_for_unknown_users": True,
+        },
+        exclusions={
+            "source_zones": {"zones": [{"name": "DMZ"}]},
+            "source_networks": {"ipv4_groups": [{"name": "EXCLUDED"}]},
+            "services_or_groups": {"service_groups": [{"name": "EXCLUDED-SVC"}]},
+        },
+        synchronized_security_heartbeat={
+            "source": {"block_clients_with_no_heartbeat": True, "minimum_level": "green"}
+        },
+        security_features={
+            "application_based_qos_policy": True,
+            "block_quic_protocol": True,
+            "decrypt_https_web_proxy_mode": True,
+            "scan_ftp": True,
+            "scan_http_and_decrypted_https": True,
+            "scan_with_ndr_active_threat_intelligence": True,
+            "web_category_based_qos_policy": True,
+            "web_proxy": True,
+            "zero_day_protection": True,
+        },
+        qos={"traffic_shaping_policy": {"name": "SHAPE"}, "dscp_marking": "55"},
+        log_traffic=True,
+        position="bottom",
+    )
+
+    body = request.model_dump(mode="json", by_alias=True, exclude_none=True)
+
+    assert body["sourceNetworks"] == {"ipv4Addresses": [{"name": "LAN-10.0.0.0/8"}]}
+    assert body["servicesOrGroups"] == {
+        "services": [{"name": "HTTP"}],
+        "serviceGroups": [{"name": "WEB"}],
+    }
+    assert body["userAuthentication"] == {
+        "usersOrGroups": {"userGroups": [{"name": "staff"}]},
+        "excludeUsersFromAccounting": True,
+        "webAuthenticationForUnknownUsers": True,
+    }
+    assert body["exclusions"]["sourceNetworks"] == {"ipv4Groups": [{"name": "EXCLUDED"}]}
+    assert body["exclusions"]["servicesOrGroups"] == {"serviceGroups": [{"name": "EXCLUDED-SVC"}]}
+    assert body["synchronizedSecurityHeartbeat"]["source"] == {
+        "blockClientsWithNoHeartbeat": True,
+        "minimumLevel": "green",
+    }
+    assert body["securityFeatures"]["scanFtp"] is True
+    assert body["securityFeatures"]["decryptHTTPSWebProxyMode"] is True
+    assert body["securityFeatures"]["scanWithNdrActiveThreatIntelligence"] is True
+    assert body["qos"] == {"trafficShapingPolicy": {"name": "SHAPE"}, "dscpMarking": "55"}
+
+    definitions = CreateFirewallRuleIpv4Input.model_json_schema(by_alias=True)["$defs"]
+    assert set(definitions["Ipv4Networks"]["properties"]) == {
+        "countries",
+        "country_groups",
+        "fqdn_addresses",
+        "fqdn_groups",
+        "ipv4_addresses",
+        "ipv4_groups",
+        "mac_addresses",
+    }
+    assert set(definitions["Services"]["properties"]) == {"services", "service_groups"}
+    assert set(definitions["SelectedUsers"]["properties"]) == {"users", "user_groups"}
+    assert set(definitions["UserAuthentication"]["properties"]) == {
+        "users_or_groups",
+        "exclude_users_from_accounting",
+        "web_authentication_for_unknown_users",
+    }
+    assert set(definitions["ExclusionsIpv4"]["properties"]) == {
+        "source_zones",
+        "destination_zones",
+        "source_networks",
+        "destination_networks",
+        "services_or_groups",
+    }
+    assert set(definitions["HeartbeatEndpoint"]["properties"]) == {
+        "block_clients_with_no_heartbeat",
+        "minimum_level",
+    }
+    assert set(definitions["SecurityFeaturesIpv4"]["properties"]) == {
+        "application_based_qos_policy",
+        "application_policy",
+        "block_quic_protocol",
+        "decrypt_https_web_proxy_mode",
+        "ips_policy",
+        "scan_ftp",
+        "scan_http_and_decrypted_https",
+        "scan_with_ndr_active_threat_intelligence",
+        "web_category_based_qos_policy",
+        "web_policy",
+        "web_proxy",
+        "zero_day_protection",
+    }
+    assert set(definitions["Qos"]["properties"]) == {"traffic_shaping_policy", "dscp_marking"}
+
+    # The camelCase spelling is still accepted on input, so the alias is a choice.
+    assert CreateFirewallRuleIpv4Input(**MINIMAL_CREATE).position == "bottom"

@@ -32,7 +32,7 @@ from datetime import datetime
 from ipaddress import IPv4Address, IPv6Address
 from typing import Annotated, Literal, Self, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from sophos_firewall_mcp.models.common import (
     ObjectName,
@@ -281,7 +281,10 @@ class Ipv4AddressCreateIp(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv4Address"]
-    ipv4_address: IPv4Address = Field(alias="ipv4Address")
+    ipv4_address: IPv4Address = Field(
+        validation_alias=AliasChoices("ipv4_address", "ipv4Address"),
+        serialization_alias="ipv4Address",
+    )
 
 
 class Ipv4AddressCreateNetwork(_InputModel):
@@ -290,7 +293,10 @@ class Ipv4AddressCreateNetwork(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv4Network"]
-    ipv4_network_address: IPv4Address = Field(alias="ipv4NetworkAddress")
+    ipv4_network_address: IPv4Address = Field(
+        validation_alias=AliasChoices("ipv4_network_address", "ipv4NetworkAddress"),
+        serialization_alias="ipv4NetworkAddress",
+    )
     cidr: int = Field(ge=1, le=31)
 
 
@@ -300,8 +306,14 @@ class Ipv4AddressCreateIpRange(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv4Range"]
-    ipv4_address_start: IPv4Address = Field(alias="ipv4AddressStart")
-    ipv4_address_end: IPv4Address = Field(alias="ipv4AddressEnd")
+    ipv4_address_start: IPv4Address = Field(
+        validation_alias=AliasChoices("ipv4_address_start", "ipv4AddressStart"),
+        serialization_alias="ipv4AddressStart",
+    )
+    ipv4_address_end: IPv4Address = Field(
+        validation_alias=AliasChoices("ipv4_address_end", "ipv4AddressEnd"),
+        serialization_alias="ipv4AddressEnd",
+    )
 
 
 class Ipv4AddressCreateIpList(_InputModel):
@@ -310,7 +322,11 @@ class Ipv4AddressCreateIpList(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv4List"]
-    ipv4_addresses: list[IPv4Address] = Field(alias="ipv4Addresses", min_length=1)
+    ipv4_addresses: list[IPv4Address] = Field(
+        min_length=1,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 Ipv4AddressCreate = Annotated[
@@ -331,12 +347,33 @@ class Ipv4AddressUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv4_address: IPv4Address | None = Field(None, alias="ipv4Address")
-    ipv4_network_address: IPv4Address | None = Field(None, alias="ipv4NetworkAddress")
+    ipv4_address: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_address", "ipv4Address"),
+        serialization_alias="ipv4Address",
+    )
+    ipv4_network_address: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_network_address", "ipv4NetworkAddress"),
+        serialization_alias="ipv4NetworkAddress",
+    )
     cidr: int | None = Field(None, ge=1, le=31)
-    ipv4_address_start: IPv4Address | None = Field(None, alias="ipv4AddressStart")
-    ipv4_address_end: IPv4Address | None = Field(None, alias="ipv4AddressEnd")
-    ipv4_addresses: list[IPv4Address] | None = Field(None, alias="ipv4Addresses", min_length=1)
+    ipv4_address_start: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_address_start", "ipv4AddressStart"),
+        serialization_alias="ipv4AddressStart",
+    )
+    ipv4_address_end: IPv4Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_address_end", "ipv4AddressEnd"),
+        serialization_alias="ipv4AddressEnd",
+    )
+    ipv4_addresses: list[IPv4Address] | None = Field(
+        None,
+        min_length=1,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 class Ipv4AddressResult(_OutputModel):
@@ -421,7 +458,10 @@ class Ipv6AddressCreateIp(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv6Address"]
-    ipv6_address: IPv6Address = Field(alias="ipv6Address")
+    ipv6_address: IPv6Address = Field(
+        validation_alias=AliasChoices("ipv6_address", "ipv6Address"),
+        serialization_alias="ipv6Address",
+    )
 
 
 class Ipv6AddressCreateNetwork(_InputModel):
@@ -430,8 +470,16 @@ class Ipv6AddressCreateNetwork(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv6Network"]
-    ipv6_network_address: IPv6Address = Field(alias="ipv6NetworkAddress")
-    prefix_length: int = Field(ge=1, le=127, alias="prefixLength")
+    ipv6_network_address: IPv6Address = Field(
+        validation_alias=AliasChoices("ipv6_network_address", "ipv6NetworkAddress"),
+        serialization_alias="ipv6NetworkAddress",
+    )
+    prefix_length: int = Field(
+        ge=1,
+        le=127,
+        validation_alias=AliasChoices("prefix_length", "prefixLength"),
+        serialization_alias="prefixLength",
+    )
 
 
 class Ipv6AddressCreateIpRange(_InputModel):
@@ -440,8 +488,14 @@ class Ipv6AddressCreateIpRange(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv6Range"]
-    ipv6_address_start: IPv6Address = Field(alias="ipv6AddressStart")
-    ipv6_address_end: IPv6Address = Field(alias="ipv6AddressEnd")
+    ipv6_address_start: IPv6Address = Field(
+        validation_alias=AliasChoices("ipv6_address_start", "ipv6AddressStart"),
+        serialization_alias="ipv6AddressStart",
+    )
+    ipv6_address_end: IPv6Address = Field(
+        validation_alias=AliasChoices("ipv6_address_end", "ipv6AddressEnd"),
+        serialization_alias="ipv6AddressEnd",
+    )
 
 
 class Ipv6AddressCreateIpList(_InputModel):
@@ -450,7 +504,11 @@ class Ipv6AddressCreateIpList(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv6List"]
-    ipv6_addresses: list[IPv6Address] = Field(alias="ipv6Addresses", min_length=1)
+    ipv6_addresses: list[IPv6Address] = Field(
+        min_length=1,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 Ipv6AddressCreate = Annotated[
@@ -471,12 +529,39 @@ class Ipv6AddressUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv6_address: IPv6Address | None = Field(None, alias="ipv6Address")
-    ipv6_network_address: IPv6Address | None = Field(None, alias="ipv6NetworkAddress")
-    prefix_length: int | None = Field(None, ge=1, le=127, alias="prefixLength")
-    ipv6_address_start: IPv6Address | None = Field(None, alias="ipv6AddressStart")
-    ipv6_address_end: IPv6Address | None = Field(None, alias="ipv6AddressEnd")
-    ipv6_addresses: list[IPv6Address] | None = Field(None, alias="ipv6Addresses", min_length=1)
+    ipv6_address: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_address", "ipv6Address"),
+        serialization_alias="ipv6Address",
+    )
+    ipv6_network_address: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_network_address", "ipv6NetworkAddress"),
+        serialization_alias="ipv6NetworkAddress",
+    )
+    prefix_length: int | None = Field(
+        None,
+        ge=1,
+        le=127,
+        validation_alias=AliasChoices("prefix_length", "prefixLength"),
+        serialization_alias="prefixLength",
+    )
+    ipv6_address_start: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_address_start", "ipv6AddressStart"),
+        serialization_alias="ipv6AddressStart",
+    )
+    ipv6_address_end: IPv6Address | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_address_end", "ipv6AddressEnd"),
+        serialization_alias="ipv6AddressEnd",
+    )
+    ipv6_addresses: list[IPv6Address] | None = Field(
+        None,
+        min_length=1,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 class Ipv6AddressResult(_OutputModel):
@@ -543,7 +628,11 @@ class Ipv4AddressGroupCreate(_InputModel):
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv4_addresses: list[MemberRef] = Field(..., alias="ipv4Addresses")
+    ipv4_addresses: list[MemberRef] = Field(
+        ...,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 class Ipv4AddressGroupUpdateInput(_InputModel):
@@ -552,7 +641,11 @@ class Ipv4AddressGroupUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv4_addresses: list[MemberRef] | None = Field(None, alias="ipv4Addresses")
+    ipv4_addresses: list[MemberRef] | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv4_addresses", "ipv4Addresses"),
+        serialization_alias="ipv4Addresses",
+    )
 
 
 class Ipv4AddressGroupListInput(ListQuery):
@@ -575,7 +668,11 @@ class Ipv6AddressGroupCreate(_InputModel):
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv6_addresses: list[MemberRef] = Field(..., alias="ipv6Addresses")
+    ipv6_addresses: list[MemberRef] = Field(
+        ...,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 class Ipv6AddressGroupUpdateInput(_InputModel):
@@ -584,7 +681,11 @@ class Ipv6AddressGroupUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    ipv6_addresses: list[MemberRef] | None = Field(None, alias="ipv6Addresses")
+    ipv6_addresses: list[MemberRef] | None = Field(
+        None,
+        validation_alias=AliasChoices("ipv6_addresses", "ipv6Addresses"),
+        serialization_alias="ipv6Addresses",
+    )
 
 
 class Ipv6AddressGroupListInput(ListQuery):
@@ -688,7 +789,10 @@ class MacAddressCreateSingle(_InputModel):
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
-    mac_address: MacAddressString = Field(alias="macAddress")
+    mac_address: MacAddressString = Field(
+        validation_alias=AliasChoices("mac_address", "macAddress"),
+        serialization_alias="macAddress",
+    )
 
 
 class MacAddressCreateList(_InputModel):
@@ -697,7 +801,10 @@ class MacAddressCreateList(_InputModel):
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     mac_addresses: list[MacAddressString] = Field(
-        alias="macAddresses", min_length=1, max_length=1000
+        min_length=1,
+        max_length=1000,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
     )
 
     @model_validator(mode="after")
@@ -726,15 +833,23 @@ class MacAddressUpdateInput(_InputModel):
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
-    mac_address: MacAddressString | None = Field(None, alias="macAddress")
+    mac_address: MacAddressString | None = Field(
+        None,
+        validation_alias=AliasChoices("mac_address", "macAddress"),
+        serialization_alias="macAddress",
+    )
     mac_addresses: list[MacAddressString] | None = Field(
-        None, alias="macAddresses", min_length=1, max_length=1000
+        None,
+        min_length=1,
+        max_length=1000,
+        validation_alias=AliasChoices("mac_addresses", "macAddresses"),
+        serialization_alias="macAddresses",
     )
 
     @model_validator(mode="after")
     def _at_most_one_shape(self) -> Self:
         if self.mac_address is not None and self.mac_addresses is not None:
-            raise ValueError("provide at most one of macAddress and macAddresses")
+            raise ValueError("provide at most one of mac_address and mac_addresses")
         return self
 
 
@@ -1186,28 +1301,51 @@ class TcpUdpServiceDetail(_InputModel):
     """A TCP or UDP service detail entry."""
 
     protocol: Literal["tcp", "udp"]
-    source_port: ServicePortRange | None = Field(None, alias="sourcePort")
-    destination_port: ServicePortRange | None = Field(None, alias="destinationPort")
+    source_port: ServicePortRange | None = Field(
+        None,
+        validation_alias=AliasChoices("source_port", "sourcePort"),
+        serialization_alias="sourcePort",
+    )
+    destination_port: ServicePortRange | None = Field(
+        None,
+        validation_alias=AliasChoices("destination_port", "destinationPort"),
+        serialization_alias="destinationPort",
+    )
 
 
 class IpProtocolServiceDetail(_InputModel):
     """An IP-protocol service detail entry."""
 
-    ip_protocol: IpProtocol = Field(alias="ipProtocol")
+    ip_protocol: IpProtocol = Field(
+        validation_alias=AliasChoices("ip_protocol", "ipProtocol"),
+        serialization_alias="ipProtocol",
+    )
 
 
 class Icmpv4ServiceDetail(_InputModel):
     """An ICMPv4 service detail entry; both type and code are required."""
 
-    icmp_type: IcmpType = Field(alias="icmpType")
-    icmp_code: IcmpCode = Field(alias="icmpCode")
+    icmp_type: IcmpType = Field(
+        validation_alias=AliasChoices("icmp_type", "icmpType"),
+        serialization_alias="icmpType",
+    )
+    icmp_code: IcmpCode = Field(
+        validation_alias=AliasChoices("icmp_code", "icmpCode"),
+        serialization_alias="icmpCode",
+    )
 
 
 class Icmpv6ServiceDetail(_InputModel):
     """An ICMPv6 service detail entry; both type and code are required."""
 
-    icmpv6_type: Icmpv6Type = Field(alias="icmpv6Type")
-    icmpv6_code: Icmpv6Code = Field(alias="icmpv6Code")
+    icmpv6_type: Icmpv6Type = Field(
+        validation_alias=AliasChoices("icmpv6_type", "icmpv6Type"),
+        serialization_alias="icmpv6Type",
+    )
+    icmpv6_code: Icmpv6Code = Field(
+        validation_alias=AliasChoices("icmpv6_code", "icmpv6Code"),
+        serialization_alias="icmpv6Code",
+    )
 
 
 ServiceDetail = Annotated[
@@ -1240,18 +1378,30 @@ class IpProtocolServiceDetailOutput(IpProtocolServiceDetail):
     """An IP-protocol service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
+    # Re-declared with the wire alias: the response projection keeps the contract's
+    # camelCase name in its published schema, while the request model publishes the
+    # snake_case name (M1).
+    ip_protocol: IpProtocol = Field(alias="ipProtocol")
 
 
 class Icmpv4ServiceDetailOutput(Icmpv4ServiceDetail):
     """An ICMPv4 service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
+    # Re-declared with the wire aliases so the response projection keeps the contract's
+    # camelCase names in its published schema (M1 applies to the input surface).
+    icmp_type: IcmpType = Field(alias="icmpType")
+    icmp_code: IcmpCode = Field(alias="icmpCode")
 
 
 class Icmpv6ServiceDetailOutput(Icmpv6ServiceDetail):
     """An ICMPv6 service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
+    # Re-declared with the wire aliases so the response projection keeps the contract's
+    # camelCase names in its published schema (M1 applies to the input surface).
+    icmpv6_type: Icmpv6Type = Field(alias="icmpv6Type")
+    icmpv6_code: Icmpv6Code = Field(alias="icmpv6Code")
 
 
 ServiceDetailOutput = Annotated[
@@ -1301,7 +1451,13 @@ class ServiceUpdateInput(_InputModel):
 
 
 class ServiceListInput(ListQuery):
-    """Filters for ``getAllServices``; ``type`` is the contract's enum filter."""
+    """Filters for ``getAllServices``; ``type`` is the contract's enum filter.
+
+    The appliance ignores the ``type`` query parameter (live observation, 2026-11-15: all
+    four enum values return the same mixed page), so the adapter also filters the projected
+    page client-side. The parameter is still sent because the contract declares it, and a
+    firmware that honours it makes the client-side filter a no-op.
+    """
 
     type: ServiceType | None = None
 

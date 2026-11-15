@@ -61,6 +61,9 @@ _MAX_READ_ATTEMPTS = 2
 _BACKOFF_BASE_SECONDS = 0.5
 
 #: Documented status mapping. Anything else maps to the base :class:`SophosAPIError`.
+#: 401 and 403 share :class:`SophosAuthError` because both are auth failures, but they are
+#: not the same failure: the exception keeps ``status`` so the model-facing message can say
+#: "the key is invalid" (401) instead of "the profile forbids this" (403).
 _STATUS_EXCEPTIONS: dict[int, type[SophosAPIError]] = {
     400: SophosValidationError,
     401: SophosAuthError,

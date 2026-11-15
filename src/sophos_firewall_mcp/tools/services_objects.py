@@ -138,7 +138,16 @@ class ServicesAdapter(DomainAdapter):
     # -- Services -----------------------------------------------------------------
 
     async def list_services(self, request: ServiceListInput) -> ListPage[Service]:
-        return await self._list(SERVICES_PATH, request, ListPage[Service])
+        page = await self._list(SERVICES_PATH, request, ListPage[Service])
+        if request.type is None:
+            return page
+        # The appliance ignores the contract's ``type`` query parameter (live observation,
+        # 2026-11-15), so the filter is applied to the projected page here. ``pages`` is the
+        # appliance metadata for the unfiltered collection and is preserved unchanged.
+        return ListPage[Service](
+            items=[item for item in page.items if item.type == request.type],
+            pages=page.pages,
+        )
 
     async def get_service(self, request: ObjectIdentifierInput) -> Service:
         payload = await self._get(SERVICES_PATH, request.id_or_name)
@@ -262,9 +271,12 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="List services",
         description=(
             "List one page of network services. Read-only. `type` filters by the contract "
-            "enum (tcpOrUdp, ip, icmp, icmpv6); `name_contains` and `name_not_equals` are "
-            "mutually exclusive. `page` is 1-based and `page_size` is 1-100. Returns the "
-            "page items and the appliance `pages` metadata; it never auto-paginates."
+            "enum (tcpOrUdp, ip, icmp, icmpv6); the appliance currently ignores the `type` "
+            "query parameter, so the filter is also applied client-side to the returned "
+            "page: `items` may be shorter than `page_size` and `pages` still describes the "
+            "unfiltered collection. `name_contains` and `name_not_equals` are mutually "
+            "exclusive. `page` is 1-based and `page_size` is 1-100. Returns the page items "
+            "and the appliance `pages` metadata; it never auto-paginates."
         ),
         kind=ToolKind.READ,
         handler=service_list,

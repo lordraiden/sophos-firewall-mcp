@@ -340,6 +340,73 @@ async def test_service_list_sends_the_type_filter(router: Any):
     }
 
 
+async def test_service_list_filters_the_returned_page_by_type(router: Any):
+    """H2: the appliance ignores `type`, so the adapter filters the projected page.
+
+    The page metadata is the appliance's metadata for the unfiltered collection and is
+    preserved unchanged; only `items` is narrowed.
+    """
+    items = [
+        {
+            "id": UUID,
+            "name": "ping",
+            "type": "icmp",
+            "services": [{"icmpType": "echoRequest", "icmpCode": "any"}],
+        },
+        SERVICE_ITEM,
+        {
+            "id": UUID,
+            "name": "gre",
+            "type": "ip",
+            "services": [{"ipProtocol": "gre"}],
+        },
+    ]
+    route = router.get(f"{BASE}/network/services").mock(
+        return_value=httpx.Response(200, json={"items": items, "pages": PAGES})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_list", {"request": {"type": "icmp"}})
+
+    assert result.is_error is False
+    assert [item["name"] for item in result.structured_content["items"]] == ["ping"]
+    assert result.structured_content["pages"] == PAGES
+    assert dict(route.calls.last.request.url.params)["type"] == "icmp"
+
+
+async def test_service_list_without_type_returns_the_whole_page(router: Any):
+    items = [
+        {
+            "id": UUID,
+            "name": "ping",
+            "type": "icmp",
+            "services": [{"icmpType": "echoRequest", "icmpCode": "any"}],
+        },
+        SERVICE_ITEM,
+    ]
+    router.get(f"{BASE}/network/services").mock(
+        return_value=httpx.Response(200, json={"items": items, "pages": PAGES})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_list", {"request": {}})
+
+    assert [item["name"] for item in result.structured_content["items"]] == ["ping", "web"]
+
+
+async def test_service_list_type_filter_can_empty_the_page(router: Any):
+    router.get(f"{BASE}/network/services").mock(
+        return_value=httpx.Response(200, json={"items": [SERVICE_ITEM], "pages": PAGES})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_list", {"request": {"type": "icmpv6"}})
+
+    assert result.is_error is False
+    assert result.structured_content["items"] == []
+    assert result.structured_content["pages"] == PAGES
+
+
 # -- Get contract ----------------------------------------------------------------------
 
 
@@ -728,3 +795,77 @@ def test_service_update_body_omits_unset_fields_and_keeps_an_explicit_null():
 
     assert omitted_body == {"name": "renamed"}
     assert cleared_body == {"description": None}
+
+
+# -- M1: nested input naming -----------------------------------------------------------
+
+
+def test_nested_service_detail_models_publish_snake_case_and_serialize_to_the_wire_names():
+    """M1: the service detail entries publish snake_case, dump the contract names.
+
+    The published schema is what an agent reads, so every nested property must be
+    snake_case; the wire body must still be the contract's camelCase document. The
+    response projections keep the contract's camelCase names.
+    """
+    request = ServiceCreate(
+        name="mcp-test-svc",
+        type="tcpOrUdp",
+        services=[
+            {
+                "protocol": "tcp",
+                "source_port": {"from_port": 1024, "to_port": 65535},
+                "destination_port": {"from_port": 80, "to_port": 80},
+            },
+            {"ip_protocol": "gre"},
+            {"icmp_type": "echoRequest", "icmp_code": "noCode"},
+            {"icmpv6_type": "echoRequest", "icmpv6_code": "noCode"},
+        ],
+    )
+
+    body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
+
+    assert body["services"] == [
+        {
+            "protocol": "tcp",
+            "sourcePort": {"from": 1024, "to": 65535},
+            "destinationPort": {"from": 80, "to": 80},
+        },
+        {"ipProtocol": "gre"},
+        {"icmpType": "echoRequest", "icmpCode": "noCode"},
+        {"icmpv6Type": "echoRequest", "icmpv6Code": "noCode"},
+    ]
+
+    definitions = ServiceCreate.model_json_schema(by_alias=True)["$defs"]
+    assert set(definitions["TcpUdpServiceDetail"]["properties"]) == {
+        "protocol",
+        "source_port",
+        "destination_port",
+    }
+    assert set(definitions["IpProtocolServiceDetail"]["properties"]) == {"ip_protocol"}
+    assert set(definitions["Icmpv4ServiceDetail"]["properties"]) == {"icmp_type", "icmp_code"}
+    assert set(definitions["Icmpv6ServiceDetail"]["properties"]) == {"icmpv6_type", "icmpv6_code"}
+
+    # The response projections keep the contract's camelCase names.
+    output_definitions = Service.model_json_schema(by_alias=True)["$defs"]
+    assert set(output_definitions["TcpUdpServiceDetailOutput"]["properties"]) == {
+        "protocol",
+        "sourcePort",
+        "destinationPort",
+    }
+    assert set(output_definitions["IpProtocolServiceDetailOutput"]["properties"]) == {"ipProtocol"}
+    assert set(output_definitions["Icmpv4ServiceDetailOutput"]["properties"]) == {
+        "icmpType",
+        "icmpCode",
+    }
+    assert set(output_definitions["Icmpv6ServiceDetailOutput"]["properties"]) == {
+        "icmpv6Type",
+        "icmpv6Code",
+    }
+
+    # The camelCase spelling is still accepted on input, so the alias is a choice.
+    assert ServiceUpdateInput(
+        id_or_name="web",
+        services=[{"protocol": "tcp", "sourcePort": {"from": 80, "to": 80}}],
+    ).model_dump(mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
+        "services": [{"protocol": "tcp", "sourcePort": {"from": 80, "to": 80}}]
+    }

@@ -5,6 +5,44 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-15
+
+**Breaking: input parameter names are unified on snake_case.** The 0.4.0 surface published two
+conventions (measured on the published `request` objects: 74 camelCase-only, 55 snake_case-only, 5
+mixed, 6 single-word-only and 12 parameterless tools). Every tool now publishes
+snake_case parameters (`page_size`, `name_contains`, `id_or_name`, `rule_type`, `reference_item`, …);
+the JSON body sent to the appliance is unchanged because each field keeps its wire alias. Callers that
+hard-coded `pageSize`/`nameContains`/`idOrName` must update. The published input schemas also gain
+`additionalProperties: false`, so an unknown argument is rejected instead of ignored.
+
+### Fixed
+
+- **`explain_connectivity` no longer returns a false verdict when a rule's service criterion does not
+  match** (blocker): a rule is decisive only when every projected criterion matches; the same guard
+  applies to NAT rules.
+- **`audit_firewall_rules` no longer reports in-use objects as unused** when `ip_family` restricts the
+  scan: the reference scan reads both families.
+- **`explain_connectivity` models the WAN gateway as the default route**, so internet destinations are
+  no longer reported as `no-route`.
+- **`service_list`'s `type` filter now works client-side** instead of being a silent no-op.
+- **HTTP 401 is reported as an authentication failure**, not as a permission problem; 403 keeps the
+  authorization message.
+- **`network_user_create`/`update` send `group` as a `{"name": …}` reference**, so creating a network
+  user no longer fails with 400.
+- **Built-in and list-returned identifiers are accepted** (`##ALL_RW`, names containing `/`).
+- **Audit findings are sorted by severity before truncation**, built-in objects are excluded from
+  `unused-object`, `rule_name_contains` narrows the report, and `not-verifiable` outputs include the
+  candidate rules and the missing evidence.
+- **Validation errors no longer leak internal model names or pydantic URLs.**
+- **`live_user_list` no longer names a tool that is not registered in read-only mode.**
+
+### Known limitations
+
+- Output field naming is still split (NAT/users snake_case, other domains camelCase); it will be
+  unified in a later release.
+- The remaining dogfooding findings (M9–M16, L1, L3, L6–L10) are recorded in
+  `docs/live-evidence/phase-4-feedback.md` and deferred.
+
 ## [0.4.0] - 2026-11-15
 
 **Breaking: REST-only.** The server now speaks the **Sophos Firewall Configuration REST API**

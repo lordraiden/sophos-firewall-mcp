@@ -249,7 +249,7 @@ async def test_dns_settings_get_projects_the_appliance_empty_timestamp(router: A
     )
 
     async with open_client() as client:
-        result = await client.call_tool("dns_settings_get", {"request": {}})
+        result = await client.call_tool("dns_settings_get", {})
 
     assert result.is_error is False
     assert result.structured_content["updatedAt"] is None
@@ -262,7 +262,7 @@ async def test_dns_settings_get_still_rejects_a_genuinely_malformed_payload(rout
     )
 
     async with open_client() as client:
-        result = await client.call_tool("dns_settings_get", {"request": {}})
+        result = await client.call_tool("dns_settings_get", {})
 
     assert result.is_error is True
     assert "does not match the documented schema" in result.content[0].text
