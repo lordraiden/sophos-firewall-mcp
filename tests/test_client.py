@@ -186,6 +186,21 @@ async def test_get_204_and_empty_body_return_none(router: Any) -> None:
         await client.aclose()
 
 
+async def test_unexpected_2xx_status_maps_to_api_error(router: Any) -> None:
+    path = "/firewall/rules/ipv4"
+    router.get(f"{BASE}{path}").mock(return_value=httpx.Response(202, json={"accepted": True}))
+    client = make_client()
+    try:
+        with pytest.raises(SophosAPIError) as info:
+            await client.get(path)
+    finally:
+        await client.aclose()
+
+    error = info.value
+    assert type(error) is SophosAPIError
+    assert error.status == 202
+
+
 async def test_write_error_response_is_mapped_not_ambiguous(router: Any) -> None:
     path = "/firewall/rules/ipv4"
     route = router.post(f"{BASE}{path}").mock(

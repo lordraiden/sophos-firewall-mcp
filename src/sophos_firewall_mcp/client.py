@@ -48,6 +48,9 @@ _JSON_BODY_METHODS = frozenset({"POST", "PATCH"})
 #: Statuses that are worth retrying for an idempotent read.
 _RETRYABLE_STATUSES = frozenset({502, 503, 504})
 
+#: Statuses the contract uses for a successful response (204 is handled defensively).
+_SUCCESS_STATUSES = frozenset({200, 201, 204})
+
 #: Transport failures that are safe to retry for a read: the request was not applied.
 _RETRYABLE_EXCEPTIONS = (httpx.ConnectTimeout, httpx.ReadTimeout)
 
@@ -339,7 +342,7 @@ class SophosRestClient:
 
     def _decode(self, method: str, path: str, response: httpx.Response) -> Any:
         status = response.status_code
-        if 200 <= status < 300:
+        if status in _SUCCESS_STATUSES:
             if status == 204 or not response.content:
                 return None
             try:
