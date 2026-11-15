@@ -176,7 +176,7 @@ openapi-python-client generate --path firewall_config_openapi.yaml \
 | Declared runtime dependencies | `httpx2>=2.13.1,<3`, `attrs>=22.2.0` — **no Pydantic** |
 
 **The failures hit exactly the first-release core.** Of the **96** operationIds in the first-release scope
-(§10):
+as it stood when the POC ran (the owner expanded it to 145 operations / 152 tools on 15 Nov 2026, §10):
 
 | Failure class | Count | Operations |
 |---|---|---|
@@ -238,7 +238,7 @@ stacks (`httpx2` + `httpx`) — more drift surface, not less.
 
 | Criterion | A — handwritten | B — generated | C — hybrid |
 |---|---|---|---|
-| First-release operations usable | 96/96 (by construction) | **73/96** (10 missing, 13 without success response) | 73/96 generated + handwritten core |
+| Operations usable (POC-time 96-op scope) | 96/96 (by construction) | **73/96** (10 missing, 13 without success response) | 73/96 generated + handwritten core |
 | Generated/vendored code | none | 28.8 MB, 9,180 files, 976,963 LOC | 28.8 MB + handwritten core |
 | Model framework | Pydantic v2 (same as MCP SDK) | attrs + manual converters | attrs + Pydantic + converter |
 | Transport | `httpx` (existing) | `httpx2` (new) | `httpx2` + `httpx` |
@@ -260,9 +260,9 @@ code, and do **not** generate MCP tools mechanically from the OpenAPI document.
 
 The decision is evidence-based:
 
-1. The generator cannot produce the core mutation endpoints or the core read responses (23/96 first-release
-   operations unusable), and the failure is caused by the contract's `oneOf` + `discriminator` + `$ref`
-   shape, which the project cannot change.
+1. The generator cannot produce the core mutation endpoints or the core read responses (23/96 operations of
+   the POC-time scope unusable), and the failure is caused by the contract's `oneOf` + `discriminator` +
+   `$ref` shape, which the project cannot change.
 2. The generated package is 28.8 MB / 9,180 files / 976,963 LOC for 700 operations — far more than the
    first-release surface needs, and unreviewable for security-sensitive transport code.
 3. It introduces a parallel stack (`httpx2`, `attrs`) that duplicates and conflicts with the project's
@@ -291,9 +291,9 @@ SHA-gated, deterministic operation inventory that makes manual modelling auditab
 **Negative / accepted costs**
 
 - Manual modelling effort: the bounded POC took 316 lines for 5 operations, of which ~120 are shared
-  transport and typed errors. The 96-operation first-release scope is therefore in the low thousands of
-  lines (per-operation models dominate) — bounded, reviewable, and split across #25–#31. It is still an
-  order of magnitude smaller than the 976,963-line generated package.
+  transport and typed errors. The **145-operation / 152-tool** first-release scope (§10) is therefore in the
+  low thousands of lines (per-operation models dominate) — bounded, reviewable, and split across #25–#31.
+  It is still an order of magnitude smaller than the 976,963-line generated package.
 - Model drift is possible if the YAML changes without review. Mitigated by the SHA gate in the coverage
   generator, per-operation contract tests (RESPX) and the review protocol.
 - More code to write for each new domain than "run the generator"; accepted because the generator cannot
@@ -311,7 +311,7 @@ SHA-gated, deterministic operation inventory that makes manual modelling auditab
 
 | Alternative | Why rejected |
 |---|---|
-| **B — full generated client** | 10/96 first-release endpoints not generated (all firewall/NAT create+update, address create); 13/96 success responses omitted (all firewall/NAT reads and IPsec reads); 24/32 component models missing; 28.8 MB / 9,180 files / 976,963 LOC; adds `httpx2` + `attrs`; no constraint enforcement; no pagination validation. |
+| **B — full generated client** | In the POC-time scope, 10/96 endpoints were not generated and 13/96 success responses omitted (all firewall/NAT create+update, address create; all firewall/NAT reads and IPsec reads); 24/32 component models missing; 28.8 MB / 9,180 files / 976,963 LOC; adds `httpx2` + `attrs`; no constraint enforcement; no pagination validation. |
 | **C — hybrid** | The generated model layer is missing exactly where it is needed (firewall/NAT rules); a 5-operation filtered spec still fails the same operations. It would add a second model catalog, a conversion layer and a second transport for no coverage gain. |
 | **Regenerate a subset and vendor it** | Same `oneOf` failure on the subset; vendoring generated code still adds `httpx2`/`attrs` and an unreviewable diff. |
 | **Generic HTTP proxy tool** | Violates the non-negotiable "no raw REST" invariant (PLAN.md §1, master prompt §4.2) and the MCP security model. |
@@ -425,37 +425,52 @@ read/reconciliation before any repeat.
 
 ## 10. First-release functional scope
 
-The 96 operationIds below were verified against the YAML: **all present, all unique, 0 missing**. They are
-the scope #27–#31 implement; `docs/API-COVERAGE.md` (#24/T4) carries the per-operation detail.
+**Scope revision — 15 Nov 2026.** The repository owner superseded the original v1 scope with a broader
+first-release surface (issue #24 comment; issues #27/#29/#31/#35). The new surface is **145 operations /
+152 MCP tools across 11 domains**. It adds MAC address CRUD, country-group read-only, VLAN-only interface
+writes, the network-architecture read surface, the #35 audit tools, and firewall enable/disable + clone
+tools. PLAN.md §4's initial per-domain table is superseded by the issues for the first release; this ADR
+records the revised scope only and does not re-open the client decision (§6), which is unaffected.
 
-| Domain | # | operationIds |
-|---|---|---|
-| Firewall rules IPv4/IPv6 | 12 | `getAllFirewallRulesIpv4/Ipv6`, `getFirewallRuleIpv4/Ipv6`, `createFirewallRuleIpv4/Ipv6`, `updateFirewallRuleIpv4/Ipv6`, `deleteFirewallRuleIpv4/Ipv6`, `moveFirewallRuleIpv4/Ipv6` |
-| NAT rules IPv4/IPv6 | 12 | `getAllNatRulesIpv4/Ipv6`, `getNatRuleIpv4/Ipv6ByIdOrName`, `createNatRuleIpv4/Ipv6`, `updateNatRuleIpv4/Ipv6ByIdOrName`, `deleteNatRuleIpv4/Ipv6ByIdOrName`, `moveNatRuleIpv4/Ipv6` |
-| Addresses IPv4 | 5 | `getAllIpAddresses`, `getIpAddressByIdOrName`, `createIpAddress`, `updateIpAddressByIdOrName`, `deleteIpAddressByIdOrName` |
-| Addresses IPv6 | 5 | `getAllIpv6Addresses`, `getIpv6AddressByIdOrName`, `createIpv6Address`, `updateIpv6AddressByIdOrName`, `deleteIpv6AddressByIdOrName` |
-| Addresses FQDN | 5 | `getAllFqdns`, `getFqdnByIdOrName`, `createFqdn`, `updateFqdnByIdOrName`, `deleteFqdnByIdOrName` |
-| Address groups IPv4 | 5 | `getAllIpv4AddressGroups`, `getIpv4AddressGroupByIdOrName`, `createIpv4AddressGroup`, `updateIpv4AddressGroupByIdOrName`, `deleteIpv4AddressGroupByIdOrName` |
-| Address groups IPv6 | 5 | `getAllIpv6AddressGroups`, `getIpv6AddressGroupByIdOrName`, `createIpv6AddressGroup`, `updateIpv6AddressGroupByIdOrName`, `deleteIpv6AddressGroupByIdOrName` |
-| Address groups FQDN | 5 | `getAllFqdnGroups`, `getFqdnGroupByIdOrName`, `createFqdnGroup`, `updateFqdnGroupByIdOrName`, `deleteFqdnGroupByIdOrName` |
-| Services | 5 | `getAllServices`, `getServiceByIdOrName`, `createService`, `updateServiceByIdOrName`, `deleteServiceByIdOrName` |
-| Service groups | 5 | `getAllServiceGroups`, `getServiceGroupByIdOrName`, `createServiceGroup`, `updateServiceGroupByIdOrName`, `deleteServiceGroupByIdOrName` |
-| Users | 6 | `getUsers`, `getNetworkUsers`, `getNetworkUser`, `createNetworkUser`, `updateNetworkUser`, `deleteNetworkUser` |
-| Live sessions | 2 | `getLiveUsers`, `disconnectLiveUser` |
-| VPN (read-only) | 20 | `getProfiles`, `getProfile`, `getFailovergroups`, `getFailovergroup`, `listIpsecConnectionsIpv4`, `listIpsecPolicyBasedConnectionsIpv4`, `getPolicyBasedIpsecConnectionIpv4`, `listIpsecRouteBasedConnectionsIpv4`, `getRouteBasedIpsecConnectionIpv4`, `getIpsecSiteToSiteLiveConnectionsIpv4`, `getIpsecRemoteAccessVpnSettings`, `getRemoteAccessPolicies`, `getRemoteAccessPolicy`, `listBookmarkGroups`, `getBookmarkGroup`, `getBookmarks`, `getBookmark`, `listClientlessPolicies`, `getClientlessPolicy`, `getSslvpnGlobalSettings` |
-| Interfaces (read-only) | 2 | `listNetworkInterfaces`, `getNetworkInterface` |
-| Status (read-only) | 2 | `getDnsProtectionStatus`, `getCellularWanStatus` |
-| **Total** | **96** | — |
+The 145 operationIds below were verified against the parsed YAML (700 operations): **all present, all
+unique, 0 missing, 0 duplicate**. `docs/API-COVERAGE.md` (#24/T4) carries the per-operation detail.
 
-> The `X/Ipv6` shorthand above expands to `X` and the corresponding `Ipv6` operationId (for example
-> `getAllFirewallRulesIpv4` and `getAllFirewallRulesIpv6`). The 96 exact IDs were checked individually
-> against the parsed document: all present, all unique, 0 missing.
+| Domain | Ops | Tools | operationIds |
+|---|---|---|---|
+| Firewall rules IPv4/IPv6 | 12 | 16 | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getFirewallRuleIpv4`, `getFirewallRuleIpv6`, `createFirewallRuleIpv4`, `createFirewallRuleIpv6`, `updateFirewallRuleIpv4`, `updateFirewallRuleIpv6`, `deleteFirewallRuleIpv4`, `deleteFirewallRuleIpv6`, `moveFirewallRuleIpv4`, `moveFirewallRuleIpv6` |
+| NAT rules IPv4/IPv6 | 12 | 12 | `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getNatRuleIpv4ByIdOrName`, `getNatRuleIpv6ByIdOrName`, `createNatRuleIpv4`, `createNatRuleIpv6`, `updateNatRuleIpv4ByIdOrName`, `updateNatRuleIpv6ByIdOrName`, `deleteNatRuleIpv4ByIdOrName`, `deleteNatRuleIpv6ByIdOrName`, `moveNatRuleIpv4`, `moveNatRuleIpv6` |
+| Addresses and groups | 37 | 37 | `getAllIpAddresses`, `getIpAddressByIdOrName`, `createIpAddress`, `updateIpAddressByIdOrName`, `deleteIpAddressByIdOrName`, `getAllIpv6Addresses`, `getIpv6AddressByIdOrName`, `createIpv6Address`, `updateIpv6AddressByIdOrName`, `deleteIpv6AddressByIdOrName`, `getAllFqdns`, `getFqdnByIdOrName`, `createFqdn`, `updateFqdnByIdOrName`, `deleteFqdnByIdOrName`, `getAllIpv4AddressGroups`, `getIpv4AddressGroupByIdOrName`, `createIpv4AddressGroup`, `updateIpv4AddressGroupByIdOrName`, `deleteIpv4AddressGroupByIdOrName`, `getAllIpv6AddressGroups`, `getIpv6AddressGroupByIdOrName`, `createIpv6AddressGroup`, `updateIpv6AddressGroupByIdOrName`, `deleteIpv6AddressGroupByIdOrName`, `getAllFqdnGroups`, `getFqdnGroupByIdOrName`, `createFqdnGroup`, `updateFqdnGroupByIdOrName`, `deleteFqdnGroupByIdOrName`, `getAllMacAddresses`, `getMacAddressByIdOrName`, `createMacAddress`, `updateMacAddressByIdOrName`, `deleteMacAddressByIdOrName`, `getAllCountryGroups`, `getCountryGroupByIdOrName` |
+| Services and service groups | 10 | 10 | `getAllServices`, `getServiceByIdOrName`, `createService`, `updateServiceByIdOrName`, `deleteServiceByIdOrName`, `getAllServiceGroups`, `getServiceGroupByIdOrName`, `createServiceGroup`, `updateServiceGroupByIdOrName`, `deleteServiceGroupByIdOrName` |
+| Users | 6 | 6 | `getUsers`, `getNetworkUsers`, `getNetworkUser`, `createNetworkUser`, `updateNetworkUser`, `deleteNetworkUser` |
+| Live users | 2 | 2 | `getLiveUsers`, `disconnectLiveUser` |
+| IPsec VPN (read-only) | 11 | 11 | `getProfiles`, `getProfile`, `getFailovergroups`, `getFailovergroup`, `listIpsecConnectionsIpv4`, `listIpsecPolicyBasedConnectionsIpv4`, `getPolicyBasedIpsecConnectionIpv4`, `listIpsecRouteBasedConnectionsIpv4`, `getRouteBasedIpsecConnectionIpv4`, `getIpsecSiteToSiteLiveConnectionsIpv4`, `getIpsecRemoteAccessVpnSettings` |
+| SSL VPN (read-only) | 9 | 9 | `getRemoteAccessPolicies`, `getRemoteAccessPolicy`, `listBookmarkGroups`, `getBookmarkGroup`, `getBookmarks`, `getBookmark`, `listClientlessPolicies`, `getClientlessPolicy`, `getSslvpnGlobalSettings` |
+| Network architecture | 44 | 44 | **41 reads:** `listNetworkInterfaces`, `getNetworkInterface`, `getAllZones`, `getZone`, `getGatewaysIpv4`, `getWanGatewaysIpv4`, `getWanGatewayIpv4ByIdOrName`, `getCustomGatewaysIpv4`, `getCustomGatewayIpv4ByIdOrName`, `getGatewaysIpv6`, `getWanGatewaysIpv6`, `getWanGatewayIpv6ByIdOrName`, `getCustomGatewaysIpv6`, `getCustomGatewayIpv6ByIdOrName`, `getUnicastRoutesIPv4`, `getUnicastRouteIPv4`, `getUnicastRoutesIPv6`, `getUnicastRouteIPv6`, `listSdwanRoutesIpv4`, `getSdwanRouteIpv4`, `listSdwanRoutesIpv6`, `getSdwanRouteIpv6`, `listDhcpServersIpv4`, `getDhcpServerIpv4`, `listDhcpServersIpv6`, `getDhcpServerIpv6`, `getDhcpLeasesIpv4`, `getDhcpLeasesIpv6`, `getAllDhcpRelayIpv4`, `getDhcpRelayByIdIpv4`, `getAllDhcpRelayIpv6`, `getDhcpRelayByIdIpv6`, `getDnsSettings`, `getAllDnsHostEntries`, `getDnsHostEntryById`, `getAllDnsRequestRoutes`, `getDnsRequestRouteById`, `getAllStaticNeighborIpv4s`, `getStaticNeighborIpv4`, `getAllStaticNeighborIpv6s`, `getStaticNeighborIpv6`. **3 VLAN-only writes:** `createNetworkInterface`, `updateNetworkInterface`, `deleteNetworkInterface` |
+| Network status | 2 | 2 | `getDnsProtectionStatus`, `getCellularWanStatus` |
+| Audit (#35) | 0 | 3 | No new operations. Composite, read-only tools: `audit_firewall_rules`, `explain_connectivity`, `find_object_usage` |
+| **Total** | **145** | **152** | — |
+
+The four extra firewall tools are not separate operations: `firewall_rule_set_enabled_ipv4/ipv6` is a
+`PATCH enabled` on the matching `updateFirewallRuleIpv4/Ipv6` operation, and
+`firewall_rule_clone_ipv4/ipv6` is a `get` + `create` composition. The three audit tools are pure
+compositions of read operations already listed above.
 
 **Explicitly out of first-release scope** (classified in `API-COVERAGE.md`, not registered as tools):
-all `bulkDelete*` operations; WAF rules (`ruleType: waf`); MAC and country address objects/groups;
-administrator CRUD and user groups; `networkUserLiveLogin`/`networkUserLiveLogout`; interface
-create/update/delete; all VPN and SSL VPN mutations; `importTrustedMacs` (the only `multipart/form-data`
-operation); any "firewall health" tool (no such REST endpoint).
+
+- all `bulkDelete*` operations (including MAC bulk delete), and WAF rules (`ruleType: waf`);
+- administrator CRUD, user groups, `networkUserLiveLogin`/`networkUserLiveLogout`;
+- all IPsec and SSL VPN mutations (the VPN surface is read-only in v1);
+- `importTrustedMacs` (the only `multipart/form-data` operation);
+- logs (the contract has no log-query endpoint), IPS, and any "firewall health" tool (no such REST
+  endpoint);
+- mutation operations outside the VLAN-only interface writes: zones, gateways, static unicast routes,
+  SD-WAN routes (including move), DHCP servers/relays, DNS settings/host entries/request routes, static
+  neighbors, router advertisements, multicast routes, mDNS and neighbor settings, and country-group
+  mutations.
+
+**Accepted regression.** System information (firmware version, serial number, uptime) and service status
+have no REST endpoint in this contract; they are not migrated and no placeholder tool is advertised.
+
 
 ---
 
