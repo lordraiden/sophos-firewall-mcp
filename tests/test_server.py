@@ -25,11 +25,11 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 
-import jsonschema
 import pytest
 from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
+
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -63,6 +63,10 @@ from sophos_firewall_mcp.tools import (
     register_tool,
     tool_error,
 )
+
+# jsonschema is a transitive dependency of mcp, not a declared dev dependency; skip the
+# schema-validation test rather than fail collection if it ever disappears.
+jsonschema = pytest.importorskip("jsonschema")
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
 

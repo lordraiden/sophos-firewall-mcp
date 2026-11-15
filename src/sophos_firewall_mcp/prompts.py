@@ -141,8 +141,8 @@ def _explain_message(
    {_request(payload)}
 
    An endpoint is exactly one of `ip`, `zone` or `fqdn`; both endpoints above are read as
-   `{kind}`. The service is required: `name` is the service object name, and `protocol`/`port`
-   refine it when the flow is described that way.
+   `{kind}`. The service is required: `name` is the service object name. `protocol`/`port` are
+   recorded in the result summary but do not change the service match, which uses the name.
 
 2. Read the result in order: the resolved source interface and zone, the resolved
    destination, the matching firewall rules in evaluation order with the first decisive

@@ -215,7 +215,7 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **152 tools in a single response**: **807,743 bytes**, roughly **202k tokens**
+`tools/list` returns all **152 tools in a single response**: **807,900 bytes**, roughly **202k tokens**
 at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO
 with the legacy `initialize` handshake, including the trailing newline; the 2026-07-28 era adds a few
 dozen bytes of envelope. There is no pagination cursor, so a client
