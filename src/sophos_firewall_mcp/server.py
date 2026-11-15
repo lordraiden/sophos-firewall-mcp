@@ -12,7 +12,7 @@ model-controlled actions (:mod:`sophos_firewall_mcp.tools`), resources are
 application-controlled passive context (:mod:`sophos_firewall_mcp.resources`) and prompts
 are user-controlled templates (:mod:`sophos_firewall_mcp.prompts`). The resources carry the
 REST API surface, the coverage matrix, the read-only policy and the calling conventions
-once, instead of repeating them in 152 tool descriptions; the prompts carry the three
+once, instead of repeating them in 112 tool descriptions; the prompts carry the three
 analysis workflows (audit the rule base, explain a flow, find unused objects). All three
 catalogs are static for the process lifetime.
 
@@ -133,10 +133,10 @@ _CATALOG_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
 
 #: Server-level instructions shown to the model. Domain tools carry their own.
 #:
-#: Two conventions are stated here, once, instead of in 144 tool descriptions: the
-#: ``request`` wrapper every tool with arguments uses, and the fact that a successful
-#: result carries the same payload twice (``content`` text and ``structuredContent``).
-#: Both are properties of this server's calling convention, not of any one domain.
+#: One convention is stated here, once, instead of in 105 tool descriptions: a successful
+#: result carries the same payload twice (``content`` text and ``structuredContent``), so a
+#: client reads one of them. It is a property of this server's calling convention, not of
+#: any one domain.
 INSTRUCTIONS = (
     "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
     "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
