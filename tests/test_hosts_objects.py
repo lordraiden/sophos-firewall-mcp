@@ -643,6 +643,36 @@ async def test_get_percent_encodes_the_identifier(router: Any):
     )
 
 
+@pytest.mark.parametrize(
+    ("identifier", "encoded"),
+    [
+        ("##ALL_RW", "%23%23ALL_RW"),
+        ("FQDN Group - Pipeline/parsing errors", "FQDN%20Group%20-%20Pipeline%2Fparsing%20errors"),
+    ],
+)
+async def test_get_accepts_builtin_and_slash_names(
+    router: Any, identifier: str, encoded: str
+) -> None:
+    """M3: a name the list tools return must be usable by the get tools.
+
+    Built-in names start with ``##`` and some names contain ``/``; the adapter
+    percent-encodes the path segment, so both are addressable.
+    """
+    route = router.get(f"{BASE}/network/addresses/ipv4/{encoded}").mock(
+        return_value=httpx.Response(200, json={**IPV4_ITEM, "name": identifier})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("address_get_ipv4", {"request": {"id_or_name": identifier}})
+
+    assert result.is_error is False
+    assert (
+        route.calls.last.request.url.raw_path
+        == f"/api/firewall-config/v1/network/addresses/ipv4/{encoded}".encode()
+    )
+    assert result.structured_content["address"]["name"] == identifier
+
+
 # -- Create contract -------------------------------------------------------------------
 
 
@@ -1089,7 +1119,16 @@ def test_object_id_or_name_accepts_a_uuid_and_a_name():
     assert ObjectIdentifierInput(id_or_name="web server").id_or_name == "web server"
 
 
-@pytest.mark.parametrize("value", ["", "bad,name", "bad;name", " leading", "trailing "])
+@pytest.mark.parametrize(
+    "value",
+    ["##ALL_RW", "##ALL_IPSEC_RW6", "FQDN Group - Pipeline/parsing errors", "a/b", "a#b"],
+)
+def test_object_id_or_name_accepts_builtin_and_slash_names(value: str):
+    """M3: every name the list tools return must be accepted by the get tools."""
+    assert ObjectIdentifierInput(id_or_name=value).id_or_name == value
+
+
+@pytest.mark.parametrize("value", ["", "bad,name", "bad;name", " leading", "trailing ", "a..b"])
 def test_object_id_or_name_rejects_an_invalid_value(value: str):
     with pytest.raises(ValidationError):
         ObjectIdentifierInput(id_or_name=value)

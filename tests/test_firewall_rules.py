@@ -1070,7 +1070,13 @@ def test_object_name_or_id_accepts_a_uuid_and_a_name() -> None:
     assert validate_object_name_or_id("allow-lan-to-wan") == "allow-lan-to-wan"
 
 
-@pytest.mark.parametrize("value", ["a/b", "a\\b", "..", "bad,name", " leading"])
+@pytest.mark.parametrize("value", ["##ALL_RW", "a/b", "a\\b", "a#b", "a?b"])
+def test_object_name_or_id_accepts_percent_encoded_identifiers(value: str) -> None:
+    # The adapters percent-encode the path segment, so these names are addressable (M3).
+    assert validate_object_name_or_id(value) == value
+
+
+@pytest.mark.parametrize("value", ["..", "a..b", "a%2eb", "bad,name", " leading"])
 def test_object_name_or_id_rejects_unsafe_identifiers(value: str) -> None:
     with pytest.raises(ValueError):
         validate_object_name_or_id(value)

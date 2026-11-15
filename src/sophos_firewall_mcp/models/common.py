@@ -110,35 +110,37 @@ def validate_object_name(value: str) -> str:
 ObjectName = Annotated[str, AfterValidator(validate_object_name)]
 
 
-#: Characters that cannot appear in a value used as one URL path segment.
-_PATH_UNSAFE = ("/", "\\", "..", "?", "#", "://")
-
-
 def validate_object_name_or_id(value: str) -> str:
     """Validate the documented ``sfos-object-name-or-id`` format for a path identifier.
 
     A UUID is accepted as an identifier; anything else must be a valid object name **and**
-    usable as a single URL path segment: the shared client rejects ``/``, ``\\``, ``..``,
-    ``?`` and ``#`` in a path, so a name carrying one of them would fail later with a
-    transport-level error instead of a clear validation error. GET, PATCH and DELETE paths
-    use this form, so the same value may be a name or an id.
+    addressable as a single URL path segment. The adapters percent-encode the segment with
+    ``quote(value, safe="")``, so characters such as ``/``, ``?``, ``#`` and ``\\`` are
+    safe and are accepted: the appliance returns built-in names like ``##ALL_RW`` and
+    names containing ``/`` (for example ``FQDN Group - Pipeline/parsing errors``) from its
+    list operations, and a get or usage lookup must accept every name a list returns.
+    Only ``..`` and ``%2e`` are rejected: ``..`` survives encoding and the shared client
+    refuses it in a path, and ``%2e`` is refused by the client as defence in depth. GET,
+    PATCH and DELETE paths use this form, so the same value may be a name or an id.
 
     Raises:
-        ValueError: The value is neither a UUID nor a usable object name.
+        ValueError: The value is neither a UUID nor an addressable object name.
     """
     if not isinstance(value, str):
         raise ValueError("object identifier must be a string")
     if _UUID_PATTERN.fullmatch(value):
         return value
     name = validate_object_name(value)
+    if ".." in name:
+        raise ValueError(
+            "object identifier must not contain '..': it is not addressable as a single "
+            "URL path segment; use the object's UUID instead"
+        )
     if "%2e" in name.lower():
-        raise ValueError("object identifier must not contain percent-encoded dots ('%2e')")
-    for token in _PATH_UNSAFE:
-        if token in name:
-            raise ValueError(
-                "object identifier must be usable as a single URL path segment; "
-                f"it must not contain {token!r}"
-            )
+        raise ValueError(
+            "object identifier must not contain percent-encoded dots ('%2e'); use the "
+            "object's UUID instead"
+        )
     return name
 
 

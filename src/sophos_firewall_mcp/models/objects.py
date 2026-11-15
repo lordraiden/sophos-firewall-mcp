@@ -1373,7 +1373,13 @@ class ServiceUpdateInput(_InputModel):
 
 
 class ServiceListInput(ListQuery):
-    """Filters for ``getAllServices``; ``type`` is the contract's enum filter."""
+    """Filters for ``getAllServices``; ``type`` is the contract's enum filter.
+
+    The appliance ignores the ``type`` query parameter (live observation, 2026-11-15: all
+    four enum values return the same mixed page), so the adapter also filters the projected
+    page client-side. The parameter is still sent because the contract declares it, and a
+    firmware that honours it makes the client-side filter a no-op.
+    """
 
     type: ServiceType | None = None
 

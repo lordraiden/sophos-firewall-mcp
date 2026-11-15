@@ -340,6 +340,73 @@ async def test_service_list_sends_the_type_filter(router: Any):
     }
 
 
+async def test_service_list_filters_the_returned_page_by_type(router: Any):
+    """H2: the appliance ignores `type`, so the adapter filters the projected page.
+
+    The page metadata is the appliance's metadata for the unfiltered collection and is
+    preserved unchanged; only `items` is narrowed.
+    """
+    items = [
+        {
+            "id": UUID,
+            "name": "ping",
+            "type": "icmp",
+            "services": [{"icmpType": "echoRequest", "icmpCode": "any"}],
+        },
+        SERVICE_ITEM,
+        {
+            "id": UUID,
+            "name": "gre",
+            "type": "ip",
+            "services": [{"ipProtocol": "gre"}],
+        },
+    ]
+    route = router.get(f"{BASE}/network/services").mock(
+        return_value=httpx.Response(200, json={"items": items, "pages": PAGES})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_list", {"request": {"type": "icmp"}})
+
+    assert result.is_error is False
+    assert [item["name"] for item in result.structured_content["items"]] == ["ping"]
+    assert result.structured_content["pages"] == PAGES
+    assert dict(route.calls.last.request.url.params)["type"] == "icmp"
+
+
+async def test_service_list_without_type_returns_the_whole_page(router: Any):
+    items = [
+        {
+            "id": UUID,
+            "name": "ping",
+            "type": "icmp",
+            "services": [{"icmpType": "echoRequest", "icmpCode": "any"}],
+        },
+        SERVICE_ITEM,
+    ]
+    router.get(f"{BASE}/network/services").mock(
+        return_value=httpx.Response(200, json={"items": items, "pages": PAGES})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_list", {"request": {}})
+
+    assert [item["name"] for item in result.structured_content["items"]] == ["ping", "web"]
+
+
+async def test_service_list_type_filter_can_empty_the_page(router: Any):
+    router.get(f"{BASE}/network/services").mock(
+        return_value=httpx.Response(200, json={"items": [SERVICE_ITEM], "pages": PAGES})
+    )
+
+    async with open_client() as client:
+        result = await client.call_tool("service_list", {"request": {"type": "icmpv6"}})
+
+    assert result.is_error is False
+    assert result.structured_content["items"] == []
+    assert result.structured_content["pages"] == PAGES
+
+
 # -- Get contract ----------------------------------------------------------------------
 
 
