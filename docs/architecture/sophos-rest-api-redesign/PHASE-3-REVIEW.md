@@ -231,3 +231,67 @@ trust.
 - **The `Security` and `Publish Docker image` workflows are disabled at the repository level.** A file
   change cannot fix that; it needs an owner action, and it will silently regress if the repository is
   transferred or forked again.
+
+---
+
+## Re-check after fixes
+
+**Re-checked HEAD:** `8d1f002` — three commits on top of the reviewed `6b981bf` (`3cec372`,
+`1460191`, `8d1f002`). **Scope:** focused re-check of the 13 findings, not a second full review. The
+verdict and findings above are kept exactly as issued.
+
+### Status of the original findings
+
+| # | Severity | Status | Evidence |
+|---|---|---|---|
+| 1 | Critical | **Partially closed — publication still blocked** | The full key is gone from the working tree (`grep -rn "sfos_9a506adf_lFCcCZMhrG1LimJzy"` → no match outside `.git`), replaced by `<REDACTED — ask the owner>` at `LAB-ACCESS.md:32,33,43`, and the new notice at `LAB-ACCESS.md:3-8` is accurate: it states the value was removed from the working tree, remains in git history (`cb8dbe3`) and that **rotation, not deletion, is the remediation**. The key is still valid until the owner rotates it, so the exposure is not remediated. |
+| 2 | High | **Closed** | `gh workflow list --all` → `Security active`; the workflow now runs on the PR and both jobs are green on `8d1f002`: `Dependency audit (locked resolution)` pass (17 s) and `SAST (Semgrep)` pass (39 s). |
+| 3 | High | **Partially closed** | `gh workflow list --all` → `Publish Docker image active`. But `docker-publish.yml` triggers only on `push` (`main`, `v*`) and has no `pull_request` trigger, so a PR run does **not** exercise it (`…/docker-publish.yml/runs` → `total_count: 0`). It is first exercised by the merge to `main` (development job) or the `v*` tag (release job); the release checklist should say so. |
+| 4 | Medium | **Closed** | `live.yml:55-79` now requires `SOPHOS_HOST`, `SOPHOS_PORT` and one of `SOPHOS_API_KEY`/`SOPHOS_API_KEY_FILE`; `live.yml:91-121` parses `--junitxml` and fails on zero collected tests or zero executed tests. I simulated the gate with three fixtures: normal → OK, all-skipped → FAIL, zero-tests → FAIL. |
+| 5 | Medium | **Closed** | `lint.yml:45-47` adds a `Coverage drift` step running `generate_coverage.py --check`; the check is green. |
+| 6 | Medium | **Closed** | The new comment on #32 ("Phase-3 review outcome and owner decisions, 15 Nov 2026") records the review outcome, the owner decision to publish 0.4.0 with the inconsistency documented and unify in 0.5.0, and the measured split. |
+| 7 | Low | **Closed** | `scripts/generate_coverage.py:1504-1511` splits `live_evidence` on commas and emits one link per path; `docs/API-COVERAGE.md:277` now renders two separate, valid links. |
+| 8 | Low | **Closed** | `tests/test_mcp_e2e.py:379-416` adds a synthetic tool that records `CancelledError` and the test waits for that server-side signal, so a server that swallowed the cancellation now fails instead of passing. Falsifiable. |
+| 9 | Low | **Closed** | The docstring no longer claims JSON-Schema validation; `tests/test_mcp_e2e.py:248-249` asserts required ⊆ `structured_content` ⊆ declared properties, plus the item-level equivalent. |
+| 10 | Low | **Closed** | `docs/live-evidence/phase-3-live-matrix.md:222-227` states the counting method and the firewall row now reads 12 mutations; the column sums to 54 (12+8+21+6+3+1+0+0+3+0+0). |
+| 11 | Low | **Still open** | `README.md:293` is unchanged: "No example in this repository disables verification", while `docs/live-evidence/README.md:79` and `docs/live-evidence/phase-3-live-matrix.md:33` still set `SOPHOS_VERIFY_SSL=false`. |
+| 12 | Low | **Still open** | The numbers changed to 74/55/5/6/12 but are still not reproducible. Measured through the SDK `Client` on the published schemas (resolving `$ref` and `oneOf`): **75** camelCase-only, **57** snake_case-only, **3** mixed, **8** single-word-only, **9** no-parameter (8 tools with no `request` property + 1 empty `request` model) = 152. The "12 parameterless" figure also contradicts the e2e test's own "eight operations declare no parameters". |
+| 13 | Low | **Still open** | `docs/release/RELEASE-0.4.0.md:274` is unchanged: "Record the current `latest` digest first", although no `latest` tag exists for the first release. |
+
+### Gates re-run on `8d1f002`
+
+| Gate | Command | Result |
+|---|---|---|
+| Tests | `uv run --no-sync pytest -q` | **962 passed, 100 skipped** (138.4 s) |
+| Types | `uv run --no-sync mypy src/sophos_firewall_mcp` | clean, 26 files |
+| Lint | `uv run --no-sync flake8 src/sophos_firewall_mcp tests scripts` | clean |
+| Format | `uv run --no-sync black --check src tests scripts` | 50 files unchanged |
+| Coverage drift | `uv run --no-sync python scripts/generate_coverage.py --check` | up to date |
+| Lock | `uv lock --check` | resolves 55 packages |
+| CI on the PR | `gh pr checks 38` | Tests 3.11–3.14, Lint, Docker build, **Dependency audit**, **SAST (Semgrep)** all pass |
+
+### New findings
+
+| # | Severity | File:line | Finding | Evidence | Fix |
+|---|---|---|---|---|---|
+| N1 | Low | `docs/architecture/sophos-rest-api-redesign/LAB-ACCESS.md:11,93,96` | The key was removed but the file now contradicts itself: line 11 ("la credencial se registra en claro en este repositorio") and line 93 ("Esta credencial está en claro en el repositorio") still assert the credential is in clear, and line 96 still says the owner "rotará la clave al terminar las pruebas" instead of "must rotate now". | The new notice at lines 3-8 says the value was removed; the three later statements were not updated. | Rewrite lines 11, 93 and 96 to match the notice: the credential is **not** in the repository, it must be rotated immediately, and the placeholder is the only value that may be committed. |
+
+### Re-check verdict
+
+**CHANGES REQUIRED stands, but the blocking set is now small and mostly operational.**
+
+- Findings **2, 4, 5, 6, 7, 8, 9, 10 are closed** and verified (finding 2 is now proven in CI, not just
+  locally).
+- Finding **1 is only partially closed**: the working tree is clean and the notice is accurate, but the
+  key remains in history and valid, so **publication stays blocked until the owner confirms rotation**.
+  That is an owner action, not a code change.
+- Finding **3 is partially closed**: the workflow is enabled, but it cannot be exercised by a PR; it
+  will first run on the merge to `main` or on the `v*` tag. The release checklist should state that.
+- Findings **11, 12, 13 are still open** — all Low, all documentation-only, and none of them blocks
+  integration. They should be closed before the release notes are published, because they are factual
+  claims in user-facing documents.
+- New finding **N1** (Low) is a self-contradiction introduced by the key removal; it should be fixed in
+  the same pass as the rotation.
+
+No new Critical or High finding was introduced by the fixes. The code, the tests, the CI pipeline and
+the container are unchanged in substance and remain green.
