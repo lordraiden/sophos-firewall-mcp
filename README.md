@@ -316,10 +316,10 @@ administrator profile for any deployment that only needs inspection.
   change from 0.4.0, where 79 tools published the wire names; callers that hard-coded `pageSize` /
   `nameContains` / `idOrName` must update. The published schemas also set `additionalProperties: false`,
   so an unknown argument is rejected instead of ignored.
-- **Target firmware build is not verified.** The contract exposes no version endpoint
-  (`getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`), so the SFOS build
-  behind the checked-in OpenAPI file is unknown. This project makes **no firmware compatibility claim**;
-  verify against your own appliance before relying on a tool.
+- **Firmware compatibility is limited to the tested build.** The lab appliance runs **SFOS 23.0.0 GA-Build371**
+  (owner-provided; the API exposes no version endpoint). The live evidence applies to that build; no
+  general firmware compatibility claim is made for other SFOS versions. Verify against your own
+  appliance before relying on a tool.
 - **Live write validation is limited.** The 0.5.0 cycle validated create/update/delete against the lab
   appliance for an IPv4 address, an FQDN address, a service, a MAC address, a network user, a firewall
   rule and a NAT rule, with every created object deleted and the collection counts restored

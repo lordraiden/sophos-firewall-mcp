@@ -750,7 +750,7 @@ live_observations:
     statement: >-
       Phase-3 read-only run (2026-11-15, `SOPHOS_READ_ONLY_MODE=true`, GET only):
       the 98 read-only tools produced 74 PASS, 24 SKIP (the appliance holds no
-      object of that kind) and 0 FAIL. Appliance model, SFOS build and API
+      object of that kind) and 0 FAIL. The appliance model and API
       allowlist source are not exposed by the API and remain unknown.
     decision: >-
       Recorded in `docs/live-evidence/phase-3-live-matrix.md`; no write
@@ -774,10 +774,10 @@ live_observations:
 
 firmware:
   status: >-
-    Unresolved. The contract exposes no version endpoint and
-    `getSystemSettings` returns only `hostname`, `loginDisclaimer` and
-    `updatedAt`. SFOS 23.0 GA Build 371 is the documented reference for the
-    REST API, not a verified target build.
+    The lab appliance runs **SFOS 23.0.0 GA-Build371** (owner-provided on 2026-11-15; the
+    contract exposes no version endpoint and `getSystemSettings` returns only
+    `hostname`, `loginDisclaimer` and `updatedAt`). The live evidence applies to
+    that build; no general firmware compatibility is claimed for other versions.
   live_evidence: "docs/live-evidence/api-smoke-2026-11-15.md, docs/live-evidence/phase-3-live-matrix.md"
 
 # ---------------------------------------------------------------------------
