@@ -16,8 +16,8 @@
 | A | **Dogfooding (read-only)**: exercise all 98 read-only tools against the lab through the installed server; record defects, UX/schema issues and error-message problems | `dogfood` | — | `docs/live-evidence/phase-4-feedback.md` + issues |
 | B | **Refinement fixes** from A | `refine` | A | code + tests + updated feedback record |
 | C | **M1 input naming unification** (0.5.0): 79 tools publish camelCase; unify on snake_case with wire aliases, add a surface test | `naming` | — | code + tests |
-| D | **Streamable HTTP transport** for the aitools stack (owner decision) | `http` | owner approval | design + implementation + security review |
-| E | **Live write validation** (needs a write key + disposable-object plan) | owner + `refine` | owner | live evidence |
+| D | ~~Streamable HTTP transport~~ — **cancelled by the owner**: the aitools stack was only considered in case the MCP required a container; it does not. The server stays stdio-only and DSH launches it. | — | — | — |
+| E | **Live write validation** — the owner confirmed the key can write rules and objects, with strict constraints: create only new `mcp-test-*` objects, never enable a rule, never edit or delete existing objects, and delete everything created before finishing. | `writes` | owner approval (given) | `docs/live-evidence/phase-4-write-validation.md` |
 | F | **Firmware build identification** | owner | — | recorded build |
 | G | **Rotate the exposed lab key** | owner | — | updated `LAB-ACCESS.md` |
 | H | **Independent review** of the phase | `reviewer4` | B, C, D | `PHASE-4-REVIEW.md` |
