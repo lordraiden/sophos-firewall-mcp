@@ -1,137 +1,137 @@
-# 01 — Fase 1: Fundación REST (#24, #25, #26)
+# 01 — Phase 1: REST foundation (#24, #25, #26)
 
-> **Antes de empezar:** lee y aplica [`00-MASTER-PROMPT.md`](./00-MASTER-PROMPT.md). Este prompt asume sus reglas (equipo, tablero, git, verificación, escalación).
+> **Before starting:** read and apply [`00-MASTER-PROMPT.md`](./00-MASTER-PROMPT.md). This prompt assumes its rules (team, board, git, verification, escalation).
 
-## Objetivo de la fase
+## Phase objective
 
-Convertir el contrato OpenAPI en una base implementable y dejar el servidor MCP listo para que cinco agentes añadan herramientas de dominio sin tocar la fundación.
+Turn the OpenAPI contract into an implementable base and leave the MCP server ready for five agents to add domain tools without touching the foundation.
 
-**Issues:** [#24](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) (auditoría/ADR/cobertura), [#25](https://github.com/lordraiden/sophos-firewall-mcp/issues/25) (cliente REST), [#26](https://github.com/lordraiden/sophos-firewall-mcp/issues/26) (fundación MCP).
+**Issues:** [#24](https://github.com/lordraiden/sophos-firewall-mcp/issues/24) (audit/ADR/coverage), [#25](https://github.com/lordraiden/sophos-firewall-mcp/issues/25) (REST client), [#26](https://github.com/lordraiden/sophos-firewall-mcp/issues/26) (MCP foundation).
 
-**No entra:** herramientas de dominio (#27–#31), hardening/release (#32), cambios de CI/Docker (fase 3), escrituras contra el laboratorio.
+**Out of scope:** domain tools (#27–#31), hardening/release (#32), CI/Docker changes (phase 3), writes against the lab.
 
-## Resultado esperado
+## Expected outcome
 
-- `docs/architecture/ADR-001-rest-client-strategy.md` con la decisión de cliente (generado vs manual) y su evidencia.
-- `docs/API-COVERAGE.md` generado de forma determinista desde el YAML, con decisiones curadas por dominio.
-- `scripts/generate_coverage.py` reproducible y con comprobación de SHA.
-- `src/sophos_firewall_mcp/client.py` REST-only, tipado, con configuración validada y errores tipados.
-- `src/sophos_firewall_mcp/server.py` con lifespan, `AppContext`, registro modular y `SOPHOS_READ_ONLY_MODE`.
-- Tests de cliente y fundación; `pytest`, `mypy`, `flake8`, `black` en verde.
-- PR de fase abierto, sin fusionar.
+- `docs/architecture/ADR-001-rest-client-strategy.md` with the client decision (generated vs manual) and its evidence.
+- `docs/API-COVERAGE.md` generated deterministically from the YAML, with curated per-domain decisions.
+- `scripts/generate_coverage.py` reproducible and SHA-checked.
+- `src/sophos_firewall_mcp/client.py` REST-only, typed, with validated configuration and typed errors.
+- `src/sophos_firewall_mcp/server.py` with lifespan, `AppContext`, modular registration, and `SOPHOS_READ_ONLY_MODE`.
+- Client and foundation tests; `pytest`, `mypy`, `flake8`, `black` green.
+- Phase PR open, not merged.
 
-## Equipo y propiedad de escritura
+## Team and write ownership
 
-| Miembro | Tarea | Escribe (exclusivo) | No toca |
+| Member | Task | Writes (exclusive) | Does not touch |
 |---|---|---|---|
 | `contract` | #24 | `docs/API-COVERAGE.md`, `docs/architecture/ADR-001-rest-client-strategy.md`, `scripts/generate_coverage.py`, `docs/live-evidence/README.md` | `src/`, `tests/`, `pyproject.toml` |
 | `client` | #25 | `src/sophos_firewall_mcp/client.py`, `config.py`, `errors.py`, `tests/test_client.py`, `tests/test_config.py` | `server.py`, `tools/`, `pyproject.toml` |
-| `foundation` | #26 | `src/sophos_firewall_mcp/server.py`, `context.py`, `tools/__init__.py`, `tests/test_server.py`, `tests/test_context.py` | `client.py`, `config.py`, `tools/<dominio>.py` |
-| `reviewer` | revisión | nada (solo informe) | todo |
-| Lead | integración | `pyproject.toml`, `uv.lock`, rama, commits de integración | código de dominio |
+| `foundation` | #26 | `src/sophos_firewall_mcp/server.py`, `context.py`, `tools/__init__.py`, `tests/test_server.py`, `tests/test_context.py` | `client.py`, `config.py`, `tools/<domain>.py` |
+| `reviewer` | review | nothing (report only) | everything |
+| Lead | integration | `pyproject.toml`, `uv.lock`, branch, integration commits | domain code |
 
-Si alguien necesita un cambio en un fichero ajeno, lo pide por `send_message`; no lo edita.
+If someone needs a change in a file they do not own, they ask via `send_message`; they do not edit it.
 
-## Grafo de tareas
+## Task graph
 
 ```text
-T1 [#24 ADR + estrategia de cliente]  ──► T2 [#25 cliente REST] ──► T3 [#26 fundación MCP]
-T4 [#24 cobertura + generador]  (paralela, bloquea fase 2)
-T5 [revisión independiente]  (bloqueada por T2, T3, T4)
+T1 [#24 ADR + client strategy]  ──► T2 [#25 REST client] ──► T3 [#26 MCP foundation]
+T4 [#24 coverage + generator]  (parallel, blocks phase 2)
+T5 [independent review]  (blocked by T2, T3, T4)
 ```
 
-- **T1 bloquea T2**: sin decisión de cliente no se implementa el transporte.
-- **T2 bloquea T3**: #26 consume la interfaz pública de #25.
-- **T4 no bloquea T2/T3**, pero sí la fase 2 y #32.
-- **T5** se lanza cuando T2, T3 y T4 estén `completed`.
+- **T1 blocks T2**: no client implementation without a client decision.
+- **T2 blocks T3**: #26 consumes #25's public interface.
+- **T4 does not block T2/T3**, but it blocks phase 2 and #32.
+- **T5** starts when T2, T3, and T4 are `completed`.
 
-## Paso a paso
+## Step by step
 
-### Paso 0 — Preflight (Lead)
+### Step 0 — Preflight (Lead)
 
-1. `git status` limpio; crea la rama `migration/phase-1-foundation` desde `main`.
-2. Verifica el entorno: `uv sync` (si el lock necesita regeneración, regístralo y decide con el propietario; usa `--locked` solo cuando esté al día), `uv run pytest -q` (debe pasar o registrar el fallo de partida).
-3. Comprueba que el laboratorio responde **solo lectura** con `LAB-ACCESS.md`; no ejecutes escrituras.
-4. Crea las tareas T1–T5 en el tablero con `write_scopes` y `blocked_by`.
-5. Crea a `contract`, `client`, `foundation` y `reviewer` con `subagent` (prompts autocontenidos).
-6. Envía a cada uno su tarea y el prompt de trabajo; no los lances todos a la vez si hay dependencias.
+1. Clean `git status`; create branch `migration/phase-1-foundation` from `main`.
+2. Verify the environment: `uv sync` (if the lock needs regeneration, record it and decide with the owner; use `--locked` only when it is current), `uv run pytest -q` (it must pass or the baseline failure must be recorded).
+3. Confirm the lab responds **read-only** using `LAB-ACCESS.md`; do not perform writes.
+4. Create tasks T1–T5 on the board with `write_scopes` and `blocked_by`.
+5. Create `contract`, `client`, `foundation`, and `reviewer` with `subagent` (self-contained prompts).
+6. Send each one its task and work prompt; do not launch them all at once if there are dependencies.
 
-### Paso 1 — T1: ADR y estrategia de cliente (`contract`)
+### Step 1 — T1: ADR and client strategy (`contract`)
 
-Entregables:
+Deliverables:
 
-- `ADR-001-rest-client-strategy.md` con: contexto, opciones (HTTPX+Pydantic manual, `openapi-python-client` ≥0.30.0, híbrido), evidencia de la POC, decisión, consecuencias y riesgos.
-- POC acotada: parsear el documento completo, generar/implementar 5 operaciones representativas (GET simple, lista paginada, create IPv4, PATCH NAT, objeto con referencias anidadas), medir tamaño/complejidad, no fusionar código generado.
-- `scripts/generate_coverage.py`: parsea el YAML, resuelve `$ref`, valida unicidad de operationId, emite `docs/API-COVERAGE.md` con una fila por operación y secciones por dominio; falla si cambia el SHA-256 sin regeneración revisada.
-- `docs/API-COVERAGE.md`: hechos generados + decisiones curadas (alcance v1, exclusiones, excepciones PATCH, paginación, identificadores, estados de error).
-- Protocolo `pytest -m live` documentado (solo lectura con la clave actual).
+- `ADR-001-rest-client-strategy.md` with: context, options (manual HTTPX+Pydantic, `openapi-python-client` ≥0.30.0, hybrid), POC evidence, decision, consequences, and risks.
+- Bounded POC: parse the full document, generate/implement 5 representative operations (simple GET, paginated list, IPv4 create, NAT PATCH, object with nested references), measure size/complexity, do not merge generated code.
+- `scripts/generate_coverage.py`: parses the YAML, resolves `$ref`, validates operationId uniqueness, emits `docs/API-COVERAGE.md` with one row per operation and per-domain sections; fails if the SHA-256 changes without a reviewed regeneration.
+- `docs/API-COVERAGE.md`: generated facts + curated decisions (v1 scope, exclusions, PATCH exceptions, pagination, identifiers, error statuses).
+- `pytest -m live` protocol documented (read-only with the current key).
 
-Criterios de aceptación: los de #24, con el AC medible (operationIds, esquemas, códigos, identificadores y paginación por dominio).
+Acceptance criteria: those of #24, including the measurable AC (operationIds, schemas, status codes, identifiers, and pagination per domain).
 
-**Puerta:** cuando el ADR esté listo, el Lead desbloquea T2 y avisa a `client`.
+**Gate:** when the ADR is ready, the Lead unblocks T2 and notifies `client`.
 
-### Paso 2 — T2: Cliente REST (`client`)
+### Step 2 — T2: REST client (`client`)
 
-Entregables:
+Deliverables:
 
-- `config.py`: settings tipados (`SOPHOS_HOST`, `SOPHOS_PORT`, `SOPHOS_API_KEY`/`_FILE` mutuamente excluyentes, `SOPHOS_VERIFY_SSL`, `SOPHOS_CA_BUNDLE`, `SOPHOS_TIMEOUT`), validación de host/puerto, sin secretos en errores.
-- `errors.py`: jerarquía `SophosAPIError` → auth/validation/not-found/conflict/ambiguous-write/transport.
-- `client.py`: `SophosRestClient` con `get/post/patch/delete`, base URL fija, Bearer, TLS on, timeouts, sin redirects cross-origin, sin URL/path del caller, `aclose()` y `async with`, paginación solo donde el contrato la declara, retry de lectura acotado (2 intentos, 502/503/504, backoff con jitter) y **ningún** retry ciego de escrituras.
-- Tests con RESPX: URL/método/query/headers/content-type/body/status por primitiva; 401/400/404/409; timeouts/TLS/JSON malformado; redacción de la clave; rechazo de URL absoluta; cierre del pool.
+- `config.py`: typed settings (`SOPHOS_HOST`, `SOPHOS_PORT`, `SOPHOS_API_KEY`/`_FILE` mutually exclusive, `SOPHOS_VERIFY_SSL`, `SOPHOS_CA_BUNDLE`, `SOPHOS_TIMEOUT`), host/port validation, no secrets in errors.
+- `errors.py`: `SophosAPIError` hierarchy → auth/validation/not-found/conflict/ambiguous-write/transport.
+- `client.py`: `SophosRestClient` with `get/post/patch/delete`, fixed base URL, Bearer, TLS on, timeouts, no cross-origin redirects, no caller-supplied URL/path, `aclose()` and `async with`, pagination only where the contract declares it, bounded read retry (2 attempts, 502/503/504, jittered backoff), and **no** blind retry of writes.
+- RESPX tests: URL/method/query/headers/content-type/body/status per primitive; 401/400/404/409; timeouts/TLS/malformed JSON; key redaction; absolute-URL rejection; pool close.
 
-Criterios: los de #25, incluida la interfaz pública documentada.
+Criteria: those of #25, including the documented public interface.
 
-**Puerta:** publica la interfaz (métodos, excepciones, `aclose`) en el PR y avisa a `foundation`.
+**Gate:** publish the interface (methods, exceptions, `aclose`) in the PR and notify `foundation`.
 
-### Paso 3 — T3: Fundación MCP (`foundation`)
+### Step 3 — T3: MCP foundation (`foundation`)
 
-Entregables:
+Deliverables:
 
 - `context.py`: `AppContext(client, settings, read_only)`.
-- `server.py`: factory/entrypoint, lifespan que crea **un** cliente y lo cierra en `finally`, registro modular por dominio, `Context[AppContext]` inyectado, `subscriptions=False`, STDIO, logging a stderr.
-- Eliminación de `_guard.py`, del router FastEmbed y del raw XML tool; sin `BaseException`.
-- `SOPHOS_READ_ONLY_MODE`: no registra herramientas de mutación; test que compara la lista de tools en ambos modos.
-- Errores: `ToolError` para fallos previstos, `MCPError` solo protocolo, inesperadas al SDK; `content`/`structuredContent` sin duplicar; `extra="forbid"` donde el contrato es cerrado.
-- Tests: lifespan (arranque, config inválida, cierre normal y excepcional, cierre exacto una vez), identidad del contexto, lista de tools, esquemas/anotaciones, errores, cancelación, STDIO con el `Client` del SDK.
+- `server.py`: factory/entrypoint, lifespan creating **one** client and closing it in `finally`, modular per-domain registration, injected `Context[AppContext]`, `subscriptions=False`, STDIO, logging to stderr.
+- Remove `_guard.py`, the FastEmbed router, and the raw XML tool; no `BaseException`.
+- `SOPHOS_READ_ONLY_MODE`: does not register mutation tools; test comparing the tool list in both modes.
+- Errors: `ToolError` for anticipated failures, `MCPError` only for protocol, unexpected exceptions to the SDK; `content`/`structuredContent` not duplicated; `extra="forbid"` where the contract is closed.
+- Tests: lifespan (startup, invalid config, normal and exceptional shutdown, exactly-once close), context identity, tool list, schemas/annotations, errors, cancellation, STDIO with the SDK `Client`.
 
-Criterios: los de #26.
+Criteria: those of #26.
 
-### Paso 4 — T4: Cobertura (`contract`, en paralelo)
+### Step 4 — T4: Coverage (`contract`, in parallel)
 
-- Ejecuta `scripts/generate_coverage.py` y commitea el resultado.
-- Rellena las decisiones curadas por dominio (alcance v1, exclusiones, WAF, VPN read-only, interfaces read-only, live-users, bulk delete).
-- Registra las excepciones PATCH (`patchMessages`, `updateCentralFirewallReportingLogComponents`, `updateSyslogServerLogs`, `updateAlertNotificationSettings`).
-- Documenta el protocolo live y el formato `docs/live-evidence/<dominio>.md`.
+- Run `scripts/generate_coverage.py` and commit the result.
+- Fill in the curated per-domain decisions (v1 scope, exclusions, WAF, VPN read-only, interfaces read-only, live-users, bulk delete).
+- Record the PATCH exceptions (`patchMessages`, `updateCentralFirewallReportingLogComponents`, `updateSyslogServerLogs`, `updateAlertNotificationSettings`).
+- Document the live protocol and the `docs/live-evidence/<domain>.md` format.
 
-### Paso 5 — T5: Revisión independiente (`reviewer`)
+### Step 5 — T5: Independent review (`reviewer`)
 
-- Crea un `reviewer` **nuevo** (no `subagent_fork`) con el diff, las issues y el plan.
-- Debe verificar: contrato vs implementación, seguridad (TLS, secretos, redirects, URL fija), errores, lifecycle, tests que prueban comportamiento, nada fuera de alcance.
-- Entrega un informe con hallazgos por severidad y un veredicto: aprobar / cambios requeridos.
-- El Lead corrige o reasigna; no se ignora un hallazgo crítico.
+- Create a **new** `reviewer` (not `subagent_fork`) with the diff, the issues, and the plan.
+- It must verify: contract vs implementation, security (TLS, secrets, redirects, fixed URL), errors, lifecycle, tests that prove behavior, nothing outside scope.
+- It delivers a report with findings by severity and a verdict: approve / changes required.
+- The Lead fixes or reassigns; a critical finding is not ignored.
 
-### Paso 6 — Integración y cierre (Lead)
+### Step 6 — Integration and close (Lead)
 
-1. Revisa `git diff main...HEAD`: solo rutas de la fase.
-2. Ejecuta la suite completa y los linters.
-3. Comprueba que `docs/API-COVERAGE.md` se regenera sin cambios inesperados.
-4. Abre el PR `migration/phase-1-foundation` → `main` con: qué, evidencia, decisiones, riesgos, pendientes.
-5. **No fusiones** sin aprobación del propietario.
-6. Reporta según el maestro §9.
+1. Review `git diff main...HEAD`: only phase paths.
+2. Run the full suite and linters.
+3. Confirm `docs/API-COVERAGE.md` regenerates without unexpected changes.
+4. Open the PR `migration/phase-1-foundation` → `main` with: what, evidence, decisions, risks, pending items.
+5. **Do not merge** without owner approval.
+6. Report per master §9.
 
-## Criterios de salida de la fase
+## Phase exit criteria
 
-- [ ] ADR aprobado por el propietario (o marcado como decisión pendiente explícita).
-- [ ] `API-COVERAGE.md` generado y reproducible; SHA registrado.
-- [ ] Cliente REST sin XML, con tests y errores tipados.
-- [ ] Fundación con lifespan, `AppContext`, registro y read-only mode.
-- [ ] `pytest`, `mypy`, `flake8`, `black` en verde.
-- [ ] Revisión independiente sin críticos abiertos.
-- [ ] PR abierto, sin fusionar.
-- [ ] Tablero sin tareas huérfanas.
+- [ ] ADR approved by the owner (or explicitly marked as a pending decision).
+- [ ] `API-COVERAGE.md` generated and reproducible; SHA recorded.
+- [ ] REST client with no XML, tests, and typed errors.
+- [ ] Foundation with lifespan, `AppContext`, registration, and read-only mode.
+- [ ] `pytest`, `mypy`, `flake8`, `black` green.
+- [ ] Independent review with no open criticals.
+- [ ] PR open, not merged.
+- [ ] Board with no orphan tasks.
 
-## Escalación específica
+## Phase-specific escalation
 
-- Si el ADR concluye que hace falta un cliente generado enorme, **pregunta** antes de meterlo en producción.
-- Si el contrato no permite implementar una operación con seguridad, documéntalo y no la expongas.
-- Si el laboratorio deja de responder, no bloquees la fase: usa mocks y registra la limitación.
+- If the ADR concludes a huge generated client is needed, **ask** before putting it into production.
+- If the contract does not allow implementing an operation safely, document it and do not expose it.
+- If the lab stops responding, do not block the phase: use mocks and record the limitation.
