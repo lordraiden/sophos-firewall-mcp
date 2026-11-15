@@ -106,7 +106,13 @@ def create_server(
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[AppContext]) -> AsyncIterator[AppContext]:
-        """Create the one shared client, yield the context, close the client exactly once."""
+        """Create the one shared client, yield the context, close the client exactly once.
+
+        The environment was already validated by :func:`create_server_from_env` before the
+        tool set was fixed. Constructing the client here is the remaining startup
+        validation: an unusable TLS/CA configuration fails the lifespan instead of the
+        first tool call. The client is closed in ``finally`` on every shutdown path.
+        """
         logger.info(
             "starting %s: appliance %s, read-only=%s",
             SERVER_NAME,
