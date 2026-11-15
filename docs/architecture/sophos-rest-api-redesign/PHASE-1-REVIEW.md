@@ -152,3 +152,52 @@ All commands were run in the reviewed worktree at HEAD `8c91210`; the authors' r
 8. **Dead packaging weight until #32**: the `router` extra and the FastEmbed model download remain in `pyproject.toml`/`Dockerfile`; the CI matrix is 3.11–3.13 (3.14 is #32).
 9. **No live `pytest -m live` tests exist yet**; the marker and protocol are documented but unexercised, so the opt-in path itself is untested.
 10. **ADR counting definitions** (finding 2) should be corrected so a future reviewer does not repeat the "not reproducible" claim against the independent audit.
+
+---
+
+## Re-check after fixes (HEAD `c8f3d43`)
+
+**Scope:** focused re-check of the 12 findings against the pushed HEAD `c8f3d43` (fix commits `19db836`,
+`4ede207`, `a51d18b`, `c8f3d43`). This section is additive; the original verdict and findings above are
+unchanged. **Original verdict: APPROVE — still stands.**
+
+### Finding status
+
+| # | Severity | Status | Evidence on `c8f3d43` |
+|---|---|---|---|
+| F1 | Medium | **Closed** | `scripts/coverage_curated.yaml` `composite_tools` carry `kind`: the four firewall composites are `mutation`, the three audit composites are `read`; `scripts/generate_coverage.py:774` rejects any value other than `read`/`mutation`; `docs/API-COVERAGE.md` §4.2 has a **Kind** column and the sentence "Each tool declares its `kind`… the four firewall composites are `mutation`… must not be registered in that mode" — the blanket "They are read-only" is gone (`grep` count 0); the per-domain tables render `4 (0 read, 4 mutation)` for firewall and `3 (3 read, 0 mutation)` for audit; `tests/test_coverage.py` asserts the exact kind map and the rendered column. |
+| F2 | Medium | **Closed** | `ADR-001:58` **132** tags; `:63` 4,981 = 339 request bodies + 3,926 response media types + 706 parameters + 10 response headers; `:64` 4,265 media-type sites / 162,760 nodes, "reproduces the independent audit's figures"; the "not reproducible" note is replaced by two explicit counting definitions; `:172` 132 tag packages; `:493` CI 3.11–3.13 with 3.14 in #32. Re-parsed YAML: 132 tags, 4,265 media-type sites, 162,760 nodes, 1,148 JSON nodes / 373 dict nodes for the `updateFirewallRuleIpv4` request body. |
+| F3 | Medium | **Closed** | `docker-compose.yml` passes `SOPHOS_API_KEY`/`SOPHOS_API_KEY_FILE`, `SOPHOS_VERIFY_SSL` default `true`, `SOPHOS_CA_BUNDLE`, `SOPHOS_READ_ONLY_MODE`, and no `tty`; `README.md:10-15` carries the interim REST migration note; the `scripts/check_tdqs.py` command is gone from the README; the PR #36 body now states the deferral explicitly ("The README's setup sections still describe the XML server until #32 rewrites them; an interim migration note points to `.env.example`"). |
+| F4 | Low | **Closed** | `docs/live-evidence/README.md:94-97` lists the canonical 13 keys — `network` and `audit` included, `interfaces` removed. |
+| F5 | Low | **Closed** | `docs/live-evidence/README.md:41-43` now says the marker is registered in `pyproject.toml`; no "not registered" caveat remains. |
+| F6 | Low | **Closed** | `config.py:82-93` strips optional values; probe: `SOPHOS_VERIFY_SSL=" false "` → `False`, `SOPHOS_READ_ONLY_MODE=" true "` → `True`, `SOPHOS_PORT=" 4444 "` → `4444`; `tests/test_config.py` adds the stripping cases. |
+| F7 | Low | **Closed** | `config.py:183-197` `_check_api_key`; probe: `Settings(host="fw.example.com", api_key="")` and `"   "` raise `ValidationError`; whitespace is stripped; `tests/test_config.py` adds the direct-construction cases. |
+| F8 | Low | **Closed** | `client.py:243-250` accepts a missing `pages` and rejects a non-object one; probe: a `listNetworkInterfaces` body `{"items": [...]}` is accepted; tests `test_get_page_accepts_a_missing_pages_object`, `test_get_page_rejects_missing_items`, `test_get_page_rejects_non_object_pages`. |
+| F9 | Low | **Closed** | `README.md` no longer references `scripts/check_tdqs.py` (the TDQS badge/section remains and is part of the #32 README rewrite — see the minor observation below). |
+| F10 | Low | **Closed** | `tests/test_client.py` captures the `httpx.AsyncClient` constructor kwargs; no `_client._trust_env`/`follow_redirects` access remains (`grep` count 0). |
+| F11 | Low | **Closed** | `tests/test_coverage.py` asserts `canonical_domains == generator.DOMAIN_ORDER`, every key in the README, and rejects `interfaces`/`not registered`. |
+| F12 | Low | **Closed** | `pyproject.toml:70` declares `asyncio_default_fixture_loop_scope = "function"` (the project's asyncio warning is gone); `tests/test_server.py:245-254` documents the deliberate `_lowlevel_server` access and the SDK pin; the dead `router` extra/Dockerfile FastEmbed and the CI 3.14 matrix remain documented #32 items. |
+
+### Gates re-run on `c8f3d43`
+
+| Gate | Command | Result |
+|---|---|---|
+| Tests | `UV_CACHE_DIR=/tmp/dsh-uv-cache uv run --no-sync pytest -q` | **277 passed**, 1 warning (third-party anyio `CallSpec2` deprecation; the project's `asyncio_default_fixture_loop_scope` warning is gone) |
+| Types | `uv run --no-sync mypy src/sophos_firewall_mcp` | **Success: no issues found in 8 source files** |
+| Lint | `uv run --no-sync flake8 src/sophos_firewall_mcp tests scripts` | **clean** |
+| Format | `uv run --no-sync black --check src tests scripts` | **16 files unchanged** |
+| Coverage drift | `uv run --no-sync python scripts/generate_coverage.py --check` | **`docs/API-COVERAGE.md` is up to date** |
+| Lockfile | `uv lock --check` | **Resolved 75 packages**, exit 0 |
+
+### New findings
+
+None. Two minor observations, neither a defect:
+
+1. The PR #36 evidence table still says "267 passed"; the re-run on `c8f3d43` is **277 passed**. Update the
+   PR body for accuracy.
+2. The README's TDQS badge/section (lines 6 and 37-48) still advertises the old tool set's 5.00/5.00 score.
+   It is not a script reference and is covered by the #32 README rewrite; no action in phase 1.
+
+### Re-check verdict
+
+All 12 findings are **closed** on `c8f3d43`; no new finding. The original **APPROVE** stands.
