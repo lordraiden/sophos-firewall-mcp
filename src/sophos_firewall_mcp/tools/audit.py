@@ -192,17 +192,17 @@ _NETWORK_FIELDS = (
     "ipv6Groups",
 )
 
-#: The projected network members of a NAT rule (flattened to plain names).
+#: The projected network members of a NAT rule (the wire names, ``list[{name}]``).
 _NAT_NETWORK_FIELDS = (
-    "mac_addresses",
-    "ipv4_addresses",
-    "ipv4_groups",
-    "fqdn_addresses",
-    "fqdn_groups",
+    "macAddresses",
+    "ipv4Addresses",
+    "ipv4Groups",
+    "fqdnAddresses",
+    "fqdnGroups",
     "countries",
-    "country_groups",
-    "ipv6_addresses",
-    "ipv6_groups",
+    "countryGroups",
+    "ipv6Addresses",
+    "ipv6Groups",
 )
 
 #: A projected firewall rule of either IP family.
@@ -390,13 +390,6 @@ def _ref_names(match: object, field_name: str) -> set[str]:
     return names
 
 
-def _string_names(value: object) -> set[str]:
-    """The strings of one ``list[str]`` member, defensively."""
-    if not isinstance(value, list):
-        return set()
-    return {item for item in value if isinstance(item, str)}
-
-
 def _is_built_in(name: str, *timestamps: datetime | None) -> bool:
     """Whether an object is built-in or auto-generated and therefore not removable.
 
@@ -430,12 +423,12 @@ def _translation_names(translation: NatRuleTranslationOutput | None) -> set[str]
     """The address-object names a NAT translation references."""
     if translation is None:
         return set()
-    names = {
-        translation.ipv4_address,
-        translation.fqdn_address,
-        translation.ipv6_address,
-    }
-    return {name for name in names if name is not None}
+    references = (
+        translation.ipv4Address,
+        translation.fqdnAddress,
+        translation.ipv6Address,
+    )
+    return {reference.name for reference in references if reference is not None}
 
 
 def _zones_cover(earlier: ZoneMatchOutput, later: ZoneMatchOutput) -> bool:
@@ -619,7 +612,7 @@ def _nat_interfaces_match(
     if not endpoint_interfaces:
         return None
     known = {name.casefold() for name in endpoint_interfaces}
-    return bool({name.casefold() for name in match.interfaces} & known)
+    return bool({reference.name.casefold() for reference in match.interfaces} & known)
 
 
 def _nat_networks_match(match: NatRuleNetworksOutput | None) -> bool | None:
@@ -640,10 +633,10 @@ def _nat_services_match(
     if match.any:
         return True
     if service.name is not None:
-        names = {name.casefold() for name in match.services}
+        names = {reference.name.casefold() for reference in match.services}
         if service.name.casefold() in names:
             return True
-        if not match.service_groups:
+        if not match.serviceGroups:
             return False
     return None
 
@@ -2001,7 +1994,8 @@ def _check_nat_without_rule(
     for family in families:
         for position, nat_rule in enumerate(nat_by_family.get(family, []), start=1):
             severity: Severity = "medium" if nat_rule.enabled else "low"
-            if nat_rule.linked_firewall_rule is None:
+            linked = nat_rule.linkedFirewallRule
+            if linked is None:
                 findings.add(
                     AuditFinding(
                         check="nat-without-rule",
@@ -2021,7 +2015,7 @@ def _check_nat_without_rule(
                     )
                 )
                 continue
-            if nat_rule.linked_firewall_rule in rule_names:
+            if linked.name in rule_names:
                 continue
             if rules_truncated:
                 unverifiable.add(
@@ -2037,7 +2031,7 @@ def _check_nat_without_rule(
                     severity=severity,
                     summary=(
                         f"NAT rule '{nat_rule.name}' links to missing firewall rule "
-                        f"'{nat_rule.linked_firewall_rule}'"
+                        f"'{linked.name}'"
                     ),
                     evidence=FindingEvidence(
                         object_name=nat_rule.name,
@@ -2159,21 +2153,25 @@ def _referenced_names(
     for family in families:
         for nat_rule in nat_by_family.get(family, []):
             for nat_match in (
-                nat_rule.original_source_networks,
-                nat_rule.original_destination_networks,
+                nat_rule.originalSourceNetworks,
+                nat_rule.originalDestinationNetworks,
             ):
                 if nat_match is not None:
                     for field_name in _NAT_NETWORK_FIELDS:
-                        names |= _string_names(getattr(nat_match, field_name, None))
-            if nat_rule.original_services_or_groups is not None:
-                names |= set(nat_rule.original_services_or_groups.services)
-                names |= set(nat_rule.original_services_or_groups.service_groups)
-            if nat_rule.translated_service is not None:
-                names.add(nat_rule.translated_service)
-            names |= _translation_names(nat_rule.translated_source)
-            names |= _translation_names(nat_rule.translated_destination)
-            for override in nat_rule.override_snat_for_outbound_interfaces:
-                names |= _translation_names(override.translated_source)
+                        names |= _ref_names(nat_match, field_name)
+            if nat_rule.originalServicesOrGroups is not None:
+                names |= {
+                    reference.name for reference in nat_rule.originalServicesOrGroups.services
+                }
+                names |= {
+                    reference.name for reference in nat_rule.originalServicesOrGroups.serviceGroups
+                }
+            if nat_rule.translatedService is not None:
+                names.add(nat_rule.translatedService.name)
+            names |= _translation_names(nat_rule.translatedSource)
+            names |= _translation_names(nat_rule.translatedDestination)
+            for override in nat_rule.overrideSnatForOutboundInterfaces:
+                names |= _translation_names(override.translatedSource)
     for group in groups:
         names |= set(group.members)
     return names
@@ -2532,23 +2530,23 @@ def _evaluate_nat(
             criteria = (
                 (
                     "inboundInterfaces",
-                    _nat_interfaces_match(nat_rule.inbound_interfaces, source.interfaces),
+                    _nat_interfaces_match(nat_rule.inboundInterfaces, source.interfaces),
                 ),
                 (
                     "outboundInterfaces",
-                    _nat_interfaces_match(nat_rule.outbound_interfaces, destination.interfaces),
+                    _nat_interfaces_match(nat_rule.outboundInterfaces, destination.interfaces),
                 ),
                 (
                     "originalSourceNetworks",
-                    _nat_networks_match(nat_rule.original_source_networks),
+                    _nat_networks_match(nat_rule.originalSourceNetworks),
                 ),
                 (
                     "originalDestinationNetworks",
-                    _nat_networks_match(nat_rule.original_destination_networks),
+                    _nat_networks_match(nat_rule.originalDestinationNetworks),
                 ),
                 (
                     "originalServicesOrGroups",
-                    _nat_services_match(nat_rule.original_services_or_groups, request.service),
+                    _nat_services_match(nat_rule.originalServicesOrGroups, request.service),
                 ),
             )
             if any(value is False for _, value in criteria):
@@ -2562,7 +2560,7 @@ def _evaluate_nat(
                     unresolved = True
             if unresolved or not matched_fields:
                 continue
-            linked = nat_rule.linked_firewall_rule
+            linked = nat_rule.linkedFirewallRule
             evaluations.append(
                 NatEvaluation(
                     name=nat_rule.name,
@@ -2571,18 +2569,18 @@ def _evaluate_nat(
                     ip_family=family,
                     enabled=nat_rule.enabled,
                     matched_fields=matched_fields,
-                    linked_firewall_rule=linked,
+                    linked_firewall_rule=(linked.name if linked is not None else None),
                     linked_rule_exists=(
                         None
                         if linked is None or rules_truncated
                         else (
-                            linked in rule_names
+                            linked.name in rule_names
                             if both_families_scanned
-                            else (True if linked in rule_names else None)
+                            else (True if linked.name in rule_names else None)
                         )
                     ),
-                    translated_source=_translation_label(nat_rule.translated_source),
-                    translated_destination=_translation_label(nat_rule.translated_destination),
+                    translated_source=_translation_label(nat_rule.translatedSource),
+                    translated_destination=_translation_label(nat_rule.translatedDestination),
                     note=(
                         "only NAT rules whose criteria all match definitely are reported; "
                         "object-based criteria are not resolved"
@@ -2600,13 +2598,13 @@ def _translation_label(translation: NatRuleTranslationOutput | None) -> str | No
         return None
     if translation.masq:
         return "masquerade"
-    for value in (
-        translation.ipv4_address,
-        translation.fqdn_address,
-        translation.ipv6_address,
+    for reference in (
+        translation.ipv4Address,
+        translation.fqdnAddress,
+        translation.ipv6Address,
     ):
-        if value is not None:
-            return value
+        if reference is not None:
+            return reference.name
     return None
 
 
@@ -2787,13 +2785,13 @@ def _collect_references(
                         )
         for position, nat_rule in enumerate(nat[family], start=1):
             for side, nat_match in (
-                ("originalSourceNetworks", nat_rule.original_source_networks),
-                ("originalDestinationNetworks", nat_rule.original_destination_networks),
+                ("originalSourceNetworks", nat_rule.originalSourceNetworks),
+                ("originalDestinationNetworks", nat_rule.originalDestinationNetworks),
             ):
                 if nat_match is None:
                     continue
                 for field_name in _NAT_NETWORK_FIELDS:
-                    if target in _string_names(getattr(nat_match, field_name, None)):
+                    if target in _ref_names(nat_match, field_name):
                         add(
                             ObjectReference(
                                 kind="nat-rule",
@@ -2806,9 +2804,10 @@ def _collect_references(
                                 detail=f"referenced by NAT rule '{nat_rule.name}'",
                             )
                         )
-            if nat_rule.original_services_or_groups is not None:
-                for field_name in ("services", "service_groups"):
-                    if target in set(getattr(nat_rule.original_services_or_groups, field_name, [])):
+            if nat_rule.originalServicesOrGroups is not None:
+                for field_name in ("services", "serviceGroups"):
+                    members = getattr(nat_rule.originalServicesOrGroups, field_name, [])
+                    if target in {member.name for member in members}:
                         add(
                             ObjectReference(
                                 kind="nat-rule",
@@ -2821,7 +2820,7 @@ def _collect_references(
                                 detail=f"referenced by NAT rule '{nat_rule.name}'",
                             )
                         )
-            if nat_rule.translated_service == target:
+            if nat_rule.translatedService is not None and nat_rule.translatedService.name == target:
                 add(
                     ObjectReference(
                         kind="nat-rule",
@@ -2835,8 +2834,8 @@ def _collect_references(
                     )
                 )
             for side, translation in (
-                ("translatedSource", nat_rule.translated_source),
-                ("translatedDestination", nat_rule.translated_destination),
+                ("translatedSource", nat_rule.translatedSource),
+                ("translatedDestination", nat_rule.translatedDestination),
             ):
                 if target in _translation_names(translation):
                     add(
@@ -2851,8 +2850,8 @@ def _collect_references(
                             detail=f"referenced by NAT rule '{nat_rule.name}'",
                         )
                     )
-            for override in nat_rule.override_snat_for_outbound_interfaces:
-                if target in _translation_names(override.translated_source):
+            for override in nat_rule.overrideSnatForOutboundInterfaces:
+                if target in _translation_names(override.translatedSource):
                     add(
                         ObjectReference(
                             kind="nat-rule",

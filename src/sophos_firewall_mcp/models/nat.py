@@ -26,10 +26,17 @@ adapter serializes them with ``exclude_unset=True`` so omitted properties keep t
 value (JSON Merge Patch, RFC 7396), while an explicit ``null`` removes a property.
 
 The ``*Wire`` models parse appliance payloads (``extra="ignore"``, forward-compatible) and
-are never returned to a model; the ``project_*`` functions turn them into the bounded
-snake_case DTOs the tools publish. Bulk delete (``bulkDeleteNatRulesIpv4`` /
-``bulkDeleteNatRulesIpv6``) is deliberately absent: it is classified in
-``docs/API-COVERAGE.md`` and never registered.
+are never returned to a model; the ``project_*`` functions turn them into the bounded DTOs
+the tools publish. Bulk delete (``bulkDeleteNatRulesIpv4`` / ``bulkDeleteNatRulesIpv6``) is
+deliberately absent: it is classified in ``docs/API-COVERAGE.md`` and never registered.
+
+Naming (phase 5, M2): the **inputs** are snake_case because the model writes them, and the
+**outputs** keep the Sophos wire names (camelCase) because they are projections of the
+appliance payload. The two conventions meet only in the ``project_*`` functions, which map
+one onto the other explicitly. Object references are projected to the shared
+:class:`~sophos_firewall_mcp.models.common.ObjectRef` shape (``{"name": …}``), the shape the
+firewall-rule projections already use (M14). Two members are derived rather than read:
+``kind`` (M13) and ``position`` (M12).
 """
 
 from __future__ import annotations
@@ -40,7 +47,7 @@ from typing import Annotated, Any, Literal, Mapping
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
-from sophos_firewall_mcp.models.common import ListPage, validate_object_name
+from sophos_firewall_mcp.models.common import ListPage, ObjectRef, validate_object_name
 
 __all__ = [
     "HealthCheckProtocol",
@@ -66,6 +73,7 @@ __all__ = [
     "NatRuleIpv6SnatOverrideInput",
     "NatRuleIpv6TranslatedDestinationInput",
     "NatRuleIpv6TranslatedSourceInput",
+    "NatRuleKind",
     "NatRuleListInput",
     "NatRuleMoveInput",
     "NatRuleMoveOutput",
@@ -810,54 +818,71 @@ class NatRuleMoveInput(BaseModel):
 
 
 # -- Outputs: bounded projections ------------------------------------------------------
+#
+# The field names below are the appliance's wire names (camelCase), like every other output
+# projection in this server: the model reads them, so it reads what the contract returns.
+# Object references keep the shared ``{"name": …}`` shape (M14).
+
+#: Derived SNAT/DNAT discriminator of a NAT rule (M13).
+#:
+#: The contract declares no discriminator, so it is derived from which translation the
+#: appliance populated: ``snat`` when only ``translatedSource`` carries a value, ``dnat``
+#: when only ``translatedDestination`` does, and ``unknown`` when neither does -- or when
+#: both do, because the contract has no combined variant and the discriminator is never
+#: guessed.
+NatRuleKind = Literal["snat", "dnat", "unknown"]
 
 
 class NatRuleServicesOutput(BaseModel):
-    """Projected ``originalServicesOrGroups``: the variant marker plus referenced names."""
+    """Projected ``originalServicesOrGroups``: the variant marker plus referenced objects."""
 
     any: bool | None = Field(default=None, description="True when the rule matches any service.")
-    services: list[str] = Field(default_factory=list)
-    service_groups: list[str] = Field(default_factory=list)
+    services: list[ObjectRef] = Field(default_factory=list, description="Selected service objects.")
+    serviceGroups: list[ObjectRef] = Field(
+        default_factory=list, description="Selected service-group objects."
+    )
 
 
 class NatRuleInterfacesOutput(BaseModel):
-    """Projected interface selection: the variant marker plus interface names."""
+    """Projected interface selection: the variant marker plus interface references."""
 
     any: bool | None = Field(default=None, description="True when the rule matches any interface.")
-    interfaces: list[str] = Field(default_factory=list)
+    interfaces: list[ObjectRef] = Field(
+        default_factory=list, description="Selected interface objects."
+    )
 
 
 class NatRuleNetworksOutput(BaseModel):
-    """Projected network selection: the variant marker plus referenced object names.
+    """Projected network selection: the variant marker plus referenced objects.
 
     One model covers both families: IPv4 rules populate the IPv4/FQDN/country members and
     IPv6 rules populate the IPv6 members.
     """
 
     any: bool | None = Field(default=None, description="True when the rule matches any network.")
-    mac_addresses: list[str] = Field(default_factory=list)
-    ipv4_addresses: list[str] = Field(default_factory=list)
-    ipv4_groups: list[str] = Field(default_factory=list)
-    fqdn_addresses: list[str] = Field(default_factory=list)
-    fqdn_groups: list[str] = Field(default_factory=list)
-    countries: list[str] = Field(default_factory=list)
-    country_groups: list[str] = Field(default_factory=list)
-    ipv6_addresses: list[str] = Field(default_factory=list)
-    ipv6_groups: list[str] = Field(default_factory=list)
+    macAddresses: list[ObjectRef] = Field(default_factory=list)
+    ipv4Addresses: list[ObjectRef] = Field(default_factory=list)
+    ipv4Groups: list[ObjectRef] = Field(default_factory=list)
+    fqdnAddresses: list[ObjectRef] = Field(default_factory=list)
+    fqdnGroups: list[ObjectRef] = Field(default_factory=list)
+    countries: list[ObjectRef] = Field(default_factory=list)
+    countryGroups: list[ObjectRef] = Field(default_factory=list)
+    ipv6Addresses: list[ObjectRef] = Field(default_factory=list)
+    ipv6Groups: list[ObjectRef] = Field(default_factory=list)
 
 
 class NatRuleTranslationOutput(BaseModel):
     """Projected source or destination translation.
 
     Exactly one member is set when the appliance returns a translation: ``masq`` for
-    masquerading, or the referenced address-object name in the family member the contract
-    used (``ipv4_address``, ``fqdn_address`` or ``ipv6_address``).
+    masquerading, or the referenced address object in the family member the contract used
+    (``ipv4Address``, ``fqdnAddress`` or ``ipv6Address``).
     """
 
     masq: bool | None = Field(default=None, description="True when the source is masqueraded.")
-    ipv4_address: str | None = None
-    fqdn_address: str | None = None
-    ipv6_address: str | None = None
+    ipv4Address: ObjectRef | None = None
+    fqdnAddress: ObjectRef | None = None
+    ipv6Address: ObjectRef | None = None
 
 
 class NatRuleHealthCheckOutput(BaseModel):
@@ -873,44 +898,56 @@ class NatRuleHealthCheckOutput(BaseModel):
 class NatRuleSnatOverrideOutput(BaseModel):
     """Projected per-outbound-interface source-NAT override."""
 
-    outbound_interface: str
-    translated_source: NatRuleTranslationOutput | None = None
+    outboundInterface: ObjectRef
+    translatedSource: NatRuleTranslationOutput | None = None
 
 
 class NatRuleOutput(BaseModel):
     """One NAT rule, projected from the appliance payload.
 
-    This is the explicit, bounded projection the tools publish: references are flattened to
-    object names and no raw Sophos payload is returned.
+    This is the explicit, bounded projection the tools publish: the field names are the
+    appliance's wire names, object references keep the ``{"name": …}`` shape, and no raw
+    Sophos payload is returned. ``kind`` is derived from the populated translation (M13) and
+    ``position`` is derived by the list tools (M12).
     """
 
     id: str = Field(description="UUID of the NAT rule.")
     name: str
     description: str | None = None
     enabled: bool
-    linked_firewall_rule: str | None = Field(
-        default=None,
-        description="Name of the linked firewall rule, when the appliance returns one.",
+    kind: NatRuleKind = Field(
+        description="Derived SNAT/DNAT discriminator: 'snat' when only translatedSource is "
+        "populated, 'dnat' when only translatedDestination is, 'unknown' when neither or "
+        "both are."
     )
-    original_services_or_groups: NatRuleServicesOutput | None = None
-    translated_service: str | None = None
-    inbound_interfaces: NatRuleInterfacesOutput | None = None
-    outbound_interfaces: NatRuleInterfacesOutput | None = None
-    load_balancing_method: str | None = Field(
+    position: int | None = Field(
+        default=None,
+        ge=1,
+        description="1-based evaluation position in the rule base. The list tools derive it "
+        "from the page offset and the item index; get/create/update return null because "
+        "those operations do not expose it.",
+    )
+    linkedFirewallRule: ObjectRef | None = Field(
+        default=None,
+        description="Firewall rule linked to this NAT rule, when the appliance returns one.",
+    )
+    originalServicesOrGroups: NatRuleServicesOutput | None = None
+    translatedService: ObjectRef | None = None
+    inboundInterfaces: NatRuleInterfacesOutput | None = None
+    outboundInterfaces: NatRuleInterfacesOutput | None = None
+    loadBalancingMethod: str | None = Field(
         default=None,
         description="Load-balancing method; the contract declares roundRobin, firstAlive, "
         "random, stickyIp or oneToOne.",
     )
-    health_check: NatRuleHealthCheckOutput | None = None
-    original_source_networks: NatRuleNetworksOutput | None = None
-    original_destination_networks: NatRuleNetworksOutput | None = None
-    translated_source: NatRuleTranslationOutput | None = None
-    translated_destination: NatRuleTranslationOutput | None = None
-    override_snat_for_outbound_interfaces: list[NatRuleSnatOverrideOutput] = Field(
-        default_factory=list
-    )
-    created_at: datetime | None = None
-    updated_at: datetime | None = None
+    healthCheck: NatRuleHealthCheckOutput | None = None
+    originalSourceNetworks: NatRuleNetworksOutput | None = None
+    originalDestinationNetworks: NatRuleNetworksOutput | None = None
+    translatedSource: NatRuleTranslationOutput | None = None
+    translatedDestination: NatRuleTranslationOutput | None = None
+    overrideSnatForOutboundInterfaces: list[NatRuleSnatOverrideOutput] = Field(default_factory=list)
+    createdAt: datetime | None = None
+    updatedAt: datetime | None = None
 
 
 class NatRuleDeleteOutput(BaseModel):
@@ -922,18 +959,19 @@ class NatRuleDeleteOutput(BaseModel):
     """
 
     deleted: bool
-    id_or_name: str = Field(description="Identifier the delete was issued for.")
+    idOrName: str = Field(description="Identifier the delete was issued for.")
 
 
 class NatRuleMoveOutput(BaseModel):
     """Result of a NAT-rule move: the appliance returns an empty success body.
 
-    The applied request is echoed instead of inventing a response shape.
+    The applied request is echoed instead of inventing a response shape. ``referenceItem``
+    keeps the ``{"name": …}`` shape the request used.
     """
 
     name: str
     position: NatRulePosition
-    reference_item: str | None = None
+    referenceItem: ObjectRef | None = None
 
 
 # -- Wire models: parse the appliance payload, never returned --------------------------
@@ -1057,9 +1095,16 @@ class NatRuleWire(BaseModel):
 # -- Projections -----------------------------------------------------------------------
 
 
-def _ref_names(references: list[_WireRef]) -> list[str]:
-    """Flatten a list of ``{name}`` references to their names, preserving order."""
-    return [reference.name for reference in references]
+def _ref(reference: _WireRef | None) -> ObjectRef | None:
+    """Project one ``{name}`` reference, or ``None`` when the appliance omitted it."""
+    if reference is None:
+        return None
+    return ObjectRef(name=reference.name)
+
+
+def _refs(references: list[_WireRef]) -> list[ObjectRef]:
+    """Project a list of ``{name}`` references to the shared shape, preserving order."""
+    return [ObjectRef(name=reference.name) for reference in references]
 
 
 def _project_services(wire: _WireServices | None) -> NatRuleServicesOutput | None:
@@ -1068,8 +1113,8 @@ def _project_services(wire: _WireServices | None) -> NatRuleServicesOutput | Non
         return None
     return NatRuleServicesOutput(
         any=wire.any,
-        services=_ref_names(wire.services),
-        service_groups=_ref_names(wire.serviceGroups),
+        services=_refs(wire.services),
+        serviceGroups=_refs(wire.serviceGroups),
     )
 
 
@@ -1077,7 +1122,7 @@ def _project_interfaces(wire: _WireInterfaces | None) -> NatRuleInterfacesOutput
     """Project an interface selection, or ``None`` when the appliance omitted it."""
     if wire is None:
         return None
-    return NatRuleInterfacesOutput(any=wire.any, interfaces=_ref_names(wire.interfaces))
+    return NatRuleInterfacesOutput(any=wire.any, interfaces=_refs(wire.interfaces))
 
 
 def _project_networks(wire: _WireNetworks | None) -> NatRuleNetworksOutput | None:
@@ -1086,15 +1131,15 @@ def _project_networks(wire: _WireNetworks | None) -> NatRuleNetworksOutput | Non
         return None
     return NatRuleNetworksOutput(
         any=wire.any,
-        mac_addresses=_ref_names(wire.macAddresses),
-        ipv4_addresses=_ref_names(wire.ipv4Addresses),
-        ipv4_groups=_ref_names(wire.ipv4Groups),
-        fqdn_addresses=_ref_names(wire.fqdnAddresses),
-        fqdn_groups=_ref_names(wire.fqdnGroups),
-        countries=_ref_names(wire.countries),
-        country_groups=_ref_names(wire.countryGroups),
-        ipv6_addresses=_ref_names(wire.ipv6Addresses),
-        ipv6_groups=_ref_names(wire.ipv6Groups),
+        macAddresses=_refs(wire.macAddresses),
+        ipv4Addresses=_refs(wire.ipv4Addresses),
+        ipv4Groups=_refs(wire.ipv4Groups),
+        fqdnAddresses=_refs(wire.fqdnAddresses),
+        fqdnGroups=_refs(wire.fqdnGroups),
+        countries=_refs(wire.countries),
+        countryGroups=_refs(wire.countryGroups),
+        ipv6Addresses=_refs(wire.ipv6Addresses),
+        ipv6Groups=_refs(wire.ipv6Groups),
     )
 
 
@@ -1104,9 +1149,9 @@ def _project_translation(wire: _WireTranslation | None) -> NatRuleTranslationOut
         return None
     return NatRuleTranslationOutput(
         masq=wire.masq,
-        ipv4_address=wire.ipv4Address.name if wire.ipv4Address is not None else None,
-        fqdn_address=wire.fqdnAddress.name if wire.fqdnAddress is not None else None,
-        ipv6_address=wire.ipv6Address.name if wire.ipv6Address is not None else None,
+        ipv4Address=_ref(wire.ipv4Address),
+        fqdnAddress=_ref(wire.fqdnAddress),
+        ipv6Address=_ref(wire.ipv6Address),
     )
 
 
@@ -1127,50 +1172,101 @@ def _project_health_check(wire: _WireHealthCheck | None) -> NatRuleHealthCheckOu
 def _project_snat_override(wire: _WireSnatOverride) -> NatRuleSnatOverrideOutput:
     """Project one per-interface source-NAT override entry."""
     return NatRuleSnatOverrideOutput(
-        outbound_interface=wire.outboundInterface.name,
-        translated_source=_project_translation(wire.translatedSource),
+        outboundInterface=ObjectRef(name=wire.outboundInterface.name),
+        translatedSource=_project_translation(wire.translatedSource),
     )
 
 
-def _project_nat_rule_wire(wire: NatRuleWire) -> NatRuleOutput:
+def _translation_is_populated(translation: NatRuleTranslationOutput | None) -> bool:
+    """Whether a projected translation actually carries a value.
+
+    The contract declares ``translatedSource``/``translatedDestination`` as a ``oneOf`` of
+    ``masq`` and an address reference, so a present-but-empty object is not a translation:
+    it is treated as absent rather than guessed into a ``kind``.
+    """
+    if translation is None:
+        return False
+    return (
+        translation.masq is True
+        or translation.ipv4Address is not None
+        or translation.fqdnAddress is not None
+        or translation.ipv6Address is not None
+    )
+
+
+def _derive_kind(
+    translated_source: NatRuleTranslationOutput | None,
+    translated_destination: NatRuleTranslationOutput | None,
+) -> NatRuleKind:
+    """Derive the SNAT/DNAT discriminator from the populated translation (M13).
+
+    ``snat`` when only the source translation carries a value, ``dnat`` when only the
+    destination one does, and ``unknown`` when neither does -- or when both do, because the
+    contract has no combined variant and the discriminator is never guessed.
+    """
+    has_source = _translation_is_populated(translated_source)
+    has_destination = _translation_is_populated(translated_destination)
+    if has_source == has_destination:
+        return "unknown"
+    return "snat" if has_source else "dnat"
+
+
+def _project_nat_rule_wire(wire: NatRuleWire, *, position: int | None = None) -> NatRuleOutput:
     """Project one parsed NAT-rule payload into the bounded MCP output model."""
+    translated_source = _project_translation(wire.translatedSource)
+    translated_destination = _project_translation(wire.translatedDestination)
     return NatRuleOutput(
         id=wire.id,
         name=wire.name,
         description=wire.description,
         enabled=wire.enabled,
-        linked_firewall_rule=(
-            wire.linkedFirewallRule.name if wire.linkedFirewallRule is not None else None
-        ),
-        original_services_or_groups=_project_services(wire.originalServicesOrGroups),
-        translated_service=(
-            wire.translatedService.name if wire.translatedService is not None else None
-        ),
-        inbound_interfaces=_project_interfaces(wire.inboundInterfaces),
-        outbound_interfaces=_project_interfaces(wire.outboundInterfaces),
-        load_balancing_method=wire.loadBalancingMethod,
-        health_check=_project_health_check(wire.healthCheck),
-        original_source_networks=_project_networks(wire.originalSourceNetworks),
-        original_destination_networks=_project_networks(wire.originalDestinationNetworks),
-        translated_source=_project_translation(wire.translatedSource),
-        translated_destination=_project_translation(wire.translatedDestination),
-        override_snat_for_outbound_interfaces=[
+        kind=_derive_kind(translated_source, translated_destination),
+        position=position,
+        linkedFirewallRule=_ref(wire.linkedFirewallRule),
+        originalServicesOrGroups=_project_services(wire.originalServicesOrGroups),
+        translatedService=_ref(wire.translatedService),
+        inboundInterfaces=_project_interfaces(wire.inboundInterfaces),
+        outboundInterfaces=_project_interfaces(wire.outboundInterfaces),
+        loadBalancingMethod=wire.loadBalancingMethod,
+        healthCheck=_project_health_check(wire.healthCheck),
+        originalSourceNetworks=_project_networks(wire.originalSourceNetworks),
+        originalDestinationNetworks=_project_networks(wire.originalDestinationNetworks),
+        translatedSource=translated_source,
+        translatedDestination=translated_destination,
+        overrideSnatForOutboundInterfaces=[
             _project_snat_override(override) for override in wire.overrideSnatForOutboundInterfaces
         ],
-        created_at=wire.createdAt,
-        updated_at=wire.updatedAt,
+        createdAt=wire.createdAt,
+        updatedAt=wire.updatedAt,
     )
 
 
 def project_nat_rule(payload: Mapping[str, Any]) -> NatRuleOutput:
-    """Project one NAT-rule payload into the bounded MCP output model."""
+    """Project one NAT-rule payload into the bounded MCP output model.
+
+    ``position`` is ``None``: the get/create/update operations do not return the rule's
+    evaluation position and the contract exposes no way to obtain it for a single rule. Only
+    :func:`project_nat_rule_page` can derive it, from the page offset and the item index.
+    """
     return _project_nat_rule_wire(NatRuleWire.model_validate(payload))
 
 
-def project_nat_rule_page(payload: Mapping[str, Any]) -> ListPage[NatRuleOutput]:
-    """Project one NAT-rule list page, preserving the ``pages`` metadata exactly."""
+def project_nat_rule_page(
+    payload: Mapping[str, Any], *, page: int, page_size: int
+) -> ListPage[NatRuleOutput]:
+    """Project one NAT-rule list page, deriving each rule's evaluation ``position``.
+
+    The appliance returns the rules in evaluation order and echoes the requested page, so the
+    1-based position is ``(page - 1) * page_size + index + 1``. It is derived from the request
+    rather than read from ``pages`` because ``pageTotal`` is optional and the metadata is
+    usually absent.
+    """
     wire = ListPage[NatRuleWire].model_validate(payload)
+    offset = (page - 1) * page_size
     return ListPage[NatRuleOutput](
-        items=[_project_nat_rule_wire(item) for item in wire.items],
+        items=[
+            _project_nat_rule_wire(item, position=offset + index + 1)
+            for index, item in enumerate(wire.items)
+        ],
         pages=wire.pages,
     )
