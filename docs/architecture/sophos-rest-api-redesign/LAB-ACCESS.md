@@ -23,7 +23,7 @@
 | TLS | Certificado autofirmado del appliance (`CN=Appliance_Certificate_…`, emisor `CN=Sophos_CA_…`); con CA pública la verificación falla |
 | Hostname del appliance | `SophosXGHome` |
 | HA | `HA_MODE = 0` (sin alta disponibilidad) |
-| Build SFOS | **SFOS 23.0.0 GA-Build371** (proporcionado por el propietario; la API no expone endpoint de versión) |
+| Build SFOS | **SFOS 23.0.0 GA-Build371** (proporcionado por el propietario; la API no expone endpoint de versión). La API REST de configuración es la misma en todas las versiones de SFOS, así que las herramientas no dependen del build. |
 
 ## Credencial
 

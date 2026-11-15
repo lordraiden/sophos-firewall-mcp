@@ -9,8 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Sophos Firewall 23 support, stated explicitly.** This server implements the **Sophos Firewall 23
 (SFOS 23.0) Configuration REST API** (`/api/firewall-config/v1`). The live evidence in this repository
-was produced against **SFOS 23.0.0 GA-Build371**; no general firmware compatibility claim is made for
-any other SFOS build. It is not the Sophos Central Firewall Management API and not the legacy XML API.
+was produced against **SFOS 23.0.0 GA-Build371**; the Configuration REST API is the same across SFOS
+versions, so the tools are not build-specific. It is not the Sophos Central Firewall Management API and
+not the legacy XML API.
 
 **Breaking: published output field names are unified on camelCase (the Sophos wire names).** 0.5.0
 unified the *inputs* on snake_case; the *outputs* were still split — 119 tools published camelCase

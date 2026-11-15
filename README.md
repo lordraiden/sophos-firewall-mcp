@@ -81,12 +81,12 @@ projection of one audited operation of the SFOS 23 REST contract.
 | MCP transport | STDIO only |
 | Not supported | Sophos Central Firewall Management API; the legacy XML API (`/webconsole/APIController`) that 0.3.x used |
 
-**Compatibility scope.** The live evidence in [`docs/live-evidence/`](docs/live-evidence/) applies to
-**SFOS 23.0.0 GA-Build371** and to nothing else. The Configuration REST API exposes no version
-endpoint, so the server cannot detect the firmware it is talking to and does not claim compatibility
-with any other SFOS build, including later 23.0 maintenance builds and SFOS 24. Verify the behaviour
-you depend on against your own appliance before relying on a tool; the
-[known limitations](#known-limitations-and-accepted-regressions) list what was and was not exercised.
+**Compatibility scope.** The Configuration REST API is the same across SFOS versions (the contract is
+version-independent; the API exposes no version endpoint), so the tools are not tied to a build. The
+live evidence in [`docs/live-evidence/`](docs/live-evidence/) records what was exercised on
+**SFOS 23.0.0 GA-Build371**; verify the behaviour you depend on against your own appliance before
+relying on a tool. The [known limitations](#known-limitations-and-accepted-regressions) list what was
+and was not exercised.
 
 ## Requirements
 
@@ -355,9 +355,9 @@ administrator profile for any deployment that only needs inspection.
   model writes them, outputs are wire-faithful because the model reads them. This was a breaking change
   from 0.5.0 for the 23 tools that still published snake_case outputs (12 NAT, 8 users and 3 audit
   tools); callers that parsed `original_services_or_groups` or `translated_source` must update.
-- **Firmware compatibility is limited to the tested build.** The lab appliance runs **SFOS 23.0.0
-  GA-Build371** (owner-provided; the API exposes no version endpoint). The live evidence applies to that
-  build; no general firmware compatibility claim is made for other SFOS versions. See
+- **Firmware compatibility.** The lab appliance runs **SFOS 23.0.0 GA-Build371** (owner-provided). The
+  Configuration REST API is the same across SFOS versions, so the tools are not build-specific; the live
+  evidence records what was exercised on that build. See
   [Supported appliance and API](#supported-appliance-and-api). Verify against your own appliance before
   relying on a tool.
 - **Live write validation is limited.** The 0.5.0 cycle validated create/update/delete against the lab

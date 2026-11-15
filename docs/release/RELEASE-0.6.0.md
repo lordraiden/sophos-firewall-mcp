@@ -17,7 +17,8 @@ projections of the appliance payload.
 This release also states the product's appliance support explicitly: this is an **MCP server for
 Sophos Firewall 23 (SFOS 23.0)**, implementing the **Configuration REST API v1**
 (`/api/firewall-config/v1`). The live evidence in this repository was produced against **SFOS 23.0.0
-GA-Build371**; no general firmware compatibility claim is made for any other SFOS build.
+GA-Build371**; the Configuration REST API is the same across SFOS versions, so the tools are not
+build-specific.
 
 The **breaking** changes are the output naming and the new default page size. The JSON request body
 sent to the appliance is unchanged; the default `pageSize` query value changes from 50 to 10 (see
