@@ -55,6 +55,7 @@ from sophos_firewall_mcp.models.common import (
     ObjectName,
     ObjectNameOrId,
     ObjectRef,
+    OutputModel,
     validate_object_name,
     validate_object_name_or_id,
 )
@@ -228,7 +229,7 @@ class _ClosedModel(BaseModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class _WireModel(BaseModel):
+class _WireModel(OutputModel):
     """Base for appliance payload projections: unknown members are ignored, never echoed.
 
     The epoch "never" sentinel is published as ``null`` (L6); see

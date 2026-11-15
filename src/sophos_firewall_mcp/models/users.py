@@ -42,7 +42,7 @@ from pydantic import (
     model_validator,
 )
 
-from sophos_firewall_mcp.models.common import ListPage, validate_object_name
+from sophos_firewall_mcp.models.common import ListPage, OutputModel, validate_object_name
 from sophos_firewall_mcp.models.objects import serialize_epoch_sentinel
 
 __all__ = [
@@ -557,7 +557,13 @@ class LiveUserDisconnectInput(BaseModel):
 # -- Outputs: bounded projections ------------------------------------------------------
 
 
-class UserSummaryOutput(BaseModel):
+class _Output(OutputModel):
+    """Base for the bounded output projections: unknown members are ignored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class UserSummaryOutput(_Output):
     """One row of the general authentication-user list (``getUsers``).
 
     This is the API's *basic summary*, not a network-user detail: it has no policies
@@ -589,7 +595,7 @@ class UserSummaryOutput(BaseModel):
     updatedAt: datetime | None = None  # noqa: N815
 
 
-class NetworkUserPoliciesOutput(BaseModel):
+class NetworkUserPoliciesOutput(_Output):
     """Bounded projection of a network user's effective policies.
 
     The flattened members keep the wire vocabulary: ``allowedNetworksIpv4`` is the
@@ -612,7 +618,7 @@ class NetworkUserPoliciesOutput(BaseModel):
     simultaneousLoginsLimit: int | None = None  # noqa: N815
 
 
-class NetworkUserVpnAccessOutput(BaseModel):
+class NetworkUserVpnAccessOutput(_Output):
     """Bounded projection of a network user's VPN-access overrides."""
 
     sslVpnRemoteAccessPolicy: str | None = None  # noqa: N815
@@ -627,7 +633,7 @@ class NetworkUserVpnAccessOutput(BaseModel):
     ipsecVpnStaticIpv4Address: str | None = None  # noqa: N815
 
 
-class NetworkUserOutput(BaseModel):
+class NetworkUserOutput(_Output):
     """One network-user account, without any credential material.
 
     The epoch "never" sentinel is published as ``null`` (L6); see
@@ -656,7 +662,7 @@ class NetworkUserOutput(BaseModel):
     updatedAt: datetime | None = None  # noqa: N815
 
 
-class NetworkUserDeleteOutput(BaseModel):
+class NetworkUserDeleteOutput(_Output):
     """Result of ``deleteNetworkUser``."""
 
     deleted: bool = Field(
@@ -668,7 +674,7 @@ class NetworkUserDeleteOutput(BaseModel):
     idOrName: str = Field(description="Identifier the delete was issued for.")  # noqa: N815
 
 
-class LiveUserSessionOutput(BaseModel):
+class LiveUserSessionOutput(_Output):
     """One active user session (``getLiveUsers``)."""
 
     liveUserId: int = Field(  # noqa: N815
@@ -693,7 +699,7 @@ class LiveUserSessionOutput(BaseModel):
     duration: int = Field(description="Session duration reported by the appliance.")
 
 
-class LiveUserDisconnectOutput(BaseModel):
+class LiveUserDisconnectOutput(_Output):
     """Result of ``disconnectLiveUser``."""
 
     disconnected: bool = Field(description="True when the appliance disconnected the session.")

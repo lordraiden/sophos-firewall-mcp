@@ -36,7 +36,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from sophos_firewall_mcp.models.common import ObjectNameOrId
+from sophos_firewall_mcp.models.common import ObjectNameOrId, OutputModel
 
 __all__ = [
     "ALL_CHECKS",
@@ -139,7 +139,7 @@ class _Input(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class _Output(BaseModel):
+class _Output(OutputModel):
     """Base for the bounded output projections: unknown members are ignored."""
 
     model_config = ConfigDict(extra="ignore")

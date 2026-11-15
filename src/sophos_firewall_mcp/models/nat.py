@@ -54,7 +54,12 @@ from pydantic import (
     model_validator,
 )
 
-from sophos_firewall_mcp.models.common import ListPage, ObjectRef, validate_object_name
+from sophos_firewall_mcp.models.common import (
+    ListPage,
+    ObjectRef,
+    OutputModel,
+    validate_object_name,
+)
 from sophos_firewall_mcp.models.objects import serialize_epoch_sentinel
 
 __all__ = [
@@ -858,7 +863,13 @@ class NatRuleMoveInput(BaseModel):
 NatRuleKind = Literal["snat", "dnat", "unknown"]
 
 
-class NatRuleServicesOutput(BaseModel):
+class _Output(OutputModel):
+    """Base for the bounded output projections: unknown members are ignored."""
+
+    model_config = ConfigDict(extra="ignore")
+
+
+class NatRuleServicesOutput(_Output):
     """Projected ``originalServicesOrGroups``: the variant marker plus referenced objects."""
 
     any: bool | None = Field(default=None, description="True when the rule matches any service.")
@@ -868,7 +879,7 @@ class NatRuleServicesOutput(BaseModel):
     )
 
 
-class NatRuleInterfacesOutput(BaseModel):
+class NatRuleInterfacesOutput(_Output):
     """Projected interface selection: the variant marker plus interface references."""
 
     any: bool | None = Field(default=None, description="True when the rule matches any interface.")
@@ -877,7 +888,7 @@ class NatRuleInterfacesOutput(BaseModel):
     )
 
 
-class NatRuleNetworksOutput(BaseModel):
+class NatRuleNetworksOutput(_Output):
     """Projected network selection: the variant marker plus referenced objects.
 
     One model covers both families: IPv4 rules populate the IPv4/FQDN/country members and
@@ -896,7 +907,7 @@ class NatRuleNetworksOutput(BaseModel):
     ipv6Groups: list[ObjectRef] = Field(default_factory=list)
 
 
-class NatRuleTranslationOutput(BaseModel):
+class NatRuleTranslationOutput(_Output):
     """Projected source or destination translation.
 
     Exactly one member is set when the appliance returns a translation: ``masq`` for
@@ -910,7 +921,7 @@ class NatRuleTranslationOutput(BaseModel):
     ipv6Address: ObjectRef | None = None
 
 
-class NatRuleHealthCheckOutput(BaseModel):
+class NatRuleHealthCheckOutput(_Output):
     """Projected health-check probe settings."""
 
     protocol: str = Field(description="Probe protocol declared by the API: tcp or icmp.")
@@ -920,14 +931,14 @@ class NatRuleHealthCheckOutput(BaseModel):
     retry: int | None = None
 
 
-class NatRuleSnatOverrideOutput(BaseModel):
+class NatRuleSnatOverrideOutput(_Output):
     """Projected per-outbound-interface source-NAT override."""
 
     outboundInterface: ObjectRef
     translatedSource: NatRuleTranslationOutput | None = None
 
 
-class NatRuleOutput(BaseModel):
+class NatRuleOutput(_Output):
     """One NAT rule, projected from the appliance payload.
 
     This is the explicit, bounded projection the tools publish: the field names are the
@@ -984,7 +995,7 @@ class NatRuleOutput(BaseModel):
     updatedAt: datetime | None = None
 
 
-class NatRuleDeleteOutput(BaseModel):
+class NatRuleDeleteOutput(_Output):
     """Result of a single NAT-rule delete.
 
     The shared client's ``delete`` primitive discards the response body, so ``deleted`` is
@@ -996,7 +1007,7 @@ class NatRuleDeleteOutput(BaseModel):
     idOrName: str = Field(description="Identifier the delete was issued for.")
 
 
-class NatRuleMoveOutput(BaseModel):
+class NatRuleMoveOutput(_Output):
     """Result of a NAT-rule move: the appliance returns an empty success body.
 
     The applied request is echoed instead of inventing a response shape. ``referenceItem``

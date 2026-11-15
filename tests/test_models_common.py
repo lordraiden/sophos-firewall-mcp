@@ -309,3 +309,253 @@ async def test_every_paginated_tool_publishes_the_page_descriptions():
         assert page[0]["default"] == 1, name
         assert page[0]["minimum"] == 1, name
         assert page_total[0]["default"] is False, name
+
+
+# -- Published catalog trimming (H1, L2) ------------------------------------------------
+
+
+def _schema_nodes(schema: dict[str, Any]) -> list[tuple[str, dict[str, Any], bool]]:
+    """Every schema node reachable from one published schema, with its path.
+
+    ``$defs``, ``properties``, array ``items``, ``additionalProperties`` and every
+    ``allOf``/``oneOf``/``anyOf`` branch are followed, so a title or a nullable union
+    cannot hide in a nested definition. The third member is true when the node is the
+    value of a ``properties`` entry, which is what makes a ``title`` a property title.
+    """
+    found: list[tuple[str, dict[str, Any], bool]] = []
+
+    def walk(node: dict[str, Any], path: str, is_property: bool) -> None:
+        found.append((path, node, is_property))
+        definitions = node.get("$defs")
+        if isinstance(definitions, dict):
+            for name, definition in definitions.items():
+                if isinstance(definition, dict):
+                    walk(definition, f"{path}.$defs.{name}", False)
+        properties = node.get("properties")
+        if isinstance(properties, dict):
+            for name, child in properties.items():
+                if isinstance(child, dict):
+                    walk(child, f"{path}.{name}", True)
+        items = node.get("items")
+        if isinstance(items, dict):
+            walk(items, f"{path}[]", False)
+        additional = node.get("additionalProperties")
+        if isinstance(additional, dict):
+            walk(additional, f"{path}.*", False)
+        for keyword in ("allOf", "oneOf", "anyOf"):
+            branches = node.get(keyword)
+            if isinstance(branches, list):
+                for index, branch in enumerate(branches):
+                    if isinstance(branch, dict):
+                        walk(branch, f"{path}.{keyword}[{index}]", False)
+
+    walk(schema, "$", False)
+    return found
+
+
+async def _published_output_schemas() -> dict[str, dict[str, Any]]:
+    """The output schema of every published tool, keyed by tool name."""
+    settings = Settings(
+        host="fw.example.com",
+        port=443,
+        api_key="sfos_test_key_0123456789abcdef",
+        verify_ssl=False,
+        timeout=5.0,
+        read_only_mode=False,
+    )
+    tools = await create_server(settings).list_tools()
+    schemas: dict[str, dict[str, Any]] = {}
+    for tool in tools:
+        assert tool.output_schema is not None, tool.name
+        schemas[tool.name] = tool.output_schema
+    return schemas
+
+
+async def test_output_schemas_publish_no_property_titles():
+    """L2: the auto-generated property title is dropped from every published output.
+
+    Pydantic derives a property title from the field name, which mangles it
+    (``"Idorname"``, ``"Logtraffic"``) and adds ~52 KB to the catalog. A model-level title
+    (the class name) is not a property title and is kept, so the sweep proves it reached
+    the properties rather than a schema with no titles at all.
+    """
+    schemas = await _published_output_schemas()
+    assert len(schemas) == 152
+
+    property_titles = 0
+    model_titles = 0
+    offenders: list[str] = []
+    for name, schema in schemas.items():
+        for path, node, is_property in _schema_nodes(schema):
+            if "title" not in node:
+                continue
+            if is_property:
+                property_titles += 1
+                offenders.append(f"{name}: {path}")
+            else:
+                model_titles += 1
+
+    assert offenders == []
+    assert property_titles == 0
+    # The model-level titles are still published: the trim is scoped to properties.
+    assert model_titles > 0
+
+
+async def test_nullable_output_fields_use_the_compact_type_form():
+    """H1: a nullable field is ``type: [X, "null"]``, not ``anyOf: [{type: X}, null]``.
+
+    The sweep covers every published output schema. A remaining ``anyOf`` with a null
+    branch is allowed only when folding it would lose information: a ``$ref`` branch
+    cannot be folded without dropping the reference, and an ``enum``/``const`` branch
+    cannot be folded without rejecting ``null``.
+    """
+    schemas = await _published_output_schemas()
+
+    compacted = 0
+    remaining = 0
+    for name, schema in schemas.items():
+        for path, node, _ in _schema_nodes(schema):
+            node_type = node.get("type")
+            if isinstance(node_type, list):
+                assert len(node_type) == 2, (name, path, node_type)
+                assert node_type[-1] == "null", (name, path, node_type)
+                assert node_type[0] != "null", (name, path, node_type)
+                compacted += 1
+            branches = node.get("anyOf")
+            if not isinstance(branches, list) or len(branches) != 2:
+                continue
+            nulls = [
+                branch
+                for branch in branches
+                if isinstance(branch, dict) and branch.get("type") == "null"
+            ]
+            if len(nulls) != 1:
+                continue
+            other = branches[0] if branches[1] is nulls[0] else branches[1]
+            assert isinstance(other, dict), (name, path)
+            assert "$ref" in other or "enum" in other or "const" in other, (name, path, other)
+            remaining += 1
+
+    # The sweep must reach the whole surface, not a subset of it.
+    assert compacted >= 1000
+    assert remaining >= 1
+
+
+async def test_compacted_nullable_fields_keep_their_default_description_and_bounds():
+    """H1: folding the union keeps the default, the description and the bounds."""
+    schemas = await _published_output_schemas()
+    schema = schemas["firewall_rule_list_ipv4"]
+
+    current = schema["$defs"]["Pages"]["properties"]["current"]
+    assert current["type"] == ["integer", "null"]
+    assert current["default"] is None
+    assert current["description"] == "The current page number, 1-based."
+
+    position = schema["$defs"]["FirewallRuleIpv4Output"]["properties"]["position"]
+    assert position["type"] == ["integer", "null"]
+    assert position["default"] is None
+    assert position["minimum"] == 1
+    assert "1-based evaluation position" in position["description"]
+
+
+def _json_type_matches(value: Any, expected: str) -> bool:
+    """Whether ``value`` is a JSON instance of the named type."""
+    if expected == "null":
+        return value is None
+    if expected == "boolean":
+        return isinstance(value, bool)
+    if expected == "integer":
+        return isinstance(value, int) and not isinstance(value, bool)
+    if expected == "number":
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+    if expected == "string":
+        return isinstance(value, str)
+    if expected == "array":
+        return isinstance(value, list)
+    if expected == "object":
+        return isinstance(value, dict)
+    raise AssertionError(f"unknown JSON type {expected}")
+
+
+def _validate_instance(
+    instance: Any,
+    schema: dict[str, Any],
+    root: dict[str, Any],
+    path: str = "$",
+) -> None:
+    """Validate one instance against the subset of JSON Schema the catalog publishes.
+
+    The project does not declare a JSON Schema validator, so this is the dependency-free
+    subset the output schemas use: ``$ref``, ``anyOf``, ``type`` (string or list),
+    ``enum``, ``const``, ``properties``, ``required``, ``items``, ``minimum``,
+    ``maximum``, ``minLength``, ``maxLength``, ``minItems`` and ``maxItems``.
+    """
+    if "$ref" in schema:
+        target = schema["$ref"].rsplit("/", 1)[-1]
+        _validate_instance(instance, root["$defs"][target], root, path)
+        return
+    branches = schema.get("anyOf")
+    if isinstance(branches, list):
+        failures: list[str] = []
+        for branch in branches:
+            try:
+                _validate_instance(instance, branch, root, path)
+                return
+            except AssertionError as exc:
+                failures.append(str(exc))
+        raise AssertionError(f"{path}: no anyOf branch matched: {failures}")
+    expected = schema.get("type")
+    if isinstance(expected, str):
+        assert _json_type_matches(
+            instance, expected
+        ), f"{path}: expected {expected}, got {instance!r}"
+    elif isinstance(expected, list):
+        assert any(
+            _json_type_matches(instance, item) for item in expected
+        ), f"{path}: expected one of {expected}, got {instance!r}"
+    if "const" in schema:
+        assert instance == schema["const"], f"{path}: expected const {schema['const']!r}"
+    if "enum" in schema:
+        assert instance in schema["enum"], f"{path}: {instance!r} is not in the enum"
+    if isinstance(instance, dict):
+        for name in schema.get("required", []):
+            assert name in instance, f"{path}: missing required {name}"
+        properties = schema.get("properties") or {}
+        for name, value in instance.items():
+            if name in properties:
+                _validate_instance(value, properties[name], root, f"{path}.{name}")
+    if isinstance(instance, list):
+        items = schema.get("items")
+        if isinstance(items, dict):
+            for index, value in enumerate(instance):
+                _validate_instance(value, items, root, f"{path}[{index}]")
+        if "minItems" in schema:
+            assert len(instance) >= schema["minItems"], f"{path}: too few items"
+        if "maxItems" in schema:
+            assert len(instance) <= schema["maxItems"], f"{path}: too many items"
+    if isinstance(instance, str):
+        if "minLength" in schema:
+            assert len(instance) >= schema["minLength"], f"{path}: too short"
+        if "maxLength" in schema:
+            assert len(instance) <= schema["maxLength"], f"{path}: too long"
+    if isinstance(instance, (int, float)) and not isinstance(instance, bool):
+        if "minimum" in schema:
+            assert instance >= schema["minimum"], f"{path}: below the minimum"
+        if "maximum" in schema:
+            assert instance <= schema["maximum"], f"{path}: above the maximum"
+
+
+def test_a_compacted_output_schema_still_validates_a_real_result():
+    """H1: the trimmed schema accepts the model's own serialized output, nulls included."""
+    page = ListPage[ObjectRef](
+        items=[ObjectRef(name="LAN"), ObjectRef(name="WAN")],
+        pages=Pages(current=1, size=10, maxSize=100, total=2, items=2),
+    )
+    schema = ListPage[ObjectRef].model_json_schema()
+
+    _validate_instance(page.model_dump(mode="json", by_alias=True), schema, schema)
+    # The nullable members are published in the compact form and still accept null.
+    pages_schema = schema["$defs"]["Pages"]["properties"]
+    assert pages_schema["current"]["type"] == ["integer", "null"]
+    assert pages_schema["current"]["default"] is None
+    _validate_instance({"items": [], "pages": None}, schema, schema)

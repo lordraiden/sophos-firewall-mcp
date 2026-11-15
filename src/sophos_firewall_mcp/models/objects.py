@@ -38,6 +38,7 @@ from sophos_firewall_mcp.models.common import (
     ObjectName,
     ObjectNameOrId,
     ObjectRef,
+    OutputModel,
     validate_object_name_or_id,
 )
 
@@ -179,7 +180,7 @@ class _InputModel(BaseModel):
     model_config = _INPUT_CONFIG
 
 
-class _OutputModel(BaseModel):
+class _OutputModel(OutputModel):
     """Base for every response projection: forward-compatible and alias-aware.
 
     The epoch "never" sentinel is published as ``null`` (L6); see
@@ -1357,7 +1358,7 @@ class ServicePortRange(_ServicePortRangeFields):
     model_config = _INPUT_CONFIG
 
 
-class ServicePortRangeOutput(ServicePortRange):
+class ServicePortRangeOutput(ServicePortRange, _OutputModel):
     """A port range in a service response."""
 
     model_config = _OUTPUT_CONFIG
@@ -1432,7 +1433,7 @@ variant is closed.
 """
 
 
-class TcpUdpServiceDetailOutput(TcpUdpServiceDetail):
+class TcpUdpServiceDetailOutput(TcpUdpServiceDetail, _OutputModel):
     """A TCP or UDP service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
@@ -1440,7 +1441,7 @@ class TcpUdpServiceDetailOutput(TcpUdpServiceDetail):
     destination_port: ServicePortRangeOutput | None = Field(None, alias="destinationPort")
 
 
-class IpProtocolServiceDetailOutput(IpProtocolServiceDetail):
+class IpProtocolServiceDetailOutput(IpProtocolServiceDetail, _OutputModel):
     """An IP-protocol service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
@@ -1450,7 +1451,7 @@ class IpProtocolServiceDetailOutput(IpProtocolServiceDetail):
     ip_protocol: IpProtocol = Field(alias="ipProtocol")
 
 
-class Icmpv4ServiceDetailOutput(Icmpv4ServiceDetail):
+class Icmpv4ServiceDetailOutput(Icmpv4ServiceDetail, _OutputModel):
     """An ICMPv4 service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
@@ -1460,7 +1461,7 @@ class Icmpv4ServiceDetailOutput(Icmpv4ServiceDetail):
     icmp_code: IcmpCode = Field(alias="icmpCode")
 
 
-class Icmpv6ServiceDetailOutput(Icmpv6ServiceDetail):
+class Icmpv6ServiceDetailOutput(Icmpv6ServiceDetail, _OutputModel):
     """An ICMPv6 service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
