@@ -288,11 +288,8 @@ def test_scope_change_is_recorded(generator: Any, curated: Any) -> None:
     assert "updateCountryGroupByIdOrName" not in curated["tool_map"]
     assert "deleteCountryGroupByIdOrName" not in curated["tool_map"]
 
-    # VLAN-only interface writes with the required note.
-    vlan_note = (
-        "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM "
-        "interfaces are read-only"
-    )
+    # VLAN-only interface writes: the note must carry the pre-read safety rule, because
+    # deleteNetworkInterface has no body and the type can only be checked before the call.
     assert curated["tool_map"]["createNetworkInterface"] == "network_interface_create_vlan"
     assert curated["tool_map"]["updateNetworkInterface"] == "network_interface_update_vlan"
     assert curated["tool_map"]["deleteNetworkInterface"] == "network_interface_delete_vlan"
@@ -301,7 +298,11 @@ def test_scope_change_is_recorded(generator: Any, curated: Any) -> None:
         "updateNetworkInterface",
         "deleteNetworkInterface",
     ):
-        assert curated["tool_notes"][operation_id] == vlan_note
+        note = curated["tool_notes"][operation_id]
+        assert note.startswith("VLAN only:")
+        assert "getNetworkInterface" in note
+        assert "rejects any type other than vlan" in note
+        assert "read-only" in note
 
     # Composite tools are declared, audited and distinct from the 1:1 map.
     composite = {tool["name"]: tool for tool in curated["composite_tools"]}
@@ -484,10 +485,7 @@ def test_document_records_the_scope_change(generated: str) -> None:
     assert "network_interface_create_vlan" in generated
     assert "network_interface_update_vlan" in generated
     assert "network_interface_delete_vlan" in generated
-    assert (
-        "VLAN only: rejects any type other than vlan; physical, bridge, LAG and XFRM "
-        "interfaces are read-only"
-    ) in generated
+    assert "VLAN only: pre-reads the interface with getNetworkInterface" in generated
     assert "### 4.10 Accepted regressions" in generated
     for regression in ("system-information", "service-status", "log-query"):
         assert f"`{regression}`" in generated
