@@ -18,7 +18,7 @@ run adds a new dated section instead of rewriting this one.
 | Field | Value |
 |---|---|
 | Appliance model | `unknown` — the Configuration REST API exposes no model endpoint; the appliance hostname is `SophosXGHome` |
-| SFOS build | `unknown` — the API exposes no version endpoint (`GET /administration/system-settings` returns only `hostname`, `loginDisclaimer`, `updatedAt`); no firmware compatibility is claimed |
+| SFOS build | **SFOS 23.0.0 GA-Build371** (owner-provided on 2026-11-15; the API exposes no version endpoint). No general firmware compatibility is claimed beyond this build. |
 | Administrator profile / permissions | `Read only Admin` (47 permissions, all `readOnly`), inferred from the administrator list; the API does not expose which administrator created the key |
 | API allowlist source | `unknown` — not exposed by the API |
 | Date | 2026-11-15 (UTC), run window 15:57–16:10 |
@@ -777,7 +777,7 @@ Ordered by the damage an agent can do with the current behaviour:
 
 ## 8. What this run does not prove
 
-- **No firmware compatibility claim.** The SFOS build is unknown; the results apply to this
+- **No general firmware compatibility claim.** The build is SFOS 23.0.0 GA-Build371; the results apply to this
   one appliance on 15 November 2026.
 - **No write behaviour.** PATCH merge semantics, ambiguous-write reconciliation, permission
   denial (`403`) and every mutation remain unverified.
@@ -803,7 +803,7 @@ Ordered by the damage an agent can do with the current behaviour:
 | Get-by-id for the 24 empty collections listed in §8 | The appliance holds no object of that kind | phase-4 owner | Objects created on a non-production appliance |
 | `dhcp_relay_get_ipv4` with a real relay | No relay object exists; an unknown UUID returns 401 | phase-4 owner | A relay object on a non-production appliance |
 | `403` permission denial | Requires a write attempt | repository owner | Write key + owner approval |
-| Exact SFOS build and appliance model | The API exposes neither | repository owner | Console/CLI access, or an owner-provided build string |
+| Exact SFOS build and appliance model | The API exposes neither; the build was provided by the owner | repository owner | Appliance model still unknown |
 
 ## 10. Resolution (15 November 2026)
 

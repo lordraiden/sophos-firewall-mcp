@@ -15,7 +15,7 @@ run adds a new dated section instead of rewriting this one.
 | Field | Value |
 |---|---|
 | Appliance model | `unknown` — the Configuration REST API exposes no model endpoint; the appliance hostname is `SophosXGHome` |
-| SFOS build | `unknown` — the API exposes no version endpoint (`GET /administration/system-settings` returns only `hostname`, `loginDisclaimer`, `updatedAt`); no firmware compatibility is claimed |
+| SFOS build | **SFOS 23.0.0 GA-Build371** (owner-provided on 2026-11-15; the API exposes no version endpoint). No general firmware compatibility is claimed beyond this build. |
 | Administrator profile / permissions | `Read only Admin` (47 permissions, all `readOnly`), inferred from the administrator list; the API does not expose which administrator created the key |
 | API allowlist source | `unknown` — not exposed by the API; configured in Administration → API access (maximum 64 entries) |
 | Date | 2026-11-15 (UTC) |
@@ -312,12 +312,12 @@ coverage matrix does not imply more than was observed.
 | Real PATCH merge semantics on arrays (the four documented exceptions) | Requires a write key | #32 | Write key + disposable-object plan |
 | Effective `403` denial for writes with a read-only profile | Requires a write attempt | #32 | Write key + owner approval |
 | Ambiguous-write reconciliation (timeout then reconcile) | Requires a write | #32 | Write key + disposable-object plan |
-| Exact SFOS build and appliance model | The API exposes neither | #32 | Console/CLI access to the appliance, or an owner-provided build string |
+| Exact SFOS build and appliance model | The API exposes neither; the build was provided by the owner | #32 | Appliance model still unknown |
 | API allowlist source | Not exposed by the API | #32 | Owner-provided Administration → API access configuration |
 
 ## 7. What this evidence does not prove
 
-- **No firmware compatibility claim.** The SFOS build is unknown; the results apply to this
+- **No general firmware compatibility claim.** The build is SFOS 23.0.0 GA-Build371; the results apply to this
   one appliance on 15 November 2026 and must not be generalised to other builds.
 - **No write behaviour.** PATCH merge semantics, ambiguous-write reconciliation, permission
   denial and every mutation remain unverified against a real appliance.
