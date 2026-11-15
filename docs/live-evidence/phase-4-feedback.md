@@ -804,3 +804,40 @@ Ordered by the damage an agent can do with the current behaviour:
 | `dhcp_relay_get_ipv4` with a real relay | No relay object exists; an unknown UUID returns 401 | phase-4 owner | A relay object on a non-production appliance |
 | `403` permission denial | Requires a write attempt | repository owner | Write key + owner approval |
 | Exact SFOS build and appliance model | The API exposes neither | repository owner | Console/CLI access, or an owner-provided build string |
+
+## 10. Resolution (15 November 2026)
+
+This section is appended after the fixes; the findings above are unchanged.
+
+### Fixed in 0.5.0
+
+| Finding | Fix |
+|---|---|
+| **B1** blocker | `_evaluate_rules`/`_evaluate_nat` treat a `False` criterion as non-matching; a rule is decisive only when every projected criterion matches. 48-case regression matrix. |
+| **H1** | `unused-object` scans both rule and NAT families when `ip_family` restricts the report. |
+| **H2** | `service_list` filters `type` client-side and says so in the description. |
+| **H3** | 401 renders an authentication message; 403 keeps the authorization message. |
+| **H4** | The WAN gateway is modelled as the default route. |
+| **D1** (write validation) | `group` is a `{"name": …}` reference; live create/update/delete re-validated. |
+| **M3** | Built-in and list-returned identifiers (`##ALL_RW`, names with `/`) are accepted; verified live. |
+| **M4–M8** | Severity-ordered truncation, built-ins excluded from `unused-object`, `rule_name_contains` narrows the report, `not-verifiable` includes candidates and missing evidence, family inferred when one rule base is empty. |
+| **L2** | `live_user_list` no longer names an unregistered tool. |
+| **L4** | Validation errors are sanitized (no internal model names or pydantic URLs). |
+| **L5** | The argument model is closed (`additionalProperties: false`); unknown arguments are rejected. |
+
+### Deferred
+
+| Finding | Reason |
+|---|---|
+| **M2** output field naming split | Same class as M1 but on the output surface; a separate breaking change, planned for a later release. |
+| **M9** `dhcp_relay_get_ipv4` unknown UUID → 401 | Appliance quirk; no relay object exists to verify the happy path. |
+| **M10** `request` wrapper undocumented | Documentation task; the wrapper is the SDK's single-argument convention. |
+| **M11** large default outputs | Needs a product decision on default page size/projection. |
+| **M12–M16** | Contract limitations (no `position`, no SNAT/DNAT discriminator, differing reference shapes, keyset pagination, missing `pages`). |
+| **L1, L3, L6–L10** | Low-severity documentation/format items. |
+
+### Corrections to the phase-3 evidence
+
+The phase-3 "0 FAIL" measured HTTP status and schema validity, not content correctness; this run shows
+that a schema-valid answer can still be wrong. The phase-3 naming claim is superseded by M1: the
+published input surface is now uniformly snake_case.
