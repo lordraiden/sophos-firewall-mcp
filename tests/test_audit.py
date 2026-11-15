@@ -1089,6 +1089,80 @@ async def test_a_truncated_scan_is_reported_with_its_collection(router: Any) -> 
     assert scan["itemLimitPerCollection"] == 500
 
 
+async def test_audit_reports_progress_for_every_page_it_reads(router: Any) -> None:
+    """M6: a multi-page scan reports progress instead of hanging opaquely."""
+    install(router, {RULES_V4: page([firewall_rule(name="r1")], total=1000)})
+
+    updates: list[tuple[float, float | None, str | None]] = []
+
+    async def record(progress: float, total: float | None, message: str | None) -> None:
+        updates.append((progress, total, message))
+
+    server = make_server()
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "audit_firewall_rules",
+            {"request": {"checks": ["disabled"], "ip_family": "ipv4"}},
+            progress_callback=record,
+        )
+
+    assert result.is_error is False
+    assert result.structured_content["scan"]["pagesRead"] == 5
+    # One notification per page read: current is the pages read, total is the page cap.
+    assert [update[0] for update in updates] == [1.0, 2.0, 3.0, 4.0, 5.0]
+    assert {update[1] for update in updates} == {80.0}
+    assert all(update[2] is not None and "firewall-rules-ipv4" in update[2] for update in updates)
+
+
+async def test_audit_reports_progress_across_collections(router: Any) -> None:
+    """The progress counter is global to the scan, not reset per collection."""
+    install(
+        router,
+        {
+            RULES_V4: page([firewall_rule(name="r1")]),
+            RULES_V6: page([firewall_rule(name="r6")]),
+        },
+    )
+
+    updates: list[float] = []
+
+    async def record(progress: float, total: float | None, message: str | None) -> None:
+        updates.append(progress)
+
+    server = make_server()
+    async with Client(server) as client:
+        result = await client.call_tool(
+            "audit_firewall_rules",
+            {"request": {"checks": ["disabled"]}},
+            progress_callback=record,
+        )
+
+    assert result.is_error is False
+    assert result.structured_content["scan"]["pagesRead"] == 2
+    assert updates == [1.0, 2.0]
+
+
+async def test_audit_progress_does_not_change_the_output(router: Any) -> None:
+    """Progress is advisory: the same request yields the same output with or without it."""
+    install(router, {RULES_V4: page([firewall_rule(name="allow-all")])})
+
+    async def record(progress: float, total: float | None, message: str | None) -> None:
+        return None
+
+    server = make_server()
+    async with Client(server) as client:
+        with_progress = await client.call_tool(
+            "audit_firewall_rules",
+            {"request": {"checks": ["any-any"], "ip_family": "ipv4"}},
+            progress_callback=record,
+        )
+    without_progress = await call_tool(
+        "audit_firewall_rules", {"checks": ["any-any"], "ip_family": "ipv4"}
+    )
+
+    assert with_progress.structured_content == without_progress.structured_content
+
+
 async def test_audit_reads_the_audited_paths_with_the_documented_pagination(
     router: Any,
 ) -> None:
@@ -2101,6 +2175,20 @@ async def test_audit_tool_descriptions_state_their_limits() -> None:
     for name in AUDIT_TOOLS:
         assert tools[name].title
         assert tools[name].description
+
+
+async def test_composite_descriptions_state_the_latency_bound() -> None:
+    """M6: each composite states how many pages it may read and how long that takes."""
+    tools = await tool_map()
+
+    for name in AUDIT_TOOLS:
+        description = tools[name].description
+        assert "Reads up to 80 pages" in description
+        assert "expect a few seconds" in description
+        assert "up to a minute" in description
+
+    # The audit tool is the one that reports progress, and it says so.
+    assert "Progress is reported once per page" in tools["audit_firewall_rules"].description
 
 
 async def test_audit_description_states_the_two_finding_shapes(router: Any) -> None:
