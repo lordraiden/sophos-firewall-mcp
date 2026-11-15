@@ -1505,9 +1505,7 @@ def render_document(
     for evidence_path in (part.strip() for part in live_evidence.split(",")):
         if not evidence_path:
             continue
-        evidence_href = (
-            evidence_path[5:] if evidence_path.startswith("docs/") else evidence_path
-        )
+        evidence_href = evidence_path[5:] if evidence_path.startswith("docs/") else evidence_path
         evidence_links.append(f"[`{evidence_path}`]({evidence_href})")
     add(
         f"Live evidence: {', '.join(evidence_links)}. "
