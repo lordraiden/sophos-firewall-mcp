@@ -358,11 +358,12 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         title="Create network user",
         description=(
             "Create a network-user account (`createNetworkUser`). `name`, `display_name`, "
-            "`password` and `group` are required; description, active state, email addresses, "
-            "policies and VPN access are optional. The password is write-only: it is sent "
-            "once, is never returned, logged or included in errors. Returns the created "
-            "account. Not idempotent: repeating the call creates nothing new but fails with a "
-            "conflict because the name already exists."
+            "`password` and `group` are required; `group` is a `{name}` reference such as "
+            '`{"name": "Open Group"}`, not a bare string. Description, active state, email '
+            "addresses, policies and VPN access are optional. The password is write-only: it "
+            "is sent once, is never returned, logged or included in errors. Returns the "
+            "created account. Not idempotent: repeating the call creates nothing new but "
+            "fails with a conflict because the name already exists."
         ),
         annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
@@ -381,9 +382,10 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "Update a network-user account (`updateNetworkUser`) by name or UUID. This is a "
             "PATCH with JSON Merge Patch semantics: only the fields you provide are sent, so "
             "omitted fields keep their stored values and an explicit null removes a property. "
-            "At least one field is required. `password` is write-only and never returned. "
-            "Returns the updated account. Idempotent: sending the same body twice leaves the "
-            "same state."
+            "At least one field is required. `group`, when provided, is a `{name}` reference "
+            'such as `{"name": "Open Group"}`, not a bare string. `password` is write-only and '
+            "never returned. Returns the updated account. Idempotent: sending the same body "
+            "twice leaves the same state."
         ),
         annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=True),
     )

@@ -10,6 +10,12 @@ defect: `network_user_create` / `network_user_update` send `group` in the wrong 
 Every object created for this run was deleted and verified gone; the appliance is back to its
 exact baseline.
 
+**Follow-up (same day):** D1 is **fixed and re-validated live** — the network-user
+create/update/delete cycle now passes end to end (§11). D2 is **closed as not a defect**: the
+sanitized appliance error code was already surfaced, and the live probe confirms it (§11.2).
+The five observations in §7 are recorded as feedback items with severity and were not fixed
+here.
+
 This is the first record in this directory that contains writes. The read-only rule in
 [`README.md`](README.md) §1 is superseded for this run only by an explicit owner approval
 and a disposable-object plan, both recorded below.
@@ -136,6 +142,9 @@ This isolates D1 to the `group` field: every other part of the network-user writ
 The fixture was created and removed within the run, so it does not appear in the baseline or
 the final counts.
 
+> Superseded by §11.1: after the D1 fix the whole cycle runs through the tool, with no
+> out-of-band fixture.
+
 ## 5. Applied-state verification (`enabled: false`)
 
 This is the safety-critical result of the run. The value below is the **applied** state read
@@ -167,7 +176,7 @@ A second, separate create/delete cycle confirmed the insertion point rather than
 Both rules were `enabled: false` in the same cycle and were deleted immediately afterwards
 (verified `404`).
 
-## 6. Defects
+## 6. Defects and their resolution
 
 ### D1 — `network_user_create` and `network_user_update` send `group` as a string
 
@@ -235,36 +244,65 @@ request body, so the suite locks in the defect and cannot catch it.
 **Impact:** `network_user_create` always fails against a real appliance. `network_user_update`
 fails whenever `group` is part of the patch; a description-only patch works (verified in §4.5).
 
-**Not fixed here.** Per the task constraints a defect is recorded, not repaired, without Lead
-approval.
+**Fixed (approved by the Lead, task-31).** `group` is now a reference model in both input
+models, so the published schema and the wire body both use `{"name": "<group>"}`:
 
-### D2 — the appliance's validation reason is discarded from write errors
+```python
+class UserGroupRefInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: UserGroupName = Field(description="User group name (OUGROUPNAME token).")
+```
 
-**Severity:** medium (diagnosability).
+`NetworkUserCreateInput.group` and `NetworkUserUpdateInput.group` are typed as
+`UserGroupRefInput`; a bare string is now rejected by input validation instead of being sent
+to the appliance. The two unit tests that encoded the wrong contract were corrected, and three
+regression tests were added (bare string rejected, model shape matches the contract, error
+code surfaced). Live re-validation is in §11.1.
 
-**Observed:** for the same rejected request the appliance answers with a specific code and
-message — `{"error":"invalidInputPassword","message":"Invalid password."}` or
-`{"error":"invalidRequest","message":"Invalid group."}` — but the tool returns the generic
-*"the firewall rejected the request as invalid; check the field values (HTTP 400) [error:
-invalidRequest]"*. The caller cannot tell which field is wrong, and a wrong password and a
-wrong `group` shape are indistinguishable.
+### D2 — write errors carry the appliance code but not its message (closed: not a defect)
 
-**Expected behaviour:** surface the appliance's `error` code (and a sanitized `message`) in
-the tool error. Neither is secret; the sanitization that matters is for credentials and
-response bodies, not for the validation code.
+**Originally reported as:** medium (diagnosability) — the appliance's validation reason is
+discarded, so a caller cannot tell which field is wrong.
 
-**Note:** this is the reason D1 was hard to diagnose from the tool surface alone; the direct
-REST probe was needed to separate the two causes.
+**What the tool actually returns.** For the rejected create the appliance answered
+`{"error":"invalidRequest","message":"Invalid group."}` and the tool returned:
 
-## 7. Observations (not defects)
+```text
+Error executing tool network_user_create: the firewall rejected the request as invalid;
+check the field values (HTTP 400) [POST /authentication/users/network-users]
+[error: invalidRequest]
+```
 
-| # | Observation | Impact |
-|---|---|---|
-| O1 | MAC addresses are normalised to upper case: sent `02:de:ad:be:ef:01`, stored and returned `02:DE:AD:BE:EF:01`. | A caller comparing the returned value to its input must compare case-insensitively. Not a server defect. |
-| O2 | Response envelopes are inconsistent across object reads: `address_get_ipv4` returns `{"address": {...}}` while `address_get_fqdn`, `service_get`, `mac_address_get`, `network_user_get`, `firewall_rule_get_ipv4` and `nat_rule_get_ipv4` return the object flat. | A client must special-case IPv4 address reads. Worth folding into the 0.5.0 surface unification (workstream C). |
-| O3 | `network_user_delete` reports success for an object that does not exist: `DELETE /authentication/users/network-users/mcp-test-p4w24049e-user` returned `200` even though the create had failed with `400`. | The tool cannot distinguish "deleted" from "never existed". Low severity (idempotent delete is defensible), but it weakens cleanup verification for this collection. |
-| O4 | `active: false` is not honoured on create: a direct REST create with `"active": false` returned `"active": true`. | Appliance behaviour, not an MCP defect. It could not be checked through the tool because of D1. |
-| O5 | NAT rule network selections encode "not selected" inconsistently: `original_source_networks.any` came back `true` while `original_destination_networks.any` came back `null` (not `false`) when a selection was used. | The output model tolerates it; a strict `oneOf` validator would not. Minor contract deviation. |
+The sanitized appliance `error` code **is** surfaced. `tool_error` appends
+`[error: <code>]` from `SophosAPIError.error_code`, which `_extract_error_code` reads from the
+JSON `error` member and sanitizes; only the free-text `message` is dropped, deliberately.
+
+**Live confirmation.** A create with a password that violates the appliance policy returns
+`[error: invalidInputPassword]` — a different, specific code — while the message
+("Invalid password.") is not forwarded (§11.2). So the code path already distinguishes the
+failure classes.
+
+**Conclusion: not a defect.** The original report overstated the loss: the code was surfaced
+all along, and the only thing dropped is the human-readable `message`, which is dropped by
+design to keep appliance payloads out of tool errors. The residual diagnosability gap is that
+the appliance itself uses the generic `invalidRequest` for a malformed `group`, which is the
+appliance's choice, not a mapping bug in this server. A regression test
+(`test_network_user_create_surfaces_the_appliance_error_code`) now pins both halves: the code
+is present and the raw message is not.
+
+## 7. Feedback items (recorded, not fixed here)
+
+These are appliance behaviours or surface inconsistencies observed during the run. None of
+them is a defect in the server's write path, and none was fixed in task-31; they are recorded
+with a severity so the owner can decide whether to document or address them.
+
+| # | Feedback item | Severity | Impact / suggested action |
+|---|---|---|---|
+| O1 | MAC addresses are normalised to upper case: sent `02:de:ad:be:ef:01`, stored and returned `02:DE:AD:BE:EF:01`. | low | A caller comparing the returned value to its input must compare case-insensitively. Document it in the MAC tool description. |
+| O2 | Response envelopes are inconsistent across object reads: `address_get_ipv4` returns `{"address": {...}}` while `address_get_fqdn`, `service_get`, `mac_address_get`, `network_user_get`, `firewall_rule_get_ipv4` and `nat_rule_get_ipv4` return the object flat. | low | A client must special-case IPv4 address reads. Fold into the 0.5.0 surface unification (workstream C). |
+| O3 | `network_user_delete` reports success for an object that does not exist: `DELETE /authentication/users/network-users/mcp-test-p4w24049e-user` returned `200` even though the create had failed with `400`. | low | The tool cannot distinguish "deleted" from "never existed". Idempotent delete is defensible; document it. |
+| O4 | `active: false` is not honoured on create: a create with `"active": false` returned `"active": true` (observed twice, through the tool and through direct REST). | **medium** | A caller that asks for a disabled account silently gets an enabled one. Security-relevant surprise: document it in the `network_user_create` description, or read the account back and report the applied state. |
+| O5 | NAT rule network selections encode "not selected" inconsistently: `original_source_networks.any` came back `true` while `original_destination_networks.any` came back `null` (not `false`) when a selection was used. | low | The output model tolerates it; a strict `oneOf` validator would not. Minor contract deviation. |
 
 ## 8. Cleanup confirmation
 
@@ -306,8 +344,8 @@ users, authentication users, IPv4/IPv6 firewall rules and IPv4/IPv6 NAT rules.
 
 | Not validated | Reason |
 |---|---|
-| `createNetworkUser` | Blocked by D1; the rest of the network-user path was validated with a fixture (§4.5) |
-| `updateNetworkUser` with `group` | Fails with D1; the description-only update passed (§4.5) |
+| ~~`createNetworkUser`~~ | **Now validated** after the D1 fix (§11.1) |
+| ~~`updateNetworkUser` with `group`~~ | **Now validated** after the D1 fix (§11.1) |
 | `firewall_rule_set_enabled_ipv4/ipv6` | Deliberately not exercised: it would enable a rule |
 | `firewall_rule_move_ipv4`, `nat_rule_move_ipv4` | Out of scope: moving mutates the existing rule base |
 | `firewall_rule_clone_ipv4/ipv6` | Out of scope: clones an existing rule |
@@ -344,9 +382,66 @@ from sophos_firewall_mcp.tools.users_auth import _create_body
 
 req = NetworkUserCreateInput(
     name="mcp-test-x", display_name="mcp test",
-    password="<policy-compliant>", group="Open Group",
+    password="<policy-compliant>", group={"name": "Open Group"},
 )
-print(_create_body(req))   # -> {'name': ..., 'displayName': ..., 'group': 'Open Group', ...}
+print(_create_body(req))
+# -> {'name': ..., 'displayName': ..., 'group': {'name': 'Open Group'}, ...}
 ```
 
-`group` is a string; the contract requires `{"name": "Open Group"}`.
+Before the fix this produced `"group": "Open Group"` (a string), which the appliance rejects
+with `400 invalidRequest` ("Invalid group."). The fixed model rejects a bare string at input
+validation instead of sending it.
+
+## 11. Re-validation after the D1 fix (15 November 2026)
+
+**Server under test:** the fixed source, run from the worktree virtualenv
+(`.venv/bin/sophos-firewall-mcp-server`), not the published 0.4.0 binary.
+**Run suffix:** `p4wr62cc8e`. Same safety constraints as §1.
+
+### 11.1 D1 — network-user create / update / delete now pass
+
+| operationId | method + path | result | HTTP | observation |
+|---|---|---|---|---|
+| `createNetworkUser` | `POST /authentication/users/network-users` | **PASS** | 201 | body sent `"group": {"name": "Open Group"}`; account created |
+| `getNetworkUser` | `GET /authentication/users/network-users/{name}` | PASS | 200 | `group: "Open Group"`, `display_name: "mcp test user"` |
+| `updateNetworkUser` (with `group`) | `PATCH /authentication/users/network-users/{name}` | **PASS** | 200 | the path that returned `400` before the fix; `group` and `description` applied |
+| `getNetworkUser` | `GET /authentication/users/network-users/{name}` | PASS | 200 | `description` updated, `group` and `display_name` preserved |
+| `deleteNetworkUser` | `DELETE /authentication/users/network-users/{name}` | PASS | 200 | `{"deleted": true}`; follow-up `GET` 404 |
+
+**Cleanup:** baseline and final are identical — 2 network users (`miriam`, `remote`) before and
+after, zero objects containing `mcp-test`. The account created for this run was deleted and
+verified gone.
+
+**Note (O4 again):** the create sent `"active": false` and the appliance still returned
+`"active": true`, so the observation in §7 is reproducible through the fixed tool.
+
+### 11.2 D2 — closed as not a defect
+
+A create with a password that violates the appliance policy
+(`enabled: true, minLength: 10, enforceMixedCase/Numbers/SpecialCharacters: true`) returned:
+
+```text
+Error executing tool network_user_create: the firewall rejected the request as invalid;
+check the field values (HTTP 400) [POST /authentication/users/network-users]
+[error: invalidInputPassword]
+```
+
+The sanitized appliance code **is** surfaced, and the free-text `message`
+("Invalid password.") is **not** forwarded. D2 is therefore not a defect: the code path
+(`_extract_error_code` → `SophosAPIError.error_code` → `tool_error`) already does the right
+thing. A regression test
+(`test_network_user_create_surfaces_the_appliance_error_code`) now pins both halves of that
+behaviour.
+
+### 11.3 Verification
+
+| Check | Result |
+|---|---|
+| `pytest -q` (full suite) | 966 passed, 100 skipped, 0 failed |
+| `pytest tests/test_users_auth.py -q` | 124 passed |
+| `black --check` on the three changed files | unchanged |
+| `flake8` on the three changed files | clean |
+| `mypy` on the two changed source files | no issues |
+| Live create/update/delete with a real group | PASS (§11.1) |
+| Cleanup | baseline == final, zero `mcp-test` objects |
+
