@@ -766,8 +766,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv4 DHCP servers",
         description=(
             "List the IPv4 DHCP servers with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call. Configuration only: "
-            "use dhcp_lease_list_ipv4 for live leases. Read-only: DHCP mutations are excluded."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Configuration only: use dhcp_lease_list_ipv4 for live leases. Read-only: DHCP "
+            "mutations are excluded."
         ),
     )
     async def dhcp_server_list_ipv4(
@@ -800,8 +801,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv6 DHCP servers",
         description=(
             "List the IPv6 DHCP servers with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call. Configuration only: "
-            "use dhcp_lease_list_ipv6 for live leases. Read-only."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Configuration only: use dhcp_lease_list_ipv6 for live leases. Read-only."
         ),
     )
     async def dhcp_server_list_ipv6(
@@ -838,7 +839,12 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "List the active IPv4 DHCP leases. This is live state, not configuration. The "
             "contract declares no page/pageSize parameters for this operation (it returns "
             "keyset metadata), so the call takes no pagination input and returns one page with "
-            "its pages metadata preserved. Read-only."
+            "its pages metadata preserved. Only the first page is reachable: a non-null "
+            "pages.nextKey means the list is incomplete and the remaining leases cannot be "
+            "fetched through this server. pages.maxSize is not a page-size bound here -- the "
+            "appliance reports the item count of the returned page in it (21 items and "
+            "maxSize 21 on the lab appliance) -- and the value is preserved as returned. "
+            "Read-only."
         ),
     )
     async def dhcp_lease_list_ipv4(
@@ -857,7 +863,10 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "List the active IPv6 DHCP leases. This is live state, not configuration. The "
             "contract declares no page/pageSize parameters for this operation, so the call "
             "takes no pagination input and returns one page with its pages metadata preserved. "
-            "Read-only."
+            "Only the first page is reachable: a non-null pages.nextKey means the list is "
+            "incomplete and the remaining leases cannot be fetched through this server. "
+            "pages.maxSize is not a page-size bound here either (the appliance reports the "
+            "item count of the returned page in it, as on the IPv4 lease list). Read-only."
         ),
     )
     async def dhcp_lease_list_ipv6(
@@ -876,7 +885,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv4 DHCP relays",
         description=(
             "List the IPv4 DHCP relays with optional name filters. The operation declares no "
-            "pagination. Read-only: DHCP mutations are excluded."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Read-only: DHCP mutations are excluded."
         ),
     )
     async def dhcp_relay_list_ipv4(
@@ -910,7 +920,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="List IPv6 DHCP relays",
         description=(
             "List the IPv6 DHCP relays with optional name filters. The operation declares no "
-            "pagination. Read-only."
+            "pagination, so the whole collection is returned in one call and pages is null. "
+            "Read-only."
         ),
     )
     async def dhcp_relay_list_ipv6(

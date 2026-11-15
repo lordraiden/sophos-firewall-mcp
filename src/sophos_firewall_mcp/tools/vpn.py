@@ -333,7 +333,9 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "security associations, traffic selectors and packet/byte counters. This is "
             "operational state, not configuration: an empty list means no tunnel is currently "
             "established, not that none is configured. The operation declares no pagination "
-            "parameters. Read-only."
+            "parameters and the appliance caps the response at 1000 items (pages.size and "
+            "pages.maxSize are both 1000), so a list of exactly 1000 items may be truncated "
+            "and there is no way to page past it. Read-only."
         ),
     )
     async def ipsec_live_connection_list_ipv4(
@@ -351,8 +353,11 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         description=(
             "Read the remote-access IPsec configuration: connection state, profile, gateway "
             "authentication, authorized users and groups, the IPv4 lease range, DNS settings "
-            "and Sophos Connect client settings. Read-only: the settings cannot be changed "
-            "through this server."
+            "and Sophos Connect client settings. configured is derived, not returned by the "
+            "appliance: it is false when connectionState is unset (remote-access IPsec is not "
+            "configured at all) and true when connectionState is enabled or disabled, so an "
+            "agent does not have to know the unset sentinel. Read-only: the settings cannot be "
+            "changed through this server."
         ),
     )
     async def ipsec_remote_access_settings_get(

@@ -20,6 +20,7 @@ from sophos_firewall_mcp.models.vpn import (
     FailoverGroupListInput,
     IpsecLiveConnection,
     IpsecProfile,
+    IpsecRemoteAccessSettings,
     SslVpnBookmark,
     VpnFilteredPageInput,
     VpnProfileRefInput,
@@ -315,6 +316,54 @@ async def test_live_connections_project_security_associations(router: Any) -> No
     assert association.trafficSelectors is not None
     assert association.trafficSelectors.localNetworkIpv4 == "192.168.77.0/24"
     assert association.bytesReceived == 2048
+
+
+async def test_live_connection_list_states_the_1000_item_ceiling() -> None:
+    """L9: the appliance caps the response at 1000 items and there is no way to page.
+
+    The operation declares no ``page``/``pageSize`` parameters, so the tool must not invent
+    them; it must state the ceiling so a full page is not read as a complete list.
+    """
+    tools = await tool_map()
+    tool = tools["ipsec_live_connection_list_ipv4"]
+
+    assert "1000" in tool.description
+    assert "truncated" in tool.description
+    assert tool.input_schema.get("properties", {}) == {}
+
+
+async def test_remote_access_settings_flag_an_unset_configuration(router: Any) -> None:
+    """L10: an all-null object with ``connectionState: "unset"`` must read as unconfigured."""
+    router.get(f"{BASE}/ipsec-vpn/remote-access/settings").mock(
+        return_value=httpx.Response(200, json={"connectionState": "unset"})
+    )
+
+    result = await call_tool("ipsec_remote_access_settings_get", {})
+
+    assert result.is_error is False
+    assert result.structured_content["configured"] is False
+    assert result.structured_content["connectionState"] == "unset"
+
+    tools = await tool_map()
+    assert "configured" in tools["ipsec_remote_access_settings_get"].description
+
+
+def test_configured_is_derived_from_the_connection_state() -> None:
+    """L10: ``configured`` is true only when a configuration exists (enabled or disabled)."""
+    assert (
+        IpsecRemoteAccessSettings.model_validate({"connectionState": "unset"}).configured is False
+    )
+    assert (
+        IpsecRemoteAccessSettings.model_validate({"connectionState": "enabled"}).configured is True
+    )
+    assert (
+        IpsecRemoteAccessSettings.model_validate({"connectionState": "disabled"}).configured is True
+    )
+    # A missing connectionState violates the contract: report unconfigured, never guess.
+    assert IpsecRemoteAccessSettings.model_validate({}).configured is False
+    # The flag is published in the output schema, so an agent can see it before calling.
+    schema = IpsecRemoteAccessSettings.model_json_schema()["properties"]
+    assert schema["configured"]["type"] == "boolean"
 
 
 # -- Discovery, annotations and the read-only guarantee --------------------------------

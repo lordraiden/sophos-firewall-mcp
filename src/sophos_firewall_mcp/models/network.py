@@ -1156,15 +1156,53 @@ class KeysetPages(_Output):
 
     The contract returns ``fromKey``/``nextKey`` instead of ``current``: the lease
     endpoints declare no ``page``/``pageSize`` request parameters, so the keys are
-    preserved as metadata only and no pagination input is exposed.
+    preserved as metadata only and no pagination input is exposed. Only the first page is
+    therefore reachable, and a non-null ``nextKey`` means the returned list is incomplete.
+
+    ``maxSize`` is **not** a page-size bound on these endpoints. The contract describes it
+    as "the maximum page size that can be requested", but there is no page size to request
+    here: the appliance reports the number of items in the returned page in that member
+    (21 items and ``maxSize: 21`` on the lab appliance). The value is preserved exactly as
+    returned, never rewritten.
     """
 
-    fromKey: str | None = None
-    nextKey: str | None = None
-    total: int | None = None
-    items: int | None = None
-    size: int | None = None
-    maxSize: int | None = None
+    fromKey: str | None = Field(
+        default=None,
+        description="Key of the first item in the returned page.",
+    )
+    nextKey: str | None = Field(
+        default=None,
+        description=(
+            "Key of the next page. A non-null value means the list is incomplete: this "
+            "server exposes no input to pass the key back, so the remaining items are "
+            "unreachable through it."
+        ),
+    )
+    total: int | None = Field(
+        default=None,
+        description=(
+            "Number of pages, when the request asked for totals. Always null here: the "
+            "lease endpoints declare no pageTotal parameter."
+        ),
+    )
+    items: int | None = Field(
+        default=None,
+        description=(
+            "Number of items across all pages, when the request asked for totals. Always "
+            "null here: the lease endpoints declare no pageTotal parameter."
+        ),
+    )
+    size: int | None = Field(
+        default=None,
+        description="Number of items in the returned page.",
+    )
+    maxSize: int | None = Field(
+        default=None,
+        description=(
+            "Not a page-size bound on this endpoint: the appliance reports the item count "
+            "of the returned page here. Preserved as returned."
+        ),
+    )
 
 
 ItemT = TypeVar("ItemT")
@@ -1183,13 +1221,22 @@ class UnpaginatedList(BaseModel, Generic[ItemT]):
     """A collection the contract returns without ``pages`` metadata.
 
     ``getAllDhcpRelayIpv4``/``Ipv6`` and ``listDhcpServersIpv4``/``Ipv6`` declare only
-    ``items`` in their 200 response, so their projection must not render a ``pages``
-    member the contract does not define.
+    ``items`` in their 200 response, so the appliance returns no pagination metadata. The
+    projection still renders ``pages`` explicitly as ``null`` so the envelope matches every
+    other list tool: an agent can tell "no pagination metadata" from "truncated", and a
+    generic pagination loop does not break on these four tools.
     """
 
     model_config = ConfigDict(extra="ignore")
 
     items: list[ItemT]
+    pages: None = Field(
+        default=None,
+        description=(
+            "Always null: the operation declares no pagination metadata, so the whole "
+            "collection is returned in one call."
+        ),
+    )
 
 
 class DhcpRelayIpv4(_Output):

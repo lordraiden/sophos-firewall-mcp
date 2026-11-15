@@ -31,6 +31,7 @@ from sophos_firewall_mcp.models.network import (
     FilterInput,
     FilteredPageInput,
     KeysetPage,
+    KeysetPages,
     NetworkInterfaceCreateVlanInput,
     NetworkInterfaceUpdateVlanInput,
     SdwanRoute,
@@ -957,8 +958,12 @@ def test_unicast_route_models_match_the_parsed_contract() -> None:
     assert set(UnicastRouteIpv6.model_fields) == _response_properties("getUnicastRouteIPv6")
 
 
-async def test_unpaginated_lists_render_only_items(router: Any) -> None:
-    """The four list operations declare no ``pages`` member, so none is rendered."""
+async def test_unpaginated_lists_render_pages_null(router: Any) -> None:
+    """M16: the four list operations declare no ``pages``, so the envelope renders null.
+
+    A uniform envelope lets an agent tell "no pagination metadata" from "truncated" and
+    keeps a generic pagination loop working across every list tool.
+    """
     router.get(f"{BASE}/network/dhcp/relays/ipv4").mock(
         return_value=httpx.Response(200, json={"items": [{"id": RELAY_UUID, "name": "relay1"}]})
     )
@@ -966,7 +971,10 @@ async def test_unpaginated_lists_render_only_items(router: Any) -> None:
     result = await call_tool("dhcp_relay_list_ipv4", {"request": {}})
 
     assert result.is_error is False
-    assert set(result.structured_content) == {"items"}
+    assert set(result.structured_content) == {"items", "pages"}
+    assert result.structured_content["pages"] is None
+    assert result.structured_content["items"][0]["id"] == RELAY_UUID
+    assert result.structured_content["items"][0]["name"] == "relay1"
 
     tools = await tool_map()
     for name in (
@@ -977,4 +985,64 @@ async def test_unpaginated_lists_render_only_items(router: Any) -> None:
     ):
         schema = tools[name].output_schema
         assert schema is not None
-        assert "pages" not in schema["properties"], name
+        assert "pages" in schema["properties"], name
+        assert schema["properties"]["pages"]["type"] == "null", name
+        assert "pages: null" in tools[name].description or "pages is null" in (
+            tools[name].description
+        ), name
+
+
+async def test_dhcp_lease_list_documents_the_keyset_ceiling(router: Any) -> None:
+    """M15: only the first page is reachable, and the description must say so.
+
+    The contract declares no ``fromKey``/``nextKey`` request parameters, so the tool must
+    not invent them; it must instead warn that a non-null ``nextKey`` means the list is
+    incomplete.
+    """
+    router.get(f"{BASE}/network/dhcp/server/leases/ipv4").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [{"leasedIp": "10.0.10.50"}],
+                "pages": {
+                    "fromKey": "10.0.10.50",
+                    "nextKey": "10.0.10.51",
+                    "size": 1,
+                    "maxSize": 1,
+                },
+            },
+        )
+    )
+
+    result = await call_tool("dhcp_lease_list_ipv4", {})
+
+    assert result.is_error is False
+    # The appliance value is preserved, including the non-null nextKey.
+    assert result.structured_content["pages"]["nextKey"] == "10.0.10.51"
+
+    tools = await tool_map()
+    for name in ("dhcp_lease_list_ipv4", "dhcp_lease_list_ipv6"):
+        description = tools[name].description
+        assert "Only the first page is reachable" in description, name
+        assert "pages.nextKey" in description, name
+        assert "incomplete" in description, name
+        # No undeclared pagination input is exposed.
+        assert tools[name].input_schema.get("properties", {}) == {}, name
+
+
+def test_dhcp_lease_pages_max_size_is_documented_as_the_item_count() -> None:
+    """L8: ``maxSize`` is the item count here, not a page-size bound; the value is kept."""
+    pages = KeysetPages.model_validate(
+        {"fromKey": "10.10.10.3", "nextKey": None, "size": 21, "maxSize": 21}
+    )
+
+    assert pages.maxSize == 21
+    assert pages.size == 21
+    description = KeysetPages.model_json_schema()["properties"]["maxSize"]["description"]
+    assert "Not a page-size bound" in description
+    assert "item count" in description
+    # The keyset semantics of the other members are published too.
+    schema = KeysetPages.model_json_schema()["properties"]
+    assert "incomplete" in schema["nextKey"]["description"]
+    assert "Always null here" in schema["total"]["description"]
+    assert "Always null here" in schema["items"]["description"]
