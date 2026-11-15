@@ -44,6 +44,7 @@ from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
 from sophos_firewall_mcp.config import ConfigurationError, Settings  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
 from sophos_firewall_mcp.tools import DomainRegistrar  # noqa: E402
+from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
 from sophos_firewall_mcp.tools.hosts_objects import register_objects_tools  # noqa: E402
 from sophos_firewall_mcp.tools.nat_rules import register_nat_tools  # noqa: E402
@@ -76,14 +77,15 @@ INSTRUCTIONS = (
 #: Domain registration functions, in registration order.
 #:
 #: Phase 2 (#27-#31, #35): the six domain families from ADR-001 §10. ``network`` also
-#: registers the VPN and status tools, so it is a single entry point. ``audit`` is added
-#: last because it composes the other domains' adapters.
+#: registers the VPN and status tools, so it is a single entry point. ``audit`` is last
+#: because it composes the other domains' adapters.
 DEFAULT_DOMAINS: tuple[DomainRegistrar, ...] = (
     register_firewall_tools,
     register_nat_tools,
     register_objects_tools,
     register_users_tools,
     register_network_tools,
+    register_audit_tools,
 )
 
 

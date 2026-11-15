@@ -443,6 +443,7 @@ composite_tools:
     domain: audit
     kind: read
     operation_ids:
+      - getAllZones
       - getAllFirewallRulesIpv4
       - getAllFirewallRulesIpv6
       - getAllNatRulesIpv4
@@ -483,6 +484,10 @@ composite_tools:
     domain: audit
     kind: read
     operation_ids:
+      - getAllIpAddresses
+      - getAllIpv6Addresses
+      - getAllFqdns
+      - getAllServices
       - getAllFirewallRulesIpv4
       - getAllFirewallRulesIpv6
       - getAllNatRulesIpv4

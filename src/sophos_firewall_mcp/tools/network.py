@@ -59,16 +59,16 @@ __all__ = ["register_network_tools"]
 
 # -- API paths (module constants: no tool argument ever reaches a path) -----------------
 
-_INTERFACES = "/network/interfaces/network-interfaces"
-_ZONES = "/network/zones"
-_GATEWAYS_IPV4 = "/routing/gateways/ipv4"
-_GATEWAYS_IPV6 = "/routing/gateways/ipv6"
+INTERFACES_PATH = "/network/interfaces/network-interfaces"
+ZONES_PATH = "/network/zones"
+GATEWAYS_IPV4_PATH = "/routing/gateways/ipv4"
+GATEWAYS_IPV6_PATH = "/routing/gateways/ipv6"
 _WAN_GATEWAYS_IPV4 = "/routing/gateways/wan/ipv4"
 _WAN_GATEWAYS_IPV6 = "/routing/gateways/wan/ipv6"
 _CUSTOM_GATEWAYS_IPV4 = "/routing/gateways/custom/ipv4"
 _CUSTOM_GATEWAYS_IPV6 = "/routing/gateways/custom/ipv6"
-_UNICAST_ROUTES_IPV4 = "/routing/static-unicast-routes/ipv4"
-_UNICAST_ROUTES_IPV6 = "/routing/static-unicast-routes/ipv6"
+UNICAST_ROUTES_IPV4_PATH = "/routing/static-unicast-routes/ipv4"
+UNICAST_ROUTES_IPV6_PATH = "/routing/static-unicast-routes/ipv6"
 _SDWAN_ROUTES_IPV4 = "/sd-wan/routes/ipv4"
 _SDWAN_ROUTES_IPV6 = "/sd-wan/routes/ipv6"
 _DHCP_SERVERS_IPV4 = "/network/dhcp/server/servers/ipv4"
@@ -199,7 +199,7 @@ class NetworkAdapter(DomainAdapter):
 
     async def create_vlan(self, request: models.NetworkInterfaceCreateVlanInput) -> dict[str, Any]:
         """Create one VLAN interface after validating its parent interface."""
-        parent = await self.object(_INTERFACES, request.parent_interface)
+        parent = await self.object(INTERFACES_PATH, request.parent_interface)
         _refuse_unsuitable_parent(parent, request.parent_interface)
 
         body: dict[str, Any] = {
@@ -218,15 +218,15 @@ class NetworkAdapter(DomainAdapter):
             body["ipv6"] = request.ipv6.model_dump(mode="json", by_alias=True, exclude_none=True)
 
         try:
-            payload = await self.client.post(_INTERFACES, json=body)
+            payload = await self.client.post(INTERFACES_PATH, json=body)
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return _require_object(payload, _INTERFACES)
+        return _require_object(payload, INTERFACES_PATH)
 
     async def update_vlan(self, request: models.NetworkInterfaceUpdateVlanInput) -> dict[str, Any]:
         """Patch one VLAN interface after confirming the target really is a VLAN."""
         id_or_name = request.id_or_name
-        current = await self.object(_INTERFACES, id_or_name)
+        current = await self.object(INTERFACES_PATH, id_or_name)
         _refuse_non_vlan(current, id_or_name)
 
         body: dict[str, Any] = {}
@@ -244,17 +244,19 @@ class NetworkAdapter(DomainAdapter):
             body["mss"] = request.mss
 
         try:
-            payload = await self.client.patch(f"{_INTERFACES}/{_segment(id_or_name)}", json=body)
+            payload = await self.client.patch(
+                f"{INTERFACES_PATH}/{_segment(id_or_name)}", json=body
+            )
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
-        return _require_object(payload, _INTERFACES)
+        return _require_object(payload, INTERFACES_PATH)
 
     async def delete_vlan(self, id_or_name: str) -> models.InterfaceDeleteOutput:
         """Delete one VLAN interface after confirming the target really is a VLAN."""
-        current = await self.object(_INTERFACES, id_or_name)
+        current = await self.object(INTERFACES_PATH, id_or_name)
         _refuse_non_vlan(current, id_or_name)
         try:
-            await self.client.delete(f"{_INTERFACES}/{_segment(id_or_name)}")
+            await self.client.delete(f"{INTERFACES_PATH}/{_segment(id_or_name)}")
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
         # The client discards the ``{"deleted": ...}`` body; a 2xx is the appliance's
@@ -296,7 +298,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def network_interface_list(
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.NetworkInterface]:
-        payload = await NetworkAdapter.from_context(ctx).page(_INTERFACES, request)
+        payload = await NetworkAdapter.from_context(ctx).page(INTERFACES_PATH, request)
         return ListPage[models.NetworkInterface].model_validate(payload)
 
     @register_tool(
@@ -314,7 +316,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def network_interface_get(
         request: models.InterfaceRefInput, ctx: Context[AppContext]
     ) -> models.NetworkInterface:
-        payload = await NetworkAdapter.from_context(ctx).object(_INTERFACES, request.id_or_name)
+        payload = await NetworkAdapter.from_context(ctx).object(INTERFACES_PATH, request.id_or_name)
         return models.NetworkInterface.model_validate(payload)
 
     @register_tool(
@@ -396,7 +398,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def zone_list(
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.Zone]:
-        payload = await NetworkAdapter.from_context(ctx).page(_ZONES, request)
+        payload = await NetworkAdapter.from_context(ctx).page(ZONES_PATH, request)
         return ListPage[models.Zone].model_validate(payload)
 
     @register_tool(
@@ -408,7 +410,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         description="Read one network zone by name or UUID. Read-only.",
     )
     async def zone_get(request: models.ZoneRefInput, ctx: Context[AppContext]) -> models.Zone:
-        payload = await NetworkAdapter.from_context(ctx).object(_ZONES, request.id_or_name)
+        payload = await NetworkAdapter.from_context(ctx).object(ZONES_PATH, request.id_or_name)
         return models.Zone.model_validate(payload)
 
     # -- IPv4 gateways -----------------------------------------------------------------
@@ -428,7 +430,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def gateway_list_ipv4(
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.GatewayIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(_GATEWAYS_IPV4, request)
+        payload = await NetworkAdapter.from_context(ctx).page(GATEWAYS_IPV4_PATH, request)
         return ListPage[models.GatewayIpv4].model_validate(payload)
 
     @register_tool(
@@ -516,7 +518,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def gateway_list_ipv6(
         request: models.FilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.GatewayIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(_GATEWAYS_IPV6, request)
+        payload = await NetworkAdapter.from_context(ctx).page(GATEWAYS_IPV6_PATH, request)
         return ListPage[models.GatewayIpv6].model_validate(payload)
 
     @register_tool(
@@ -604,7 +606,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def unicast_route_list_ipv4(
         request: models.PageInput, ctx: Context[AppContext]
     ) -> ListPage[models.UnicastRouteIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(_UNICAST_ROUTES_IPV4, request)
+        payload = await NetworkAdapter.from_context(ctx).page(UNICAST_ROUTES_IPV4_PATH, request)
         return ListPage[models.UnicastRouteIpv4].model_validate(payload)
 
     @register_tool(
@@ -619,7 +621,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.WideRefInput, ctx: Context[AppContext]
     ) -> models.UnicastRouteIpv4:
         payload = await NetworkAdapter.from_context(ctx).object(
-            _UNICAST_ROUTES_IPV4, request.id_or_name
+            UNICAST_ROUTES_IPV4_PATH, request.id_or_name
         )
         return models.UnicastRouteIpv4.model_validate(payload)
 
@@ -638,7 +640,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
     async def unicast_route_list_ipv6(
         request: models.PageInput, ctx: Context[AppContext]
     ) -> ListPage[models.UnicastRouteIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(_UNICAST_ROUTES_IPV6, request)
+        payload = await NetworkAdapter.from_context(ctx).page(UNICAST_ROUTES_IPV6_PATH, request)
         return ListPage[models.UnicastRouteIpv6].model_validate(payload)
 
     @register_tool(
@@ -653,7 +655,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         request: models.WideRefInput, ctx: Context[AppContext]
     ) -> models.UnicastRouteIpv6:
         payload = await NetworkAdapter.from_context(ctx).object(
-            _UNICAST_ROUTES_IPV6, request.id_or_name
+            UNICAST_ROUTES_IPV6_PATH, request.id_or_name
         )
         return models.UnicastRouteIpv6.model_validate(payload)
 

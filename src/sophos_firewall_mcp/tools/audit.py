@@ -153,12 +153,12 @@ from sophos_firewall_mcp.tools.firewall_rules import FirewallRuleAdapter
 from sophos_firewall_mcp.tools.hosts_objects import ObjectsAdapter
 from sophos_firewall_mcp.tools.nat_rules import IPV4_RULES_PATH, IPV6_RULES_PATH, NatAdapter
 from sophos_firewall_mcp.tools.network import (
-    _GATEWAYS_IPV4,
-    _GATEWAYS_IPV6,
-    _INTERFACES,
-    _UNICAST_ROUTES_IPV4,
-    _UNICAST_ROUTES_IPV6,
-    _ZONES,
+    GATEWAYS_IPV4_PATH,
+    GATEWAYS_IPV6_PATH,
+    INTERFACES_PATH,
+    UNICAST_ROUTES_IPV4_PATH,
+    UNICAST_ROUTES_IPV6_PATH,
+    ZONES_PATH,
     NetworkAdapter,
 )
 from sophos_firewall_mcp.tools.services_objects import ServicesAdapter
@@ -829,7 +829,7 @@ class AuditAdapter(DomainAdapter):
 
         async def fetch(page: int) -> ListPage[Zone]:
             payload = await adapter.page(
-                _ZONES, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                ZONES_PATH, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
             )
             return _validated_page(payload, ListPage[Zone], "zones")
 
@@ -841,7 +841,7 @@ class AuditAdapter(DomainAdapter):
 
         async def fetch(page: int) -> ListPage[NetworkInterface]:
             payload = await adapter.page(
-                _INTERFACES, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
+                INTERFACES_PATH, FilteredPageInput(page=page, pageSize=PAGE_SIZE, pageTotal=True)
             )
             return _validated_page(payload, ListPage[NetworkInterface], "interfaces")
 
@@ -850,7 +850,7 @@ class AuditAdapter(DomainAdapter):
     async def _gateways(self, family: IpFamily, budget: _Budget) -> list[GatewayIpv4 | GatewayIpv6]:
         """Read one family's configured gateways (``getGatewaysIpv4/Ipv6``)."""
         adapter = NetworkAdapter(self.context)
-        path = _GATEWAYS_IPV4 if family == "ipv4" else _GATEWAYS_IPV6
+        path = GATEWAYS_IPV4_PATH if family == "ipv4" else GATEWAYS_IPV6_PATH
         collected: list[GatewayIpv4 | GatewayIpv6] = []
         if family == "ipv4":
 
@@ -879,7 +879,7 @@ class AuditAdapter(DomainAdapter):
     ) -> list[UnicastRouteIpv4 | UnicastRouteIpv6]:
         """Read one family's static unicast routes (``getUnicastRoutesIPv4/Ipv6``)."""
         adapter = NetworkAdapter(self.context)
-        path = _UNICAST_ROUTES_IPV4 if family == "ipv4" else _UNICAST_ROUTES_IPV6
+        path = UNICAST_ROUTES_IPV4_PATH if family == "ipv4" else UNICAST_ROUTES_IPV6_PATH
         collected: list[UnicastRouteIpv4 | UnicastRouteIpv6] = []
         if family == "ipv4":
 
