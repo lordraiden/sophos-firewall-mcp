@@ -29,8 +29,8 @@ Every domain module exposes exactly one function with this signature::
     def register_<domain>_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
         ...
 
-and registers each tool through :func:`register_tool`. Issue #26 illustrates the second
-parameter as a ``Callable[[], AppContext]``; this project uses the SDK's typed
+and registers each tool through :func:`register_tool`. The second parameter is illustrated
+as a ``Callable[[], AppContext]``; this project uses the SDK's typed
 ``Context[AppContext]`` injection instead, because the pinned SDK v2 lifespan guide makes
 that the documented way to reach the lifespan object and the issue requires it. The
 read-only flag is passed explicitly because the tool set is fixed at construction, before
@@ -165,9 +165,18 @@ _ARGUMENT_RULES: dict[str, str] = {
 #: as "Inputs: optional ip_family" calls the tool with flat arguments and is rejected with
 #: a bare "request is required". Explaining it once, centrally, keeps every domain
 #: description free of boilerplate and cannot drift from the published schema.
+#:
+#: The example is deliberately neutral -- ``{"request": {...}}`` -- and names no field.
+#: The sentence is shared by 144 tools whose request models have different fields, so any
+#: single named field is wrong for most of them: the previous hard-coded
+#: ``{"request": {"page": 1}}`` named a field only 41 tools accept and told the model to
+#: send an argument the other 103 reject. The inner fields are already documented by each
+#: tool's own description and published schema, so this sentence only has to show the
+#: nesting. ``tests/test_server.py`` sweeps every wrapped tool and fails if the example
+#: ever names a field that tool does not accept.
 _REQUEST_WRAPPER_NOTE = (
     "Arguments are passed inside a `request` object, for example "
-    '`{"request": {"page": 1}}`, not at the top level.'
+    '`{"request": {...}}`, not at the top level.'
 )
 
 ToolHandlerT = TypeVar("ToolHandlerT", bound=Callable[..., Any])

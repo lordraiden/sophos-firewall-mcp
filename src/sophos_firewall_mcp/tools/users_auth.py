@@ -1,6 +1,6 @@
 """MCP tools for Sophos Firewall authentication users and live sessions (#30).
 
-Eight tools over eight audited operations, in two families that the contract keeps apart:
+Eight tools over eight audited operations, in two families that the API keeps apart:
 
 * users -- ``user_list`` (``getUsers``, the paginated general authentication-user summary),
   ``network_user_list``/``network_user_get``/``network_user_create``/
@@ -74,7 +74,7 @@ USERS_PATH = "/authentication/users"
 #: ``getNetworkUsers``/``createNetworkUser`` -- the network-user collection.
 NETWORK_USERS_PATH = "/authentication/users/network-users"
 
-#: ``getLiveUsers`` -- the live-session collection (no request pagination in the contract).
+#: ``getLiveUsers`` -- the live-session collection (no request pagination in the API).
 LIVE_USERS_PATH = "/authentication/live-users"
 
 #: ``disconnectLiveUser`` -- disconnect exactly one live session.
@@ -424,7 +424,7 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         title="List live user sessions",
         description=(
             "List active user sessions (`getLiveUsers`) as `items` plus `pages` metadata "
-            "(`current`, `size`, `maxSize`, and `total`/`items` when returned). The contract "
+            "(`current`, `size`, `maxSize`, and `total`/`items` when returned). The API "
             "declares no request pagination for this operation, so this tool exposes no page "
             "parameters and reports the metadata exactly as returned; it does not loop over "
             "pages."

@@ -13,10 +13,14 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib.metadata
 import os
+import re
 import subprocess
 import sys
+import tomllib
 from contextlib import AbstractAsyncContextManager
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any, Callable
 
@@ -44,6 +48,7 @@ from sophos_firewall_mcp.models.common import ListPage, ObjectRef
 from sophos_firewall_mcp.server import (
     INSTRUCTIONS,
     SERVER_NAME,
+    SERVER_TITLE,
     create_server,
     create_server_from_env,
 )
@@ -57,6 +62,10 @@ from sophos_firewall_mcp.tools import (
 )
 
 SRC_DIR = Path(__file__).resolve().parents[1] / "src"
+
+#: The project metadata the installed distribution is built from. The version test reads
+#: it directly so a stale install cannot pass by comparing the metadata to itself.
+PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
 
 #: Set by the slow synthetic handler so the cancellation test knows the handler is running.
 _SLOW_STARTED: asyncio.Event | None = None
@@ -276,6 +285,139 @@ def test_create_server_builds_the_stdio_server():
 def test_create_server_rejects_non_settings():
     with pytest.raises(TypeError):
         create_server(object())  # type: ignore[arg-type]
+
+
+# -- Server identity and catalog caching (H1, M2) --------------------------------------
+#
+# ``serverInfo`` is how a client identifies the build in its UI, its logs and its bug
+# reports, and ``ttlMs`` is how long it may cache the static catalog. Both were empty or
+# zero before this change: ``version: ""`` and ``ttlMs: 0`` ("immediately stale").
+
+
+def test_instructions_document_the_calling_conventions():
+    """H2/M1: the wrapper and the duplicated-payload rule are stated once, server-wide."""
+    assert "`request` object" in INSTRUCTIONS
+    assert '{"request": {...}}' in INSTRUCTIONS
+    assert "not at the top level" in INSTRUCTIONS
+    assert "`structuredContent`" in INSTRUCTIONS
+    assert "read one of them, not both" in INSTRUCTIONS
+
+
+def test_package_identity_reads_the_distribution_metadata(monkeypatch):
+    """M2: the version, summary and homepage come from the installed metadata."""
+    metadata = EmailMessage()
+    metadata["Version"] = "9.9.9"
+    metadata["Summary"] = "A fake summary."
+    metadata["Project-URL"] = "Repository, https://example.test/repo"
+    metadata["Project-URL"] = "Homepage, https://example.test/home"
+    monkeypatch.setattr(server_module.importlib.metadata, "metadata", lambda name: metadata)
+
+    identity = server_module._package_identity()
+
+    assert identity.version == "9.9.9"
+    assert identity.description == "A fake summary."
+    assert identity.website_url == "https://example.test/home"
+
+
+def test_package_identity_falls_back_when_the_distribution_is_not_installed(monkeypatch):
+    """M2: a source checkout that was never installed still starts, with an honest version."""
+
+    def missing(name: str) -> Any:
+        raise server_module.importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(server_module.importlib.metadata, "metadata", missing)
+
+    identity = server_module._package_identity()
+
+    assert identity.version == server_module._UNKNOWN_VERSION
+    assert identity.version
+    assert identity.description is None
+    assert identity.website_url is None
+
+
+def declared_project_version() -> str:
+    """The ``project.version`` declared in ``pyproject.toml``.
+
+    Parsed with :mod:`tomllib` (standard library, Python 3.11+) rather than read from the
+    installed metadata: the installed metadata is exactly what the server reports, so
+    comparing it to itself cannot detect a stale install.
+    """
+    document = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    version = document["project"]["version"]
+    assert isinstance(version, str) and version.strip()
+    return version
+
+
+async def test_server_info_carries_the_package_identity():
+    """M2: ``serverInfo`` identifies the build instead of reporting an empty version.
+
+    The version is compared against ``pyproject.toml``, not against
+    :func:`importlib.metadata.version`: the server reads the installed metadata, so a test
+    that reads the same source is tautological and cannot catch the drift this test exists
+    to catch (a checkout whose editable install was never refreshed after a version bump).
+    """
+    try:
+        importlib.metadata.version("sophos-firewall-mcp-server")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
+        pytest.skip("the distribution is not installed; the fallback is covered separately")
+
+    declared_version = declared_project_version()
+    server = create_server(make_settings())
+
+    async with Client(server) as client:
+        info = client.server_info
+
+    assert info.name == SERVER_NAME
+    assert info.title == SERVER_TITLE
+    assert info.version
+    assert info.version == declared_version
+    assert info.description
+    assert info.website_url == "https://github.com/lordraiden/sophos-firewall-mcp"
+
+
+async def test_tools_list_advertises_a_cache_hint():
+    """H1/L7: the static catalog is cacheable, so ``ttlMs`` must not be zero."""
+    server = create_server(make_settings())
+
+    async with Client(server) as client:
+        result = await client.list_tools()
+
+    assert result.ttl_ms == server_module._CATALOG_TTL_MS
+    assert result.ttl_ms > 0
+    # The catalog is per-connection state, not a public document.
+    assert result.cache_scope == "private"
+
+
+async def test_server_discover_advertises_the_cache_hint_on_the_wire():
+    """H1/L7: ``server/discover`` carries ``ttlMs`` on the wire, not only in the config.
+
+    The SDK's ``Client`` has no ``discover()`` helper in 2.3.0, but its public ``session``
+    does, and in ``auto`` mode the client probes ``server/discover`` during connect: the
+    result asserted here is the parsed response of that wire exchange. A regression in the
+    SDK's application of the hint to this method, or a dropped ``cache_hints`` entry, fails
+    here instead of only in the module-level dict.
+    """
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "sophos_firewall_mcp.server"],
+        env={
+            "PYTHONPATH": str(SRC_DIR),
+            "SOPHOS_HOST": "192.0.2.10",
+            "SOPHOS_API_KEY": "test-api-key-not-real",
+            "SOPHOS_VERIFY_SSL": "false",
+        },
+    )
+
+    async with asyncio.timeout(60):
+        async with Client(params) as client:
+            # The modern handshake proves the probe ran and was adopted.
+            assert client.protocol_version == "2026-07-28"
+            discovered = await client.session.discover()
+
+    assert discovered.ttl_ms == server_module._CATALOG_TTL_MS
+    assert discovered.ttl_ms > 0
+    # The catalog is per-connection state, not a public document.
+    assert discovered.cache_scope == "private"
 
 
 def test_create_server_from_env_validates_the_environment():
@@ -904,7 +1046,7 @@ async def test_tool_description_explains_the_request_wrapper():
     assert description.startswith("Read-only synthetic tool")
     assert description.endswith(
         "Arguments are passed inside a `request` object, for example "
-        '`{"request": {"page": 1}}`, not at the top level.'
+        '`{"request": {...}}`, not at the top level.'
     )
     # The wrapper itself is unchanged: it is still the single required argument.
     assert tools["sophos_synthetic_echo"].input_schema["required"] == ["request"]
@@ -939,6 +1081,64 @@ async def test_every_tool_that_takes_arguments_documents_the_request_wrapper():
         assert tool.description.endswith(_REQUEST_WRAPPER_NOTE), tool.name
     for tool in without_arguments:
         assert _REQUEST_WRAPPER_NOTE not in tool.description, tool.name
+
+
+#: Matches a JSON object key inside the wrapper example, e.g. ``"page"`` in
+#: ``{"request": {"page": 1}}``. The example is illustrative, not necessarily valid JSON
+#: (the neutral form is ``{"request": {...}}``), so it is scanned rather than parsed.
+_EXAMPLE_FIELD_PATTERN = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)":')
+
+
+def _wrapper_example(description: str) -> str:
+    """Return the example object quoted in a tool description's wrapper sentence."""
+    match = re.search(
+        r"Arguments are passed inside a `request` object, for example `([^`]+)`", description
+    )
+    assert match is not None, description
+    return match.group(1)
+
+
+def _accepted_request_fields(schema: dict[str, Any]) -> set[str]:
+    """Return every field name a wrapped tool accepts inside its ``request`` object.
+
+    The request model is published as a ``$ref`` into ``$defs`` for most tools and as a
+    ``oneOf`` of ``$ref`` variants for the discriminated-union tools (the address and
+    service creates), so both shapes are resolved.
+    """
+    request = schema.get("properties", {}).get("request", {})
+    definitions = schema.get("$defs", {})
+    references = [request, *request.get("oneOf", [])]
+    fields: set[str] = set()
+    for reference in references:
+        target = reference.get("$ref")
+        if target is None:
+            continue
+        model = definitions.get(target.rsplit("/", 1)[-1], {})
+        fields.update(model.get("properties", {}))
+    return fields
+
+
+async def test_request_wrapper_example_never_names_a_field_the_tool_rejects():
+    """H2: the example must not tell the model to send an argument the tool rejects.
+
+    The sentence is shared by every wrapped tool, so a hard-coded field is wrong for most
+    of them: the previous example named ``page``, which only 41 of the 144 wrapped tools
+    accept. This sweep is the guard -- it fails if the example ever names a field that the
+    tool it is appended to does not accept.
+    """
+    server = create_server(make_settings())
+    tools = await tools_by_name(server)
+
+    wrapped = [
+        tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
+    ]
+
+    assert len(wrapped) == 144, "the sweep must cover every wrapped tool"
+    for tool in wrapped:
+        example = _wrapper_example(tool.description)
+        accepted = {"request"} | _accepted_request_fields(tool.input_schema)
+        for field in _EXAMPLE_FIELD_PATTERN.findall(example):
+            assert field in accepted, f"{tool.name}: the example names {field!r}, which it rejects"
 
 
 # -- Private SDK seam (L4) -------------------------------------------------------------

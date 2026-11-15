@@ -141,7 +141,7 @@ class ServicesAdapter(DomainAdapter):
         page = await self._list(SERVICES_PATH, request, ListPage[Service])
         if request.type is None:
             return page
-        # The appliance ignores the contract's ``type`` query parameter (live observation,
+        # The appliance ignores the API's ``type`` query parameter (observed on the appliance,
         # 2026-11-15), so the filter is applied to the projected page here. ``pages`` is the
         # appliance metadata for the unfiltered collection and is preserved unchanged.
         return ListPage[Service](
@@ -270,14 +270,14 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         name="service_list",
         title="List services",
         description=(
-            "List one page of network services. Read-only. `type` filters by the contract "
+            "List one page of network services. Read-only. `type` filters by the API "
             "enum (tcpOrUdp, ip, icmp, icmpv6); the appliance currently ignores the `type` "
             "query parameter, so the filter is also applied client-side to the returned "
             "page: `items` may be shorter than `page_size` and `pages` still describes the "
             "unfiltered collection. `name_contains` and `name_not_equals` are mutually "
             "exclusive. `page` is 1-based and `page_size` is 1-100 (default 10). Returns "
             "the page items and the appliance `pages` metadata; it never auto-paginates. "
-            "Size: the lab appliance's 94 services are ~28 KB of JSON at pageSize=50, so "
+            "Size: the tested appliance's 94 services are ~28 KB of JSON at pageSize=50, so "
             "keep page_size small and page through the collection. The MCP SDK returns the "
             "payload both as a text block and as structuredContent; read one of them, not "
             "both."

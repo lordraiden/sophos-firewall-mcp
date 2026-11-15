@@ -21,15 +21,26 @@ Transport and diagnostics
 STDIO only: stdout carries the MCP protocol and nothing else. Logging and diagnostics go
 to stderr. ``MCPServer(..., subscriptions=False)`` is used because the tool catalog is
 static for the process lifetime (the read-only mode is applied at startup), so the SDK
-must not advertise ``subscriptions/listen`` or ``listChanged``.
+must not advertise ``subscriptions/listen`` or ``listChanged``. The same static catalog
+is why ``cache_hints`` gives ``tools/list`` and ``server/discover`` a long TTL: the SDK
+default of ``0`` means "immediately stale" and makes a client re-fetch a ~894 KB payload
+on every turn.
+
+Identity
+--------
+``serverInfo`` is built from the installed distribution metadata (``version``,
+``description``, ``website_url``) plus :data:`SERVER_TITLE`, so a client can report which
+release produced a behaviour without the version being duplicated in code.
 """
 
 from __future__ import annotations
 
+import importlib.metadata
 import logging
 import sys
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
+from typing import NamedTuple
 
 # Must precede the mcp import: it is the check that explains a shadowed or too-new `mcp`
 # before the import below dies with a bare ModuleNotFoundError the MCP client cannot see
@@ -38,6 +49,8 @@ from sophos_firewall_mcp._env_guard import verify_local_mcp
 
 verify_local_mcp()
 
+from mcp.server import CacheHint  # noqa: E402
+from mcp.server.caching import CacheableMethod  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
@@ -55,6 +68,7 @@ __all__ = [
     "DEFAULT_DOMAINS",
     "INSTRUCTIONS",
     "SERVER_NAME",
+    "SERVER_TITLE",
     "create_server",
     "create_server_from_env",
     "main",
@@ -65,13 +79,53 @@ logger = logging.getLogger(__name__)
 #: Name advertised to MCP clients.
 SERVER_NAME = "Sophos Firewall MCP Server"
 
+#: Human-readable display name (``serverInfo.title``). The distribution metadata carries
+#: no title, so this is the one identity field that is not read from it.
+SERVER_TITLE = "Sophos Firewall MCP"
+
+#: Distribution name in ``pyproject.toml``: the single source of truth for the version,
+#: the summary and the project URL, read back through :mod:`importlib.metadata`.
+_PACKAGE_NAME = "sophos-firewall-mcp-server"
+
+#: Reported when the distribution metadata is unavailable (a source checkout that was
+#: never installed). An explicit unknown is better than an empty string, which is what
+#: the SDK default publishes and what makes "which release produced this?" unanswerable.
+_UNKNOWN_VERSION = "0.0.0+unknown"
+
+#: Freshness hint for the static catalog, in milliseconds: one hour.
+#:
+#: The tool catalog cannot change while the process runs -- the read-only mode is applied
+#: at startup and ``subscriptions=False`` is passed, so no ``listChanged`` notification is
+#: ever sent. The SDK default is ``0``, which the MCP caching specification defines as
+#: "immediately stale" and which makes a client re-fetch a ~894 KB ``tools/list`` payload
+#: on every turn. One hour matches the ``server/discover`` example in the specification
+#: and is short enough that a client notices a restarted server (a different read-only
+#: mode) within a session.
+_CATALOG_TTL_MS = 3_600_000
+
+#: Cache hints for the two static catalog methods this server serves. ``server/discover``
+#: carries the same identity and capability set for the process lifetime, so it is as
+#: cacheable as ``tools/list``.
+_CATALOG_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
+    "tools/list": CacheHint(ttl_ms=_CATALOG_TTL_MS),
+    "server/discover": CacheHint(ttl_ms=_CATALOG_TTL_MS),
+}
+
 #: Server-level instructions shown to the model. Domain tools carry their own.
+#:
+#: Two conventions are stated here, once, instead of in 144 tool descriptions: the
+#: ``request`` wrapper every tool with arguments uses, and the fact that a successful
+#: result carries the same payload twice (``content`` text and ``structuredContent``).
+#: Both are properties of this server's calling convention, not of any one domain.
 INSTRUCTIONS = (
     "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
     "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
     "rules, address and service objects, users and live sessions. Read-only tools never "
     "modify the appliance. When the server runs in read-only mode, mutation tools are "
-    "not registered at all."
+    "not registered at all. Every tool that takes arguments takes them inside a single "
+    '`request` object, for example `{"request": {...}}`, not at the top level. Every '
+    "successful result carries the same payload twice, as `content` text and as "
+    "`structuredContent`; read one of them, not both."
 )
 
 #: Domain registration functions, in registration order.
@@ -87,6 +141,44 @@ DEFAULT_DOMAINS: tuple[DomainRegistrar, ...] = (
     register_network_tools,
     register_audit_tools,
 )
+
+
+class _PackageIdentity(NamedTuple):
+    """The ``serverInfo`` fields that come from the installed distribution metadata."""
+
+    version: str
+    description: str | None
+    website_url: str | None
+
+
+def _package_identity() -> _PackageIdentity:
+    """Read the server identity from the installed distribution metadata.
+
+    ``pyproject.toml`` is the single source of truth: the build backend copies its
+    ``version``, ``description`` and ``Homepage`` URL into the distribution metadata, and
+    :mod:`importlib.metadata` reads them back at runtime. The version is not duplicated in
+    code, but the *installed* metadata can lag behind ``pyproject.toml`` in a checkout that
+    was never reinstalled, so ``serverInfo`` reports what is installed and the test suite
+    compares it against ``pyproject.toml`` to catch that drift.
+
+    A source checkout that was never installed has no metadata. That is not a reason to
+    refuse to start: the version falls back to :data:`_UNKNOWN_VERSION` and the optional
+    fields stay unset.
+    """
+    try:
+        metadata = importlib.metadata.metadata(_PACKAGE_NAME)
+    except importlib.metadata.PackageNotFoundError:
+        return _PackageIdentity(version=_UNKNOWN_VERSION, description=None, website_url=None)
+
+    version = (metadata.get("Version") or "").strip() or _UNKNOWN_VERSION
+    description = (metadata.get("Summary") or "").strip() or None
+    website_url: str | None = None
+    for entry in metadata.get_all("Project-URL") or ():
+        label, _, url = entry.partition(",")
+        if label.strip().lower() == "homepage":
+            website_url = url.strip() or None
+            break
+    return _PackageIdentity(version=version, description=description, website_url=website_url)
 
 
 def create_server(
@@ -140,11 +232,17 @@ def create_server(
             # lifespan calls it once: the client is created here and nowhere else.
             await client.aclose()
 
+    identity = _package_identity()
     server: MCPServer[AppContext] = MCPServer(
         SERVER_NAME,
+        title=SERVER_TITLE,
+        description=identity.description,
         instructions=INSTRUCTIONS,
+        website_url=identity.website_url,
+        version=identity.version,
         lifespan=lifespan,
         subscriptions=False,
+        cache_hints=_CATALOG_CACHE_HINTS,
     )
     for register in domains:
         register(server, read_only=read_only)

@@ -1,6 +1,6 @@
 """Typed Pydantic models for the Sophos network objects and services domain (#29).
 
-The module keeps every Sophos family separate because the contract gives them different
+The module keeps every Sophos family separate because the API gives them different
 required fields, identifier semantics and validation:
 
 * IPv4 and IPv6 addresses are discriminated unions of four shapes (``ipv4Address``,
@@ -22,7 +22,7 @@ Conventions
   omitted property keeps its persisted value and an explicit ``None`` removes a nullable
   one.
 * Output models are explicit projections of the appliance payload, never a raw passthrough;
-  a field is optional when the contract does not list it as required.
+  a field is optional when the API does not list it as required.
 """
 
 from __future__ import annotations
@@ -132,7 +132,7 @@ __all__ = [
     "validate_object_name_or_id",
 ]
 
-#: Closed request models: the contract is closed, an unknown member is a bug.
+#: Closed request models: the API is closed, an unknown member is a bug.
 _INPUT_CONFIG = ConfigDict(extra="forbid", populate_by_name=True)
 
 #: Response models ignore server additions but never echo them back to the model.
@@ -208,7 +208,7 @@ class ObjectIdentifierInput(_InputModel):
 class MemberRef(_InputModel):
     """One address-group member: exactly ``{"name": "<address object name>"}``.
 
-    The contract's group payloads reference members by name only; an address family is
+    The API's group payloads reference members by name only; an address family is
     implied by the group endpoint, so a mixed-family member is not representable.
     """
 
@@ -222,7 +222,7 @@ class ServiceMemberRef(_InputModel):
 
 
 class DeleteResult(_OutputModel):
-    """The documented delete response. ``deleted`` is optional in the contract."""
+    """The documented delete response. ``deleted`` is optional in the API."""
 
     deleted: bool | None = None
 
@@ -230,15 +230,19 @@ class DeleteResult(_OutputModel):
 class ListQuery(_InputModel):
     """Pagination and name filters shared by the paginated list operations.
 
-    The contract declares ``page``, ``pageSize``, ``pageTotal``, ``nameContains`` and
+    The API declares ``page``, ``pageSize``, ``pageTotal``, ``nameContains`` and
     ``nameNotEquals`` on every list operation in this domain. The two name filters are
     mutually exclusive; the validator rejects a request that sets both.
 
-    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    ``page_size`` defaults to 10: a default call must stay small enough for a model
     context, and the caller raises it explicitly when it wants a bigger page.
     """
 
-    page: int = Field(1, ge=1)
+    page: int = Field(
+        1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         10,
         ge=1,
@@ -248,7 +252,13 @@ class ListQuery(_InputModel):
             "explicitly for a bigger page."
         ),
     )
-    page_total: bool = False
+    page_total: bool = Field(
+        False,
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
+    )
     name_contains: str | None = Field(None, min_length=1, max_length=255)
     name_not_equals: str | None = Field(None, min_length=1, max_length=255)
 
@@ -307,7 +317,7 @@ class Ipv4AddressIpRange(_Ipv4AddressBase):
 class Ipv4AddressIpList(_Ipv4AddressBase):
     """A list of IPv4 addresses (``type: ipv4List``).
 
-    The contract declares ``ipv4Addresses`` with ``minItems: 1``, but the lab appliance
+    The API declares ``ipv4Addresses`` with ``minItems: 1``, but the tested appliance
     (15 Nov 2026, ``GET /network/addresses/ipv4``) returns ``"ipv4Addresses": []`` for the
     built-in internal objects ``##ALL_RW``, ``##ALL_IPSEC_RW`` and ``##ALL_SSLVPN_RW``.
     The *output* model therefore accepts an empty list: one built-in object must not make
@@ -485,8 +495,8 @@ class Ipv6AddressIpRange(_Ipv6AddressBase):
 class Ipv6AddressIpList(_Ipv6AddressBase):
     """A list of IPv6 addresses (``type: ipv6List``).
 
-    Same live deviation as :class:`Ipv4AddressIpList`: the contract declares
-    ``ipv6Addresses`` with ``minItems: 1``, but the lab appliance (15 Nov 2026,
+    Same live deviation as :class:`Ipv4AddressIpList`: the API declares
+    ``ipv6Addresses`` with ``minItems: 1``, but the tested appliance (15 Nov 2026,
     ``GET /network/addresses/ipv6``) returns ``"ipv6Addresses": []`` for its built-in
     internal objects. The output model accepts an empty list; the create/update input
     models keep ``min_length=1``.
@@ -634,7 +644,7 @@ class Ipv6AddressListInput(ListQuery):
 
 
 class FqdnAddress(_OutputModel):
-    """An FQDN address object. The contract only requires ``id`` in the response."""
+    """An FQDN address object. The API only requires ``id`` in the response."""
 
     id: str
     name: str | None = Field(None, max_length=60)
@@ -760,7 +770,7 @@ class FqdnAddressGroup(_OutputModel):
 
 
 class FqdnAddressGroupCreate(_InputModel):
-    """Create an FQDN address group. ``fqdns`` is nullable in the contract."""
+    """Create an FQDN address group. ``fqdns`` is nullable in the API."""
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -797,7 +807,7 @@ class CountryGroupListInput(ListQuery):
 
 # -- MAC address objects ---------------------------------------------------------------
 
-#: The documented MAC-address pattern, including the ``|`` separator the contract allows.
+#: The documented MAC-address pattern, including the ``|`` separator the API allows.
 MAC_ADDRESS_PATTERN = (
     r"^[0-9a-fA-F]{2}[:|-][0-9a-fA-F]{2}[:|-][0-9a-fA-F]{2}[:|-]"
     r"[0-9a-fA-F]{2}[:|-][0-9a-fA-F]{2}[:|-][0-9a-fA-F]{2}$"
@@ -877,7 +887,7 @@ MacAddressCreate = Annotated[
 ]
 """The create payload for ``createMacAddress``: a single address or a list.
 
-The contract does not declare a discriminator on this request; the two shapes are
+The API does not declare a discriminator on this request; the two shapes are
 distinguished by which required member is present, so the union is resolved left to right
 and both variants are closed.
 """
@@ -1181,7 +1191,7 @@ IpProtocol = Literal[
     "ipProto254",
     "ipProto255",
 ]
-"""The IP-protocol names the contract accepts for an ``ip`` service entry."""
+"""The IP-protocol names the API accepts for an ``ip`` service entry."""
 
 IcmpType = Literal[
     "any",
@@ -1213,7 +1223,7 @@ IcmpType = Literal[
     "skip",
     "photuris",
 ]
-"""The ICMPv4 types the contract accepts."""
+"""The ICMPv4 types the API accepts."""
 
 IcmpCode = Literal[
     "any",
@@ -1246,7 +1256,7 @@ IcmpCode = Literal[
     "missingRequiredOption",
     "badLengthIndicatesError",
 ]
-"""The ICMPv4 codes the contract accepts."""
+"""The ICMPv4 codes the API accepts."""
 
 Icmpv6Type = Literal[
     "any",
@@ -1290,7 +1300,7 @@ Icmpv6Type = Literal[
     "privateExperimentation200",
     "privateExperimentation201",
 ]
-"""The ICMPv6 types the contract accepts."""
+"""The ICMPv6 types the API accepts."""
 
 Icmpv6Code = Literal[
     "any",
@@ -1319,11 +1329,11 @@ Icmpv6Code = Literal[
     "responderRefuses",
     "unknownQtype",
 ]
-"""The ICMPv6 codes the contract accepts."""
+"""The ICMPv6 codes the API accepts."""
 
 
 class _ServicePortRangeFields(BaseModel):
-    """A TCP/UDP port or port range. Both members are optional in the contract."""
+    """A TCP/UDP port or port range. Both members are optional in the API."""
 
     from_port: int | None = Field(None, alias="from", ge=1, le=65535)
     to_port: int | None = Field(None, alias="to", ge=1, le=65535)
@@ -1415,7 +1425,7 @@ ServiceDetail = Annotated[
 ]
 """One protocol-specific service detail entry.
 
-The contract has no discriminator: the entry shape is identified by which required member
+The API has no discriminator: the entry shape is identified by which required member
 is present (``protocol``, ``ipProtocol``, ``icmpType``/``icmpCode`` or
 ``icmpv6Type``/``icmpv6Code``). Left-to-right resolution is deterministic because every
 variant is closed.
@@ -1434,9 +1444,9 @@ class IpProtocolServiceDetailOutput(IpProtocolServiceDetail):
     """An IP-protocol service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
-    # Re-declared with the wire alias: the response projection keeps the contract's
+    # Re-declared with the wire alias: the response projection keeps the API's
     # camelCase name in its published schema, while the request model publishes the
-    # snake_case name (M1).
+    # snake_case name.
     ip_protocol: IpProtocol = Field(alias="ipProtocol")
 
 
@@ -1444,8 +1454,8 @@ class Icmpv4ServiceDetailOutput(Icmpv4ServiceDetail):
     """An ICMPv4 service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
-    # Re-declared with the wire aliases so the response projection keeps the contract's
-    # camelCase names in its published schema (M1 applies to the input surface).
+    # Re-declared with the wire aliases so the response projection keeps the API's
+    # camelCase names in its published schema (the convention applies to the input surface).
     icmp_type: IcmpType = Field(alias="icmpType")
     icmp_code: IcmpCode = Field(alias="icmpCode")
 
@@ -1454,8 +1464,8 @@ class Icmpv6ServiceDetailOutput(Icmpv6ServiceDetail):
     """An ICMPv6 service detail entry in a response."""
 
     model_config = _OUTPUT_CONFIG
-    # Re-declared with the wire aliases so the response projection keeps the contract's
-    # camelCase names in its published schema (M1 applies to the input surface).
+    # Re-declared with the wire aliases so the response projection keeps the API's
+    # camelCase names in its published schema (the convention applies to the input surface).
     icmpv6_type: Icmpv6Type = Field(alias="icmpv6Type")
     icmpv6_code: Icmpv6Code = Field(alias="icmpv6Code")
 
@@ -1473,7 +1483,7 @@ ServiceDetailOutput = Annotated[
 
 
 class Service(_OutputModel):
-    """A network service. The contract requires ``name``, ``type`` and ``services``."""
+    """A network service. The API requires ``name``, ``type`` and ``services``."""
 
     id: str | None = None
     name: str = Field(..., max_length=50)
@@ -1496,7 +1506,7 @@ class ServiceCreate(_InputModel):
 class ServiceUpdateInput(_InputModel):
     """The ``updateServiceByIdOrName`` input: identifier plus partial PATCH fields.
 
-    ``type`` is deliberately absent: the contract's PATCH schema does not allow changing
+    ``type`` is deliberately absent: the API's PATCH schema does not allow changing
     the service type.
     """
 
@@ -1507,11 +1517,11 @@ class ServiceUpdateInput(_InputModel):
 
 
 class ServiceListInput(ListQuery):
-    """Filters for ``getAllServices``; ``type`` is the contract's enum filter.
+    """Filters for ``getAllServices``; ``type`` is the API's enum filter.
 
-    The appliance ignores the ``type`` query parameter (live observation, 2026-11-15: all
+    The appliance ignores the ``type`` query parameter (observed on the appliance: all
     four enum values return the same mixed page), so the adapter also filters the projected
-    page client-side. The parameter is still sent because the contract declares it, and a
+    page client-side. The parameter is still sent because the API declares it, and a
     firmware that honours it makes the client-side filter a no-op.
     """
 

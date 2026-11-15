@@ -1,9 +1,9 @@
-"""Pydantic models for the firewall-rule domain (issue #27).
+"""Pydantic models for the firewall-rule domain.
 
 Two model families live here, and the split is deliberate:
 
 * **MCP-facing request models** (:class:`_ClosedModel`) describe exactly what a caller
-  may send. They are closed (``extra="forbid"``), carry the contract's field names and
+  may send. They are closed (``extra="forbid"``), carry the API's field names and
   constraints, and are the only models the tool handlers accept.
 * **Appliance payload projections** (:class:`_WireModel`) describe what the adapter is
   willing to echo back. They are open to unknown members (``extra="ignore"``) so a
@@ -23,7 +23,7 @@ Contract decisions encoded here:
   enabled by relying on the schema default.
 * ``position`` is required on create and identifies the insertion point; ``after`` and
   ``before`` need a ``referenceItem`` anchor.
-* The contract returns no evaluation ``position`` on a rule object (M12). The output
+* The API returns no evaluation ``position`` on a rule object. The output
   projection carries one anyway: the list tools derive it from the page offset and the
   item's index in the returned page, and a single-object read or write reports ``null``
   instead of inventing a value.
@@ -121,13 +121,13 @@ MAX_SELECTION_ITEMS = 1024
 #: ``maxLength`` of the ``nameContains``/``nameNotEquals`` query filters.
 MAX_NAME_FILTER_LENGTH = 255
 
-#: The contract's zone-name ``pattern`` (note: ``0`` is not a valid first character).
+#: The API's zone-name ``pattern`` (note: ``0`` is not a valid first character).
 ZONE_NAME_PATTERN = r"^[a-zA-Z1-9][a-zA-Z0-9_]*$"
 
 #: A rule name: the documented ``sfos-object-name`` format, at most 60 characters.
 RuleName = Annotated[ObjectName, Field(min_length=1, max_length=MAX_RULE_NAME_LENGTH)]
 
-#: A zone reference: rule-name format plus the contract's zone ``pattern``.
+#: A zone reference: rule-name format plus the API's zone ``pattern``.
 ZoneName = Annotated[
     str,
     Field(min_length=1, max_length=MAX_RULE_NAME_LENGTH, pattern=ZONE_NAME_PATTERN),
@@ -146,7 +146,7 @@ RulePosition = Literal["after", "before", "bottom", "top"]
 #: The documented firewall actions.
 FirewallAction = Literal["accept", "drop", "reject"]
 
-#: The contract's full 64-value DSCP marking enum (``qos.dscpMarking``).
+#: The API's full 64-value DSCP marking enum (``qos.dscpMarking``).
 DscpMarking = Literal[
     "0-Best Effort",
     "1",
@@ -216,11 +216,11 @@ DscpMarking = Literal[
 
 
 class _ClosedModel(BaseModel):
-    """Base for MCP-facing request models: the contract is closed.
+    """Base for MCP-facing request models: the API is closed.
 
-    The published MCP input names are snake_case (M1, 0.5.0). Every field that the Sophos
+    The published MCP input names are snake_case (0.5.0). Every field that the Sophos
     contract spells in camelCase keeps that spelling as its *serialization* alias, so
-    ``model_dump(by_alias=True)`` still produces the exact wire body the contract requires
+    ``model_dump(by_alias=True)`` still produces the exact wire body the API requires
     while the published JSON schema shows the snake_case name. ``populate_by_name`` lets a
     caller use either spelling on input.
     """
@@ -758,7 +758,7 @@ class CreateFirewallRuleIpv6Input(_ClosedModel):
     """Create an IPv6 firewall rule (``createFirewallRuleIpv6``).
 
     The IPv6 schema has no ``ruleType`` discriminator and no WAF variant; the field is
-    still sent as ``firewall`` because the contract declares it required.
+    still sent as ``firewall`` because the API declares it required.
     """
 
     name: RuleName
@@ -960,16 +960,20 @@ class UpdateFirewallRuleIpv6Input(_UpdateFirewallRuleBase):
 class ListFirewallRulesInput(_ClosedModel):
     """One page of a firewall-rule collection (``getAllFirewallRulesIpv4/Ipv6``).
 
-    ``name_contains`` and ``name_not_equals`` are mutually exclusive in the contract, so at
+    ``name_contains`` and ``name_not_equals`` are mutually exclusive in the API, so at
     most one may be supplied. Pagination is one explicit page per call; the adapter never
     walks the collection automatically.
 
-    ``page_size`` defaults to 10 (M11): a firewall rule is a large object (the lab
+    ``page_size`` defaults to 10: a firewall rule is a large object (the tested
     appliance's 48-rule base is ~70 KB of JSON), so a default call must stay small and the
     caller raises the page size explicitly when it wants a bigger page.
     """
 
-    page: int = Field(default=1, ge=1)
+    page: int = Field(
+        default=1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         default=10,
         ge=1,
@@ -985,6 +989,10 @@ class ListFirewallRulesInput(_ClosedModel):
         default=False,
         validation_alias=AliasChoices("page_total", "pageTotal"),
         serialization_alias="pageTotal",
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
     )
     name_contains: str | None = Field(
         default=None,
@@ -1134,7 +1142,7 @@ class FirewallRuleOutputBase(_WireModel):
     ``enabled`` is ``None`` only when the appliance omitted the field it declares
     required; the normal path always returns the applied state.
 
-    ``position`` is the rule's 1-based evaluation position in the rule base (M12). The
+    ``position`` is the rule's 1-based evaluation position in the rule base. The
     contract does not return it on a single-object read or write, so ``get``, ``create``,
     ``update``, ``set_enabled`` and ``clone`` report ``null``; only the list tools can
     derive it, from the page offset and the item's index in the returned page. It is
@@ -1151,7 +1159,7 @@ class FirewallRuleOutputBase(_WireModel):
         description=(
             "1-based evaluation position in the rule base. The list tools derive it from "
             "the page offset and the item's index in the returned page; a single-object "
-            "read or write returns null because the contract does not return it."
+            "read or write returns null because the API does not return it."
         ),
     )
     enabled: bool | None = None
@@ -1194,7 +1202,7 @@ class ListFirewallRulesIpv4Output(ListPage[FirewallRuleIpv4Output]):
 
 
 class ListFirewallRulesIpv6Output(ListPage[FirewallRuleIpv6Output]):
-    """One page of IPv6 firewall rules (the IPv6 contract has no WAF variant)."""
+    """One page of IPv6 firewall rules (the IPv6 API has no WAF variant)."""
 
 
 class DeleteFirewallRuleOutput(_WireModel):

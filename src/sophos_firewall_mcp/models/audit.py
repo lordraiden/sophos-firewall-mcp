@@ -73,7 +73,7 @@ __all__ = [
     "ZoneMatch",
 ]
 
-#: The maximum number of findings one ``audit_firewall_rules`` call returns (issue #35).
+#: The maximum number of findings one ``audit_firewall_rules`` call returns.
 MAX_FINDINGS = 100
 
 #: The maximum number of object references one ``find_object_usage`` call returns.
@@ -94,7 +94,7 @@ IpFamily = Literal["ipv4", "ipv6"]
 #: The address family of an address object (FQDN objects have no IP family).
 AddressFamily = Literal["ipv4", "ipv6", "fqdn"]
 
-#: The audit checks issue #35 requires. The order is the canonical output order.
+#: The audit checks the tool performs. The order is the canonical output order.
 AuditCheck = Literal[
     "any-any",
     "disabled",
@@ -123,7 +123,7 @@ Severity = Literal["high", "medium", "low", "info"]
 #: The object types ``find_object_usage`` understands.
 ObjectType = Literal["address", "address-group", "service", "service-group"]
 
-#: The connectivity verdicts issue #35 requires.
+#: The connectivity verdicts the tool reports.
 Verdict = Literal["allowed", "denied", "no-matching-rule", "not-verifiable"]
 
 #: Where a reference to an object was found.
@@ -245,7 +245,7 @@ class AuditFirewallRulesInput(_Input):
 
     ``checks`` defaults to all seven checks. ``rule_name_contains`` selects which
     rule-scoped findings are reported; the rule base is still read in full so shadowing is
-    evaluated in real evaluation order. ``max_findings`` is capped at 100 (issue #35).
+    evaluated in real evaluation order. ``max_findings`` is capped at 100.
     """
 
     ip_family: IpFamily | None = Field(
@@ -607,7 +607,7 @@ class ExplainConnectivityOutput(_Output):
 class FindObjectUsageInput(_Input):
     """Input of ``find_object_usage``: one object type and a name or UUID.
 
-    The REST contract has no usage endpoint, so the tool derives references by scanning the
+    The REST API has no usage endpoint, so the tool derives references by scanning the
     relevant list operations. ``ip_family`` narrows address and address-group lookups;
     ``max_references`` bounds the returned references.
     """

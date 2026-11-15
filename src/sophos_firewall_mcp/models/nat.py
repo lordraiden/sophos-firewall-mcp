@@ -1,6 +1,6 @@
 """Pydantic models for the Sophos Firewall NAT-rule domain (IPv4 and IPv6).
 
-The contract (``firewall_config_openapi.yaml``) defines NAT rules as **one rule base per IP
+The Sophos API (``firewall_config_openapi.yaml``) defines NAT rules as **one rule base per IP
 family** with no SNAT/DNAT discriminator: a rule always carries its match fields
 (``originalServicesOrGroups``, ``inboundInterfaces``, ``outboundInterfaces``,
 ``originalSourceNetworks``, ``originalDestinationNetworks``) and *may* carry translation
@@ -30,13 +30,13 @@ are never returned to a model; the ``project_*`` functions turn them into the bo
 the tools publish. Bulk delete (``bulkDeleteNatRulesIpv4`` / ``bulkDeleteNatRulesIpv6``) is
 deliberately absent: it is classified in ``docs/API-COVERAGE.md`` and never registered.
 
-Naming (phase 5, M2): the **inputs** are snake_case because the model writes them, and the
+Naming (phase 5): the **inputs** are snake_case because the model writes them, and the
 **outputs** keep the Sophos wire names (camelCase) because they are projections of the
 appliance payload. The two conventions meet only in the ``project_*`` functions, which map
 one onto the other explicitly. Object references are projected to the shared
 :class:`~sophos_firewall_mcp.models.common.ObjectRef` shape (``{"name": …}``), the shape the
-firewall-rule projections already use (M14). Two members are derived rather than read:
-``kind`` (M13) and ``position`` (M12).
+firewall-rule projections already use. Two members are derived rather than read:
+``kind`` and ``position``.
 """
 
 from __future__ import annotations
@@ -109,11 +109,11 @@ __all__ = [
 #: Where a NAT rule is inserted, relative to the rule base or a reference rule.
 NatRulePosition = Literal["top", "bottom", "after", "before"]
 
-#: The contract's ``loadBalancingMethod`` vocabulary (input is closed to it; the output keeps
+#: The API's ``loadBalancingMethod`` vocabulary (input is closed to it; the output keeps
 #: a plain ``str`` so a future firmware value does not fail a read).
 LoadBalancingMethod = Literal["roundRobin", "firstAlive", "random", "stickyIp", "oneToOne"]
 
-#: The contract's health-check probe protocols (input is closed; output stays a plain ``str``).
+#: The API's health-check probe protocols (input is closed; output stays a plain ``str``).
 HealthCheckProtocol = Literal["tcp", "icmp"]
 
 #: UUID shape of the ``sfos-object-name-or-id`` format (the YAML ``format`` carries no
@@ -216,7 +216,7 @@ class ObjectRefInput(BaseModel):
 class NatRuleServicesInput(BaseModel):
     """``originalServicesOrGroups``: match any service, or a non-empty selection.
 
-    The contract models this as ``oneOf [{any: true}, {services?, serviceGroups?}]`` with
+    The API models this as ``oneOf [{any: true}, {services?, serviceGroups?}]`` with
     ``minProperties: 1`` on the selected variant. Exactly one variant is sent, and the
     selected variant must select at least one object.
     """
@@ -250,7 +250,7 @@ class NatRuleServicesInput(BaseModel):
 class NatRuleInterfacesInput(BaseModel):
     """``inboundInterfaces``/``outboundInterfaces``: match any interface, or a selection.
 
-    The contract models this as ``oneOf [{any: true}, {interfaces: [...]}]``. Exactly one
+    The API models this as ``oneOf [{any: true}, {interfaces: [...]}]``. Exactly one
     variant is sent, and the selected variant must name at least one interface.
     """
 
@@ -275,7 +275,7 @@ class NatRuleInterfacesInput(BaseModel):
 class NatRuleIpv4NetworksInput(BaseModel):
     """IPv4 ``originalSourceNetworks``/``originalDestinationNetworks`` selection.
 
-    The contract models this as ``oneOf [{any: true}, {macAddresses?, ipv4Addresses?,
+    The API models this as ``oneOf [{any: true}, {macAddresses?, ipv4Addresses?,
     ipv4Groups?, fqdnAddresses?, fqdnGroups?, countries?, countryGroups?}]`` with
     ``minProperties: 1`` on the selected variant.
     """
@@ -330,7 +330,7 @@ class NatRuleIpv4NetworksInput(BaseModel):
 class NatRuleIpv6NetworksInput(BaseModel):
     """IPv6 ``originalSourceNetworks``/``originalDestinationNetworks`` selection.
 
-    The contract models this as ``oneOf [{any: true}, {macAddresses?, ipv6Addresses?,
+    The API models this as ``oneOf [{any: true}, {macAddresses?, ipv6Addresses?,
     ipv6Groups?}]`` with ``minProperties: 1`` on the selected variant.
     """
 
@@ -452,7 +452,7 @@ class NatRuleHealthCheckRuleInput(BaseModel):
 
 
 class NatRuleHealthCheckInput(BaseModel):
-    """``healthCheck``: the contract wraps the probe settings in a ``rule`` object."""
+    """``healthCheck``: the API wraps the probe settings in a ``rule`` object."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -493,19 +493,23 @@ class NatRuleIpv6SnatOverrideInput(BaseModel):
 
 
 class NatRuleListInput(BaseModel):
-    """Query contract of ``getAllNatRulesIpv4``/``getAllNatRulesIpv6``.
+    """Query parameters of ``getAllNatRulesIpv4``/``getAllNatRulesIpv6``.
 
     One page per call. ``nameContains`` and ``nameNotEquals`` are documented as mutually
     exclusive, so at most one may be set.
 
-    ``page_size`` defaults to 10 (M11): a NAT rule is a large object (the lab appliance's
+    ``page_size`` defaults to 10: a NAT rule is a large object (the tested appliance's
     28-rule base is ~44 KB of JSON), so a default call must stay small and the caller raises
     the page size explicitly when it wants a bigger page.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    page: int = Field(default=1, ge=1, description="1-based page number.")
+    page: int = Field(
+        default=1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         default=10,
         ge=1,
@@ -518,7 +522,10 @@ class NatRuleListInput(BaseModel):
     page_total: bool = Field(
         default=False,
         serialization_alias="pageTotal",
-        description="Ask the appliance for pages.total and pages.items metadata.",
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
     )
     name_contains: str | None = Field(
         default=None,
@@ -577,9 +584,9 @@ def _require_anchor(
 class _NatRuleCreateBase(BaseModel):
     """Fields shared by the IPv4 and IPv6 create bodies.
 
-    The contract requires ``name``, ``originalServicesOrGroups``, ``inboundInterfaces``,
+    The API requires ``name``, ``originalServicesOrGroups``, ``inboundInterfaces``,
     ``outboundInterfaces`` and (in the family-specific half) the two original-network
-    selections. ``enabled`` defaults to ``true`` in the contract; the tool always sends the
+    selections. ``enabled`` defaults to ``true`` in the API; the tool always sends the
     resolved value so the created state is explicit.
     """
 
@@ -590,7 +597,7 @@ class _NatRuleCreateBase(BaseModel):
         default=None, max_length=255, description="Free-text description."
     )
     enabled: bool = Field(
-        default=True, description="Turn the NAT rule on or off (contract default: true)."
+        default=True, description="Turn the NAT rule on or off (API default: true)."
     )
     position: NatRulePosition | None = Field(
         default=None, description="Where to insert the rule in the rule base."
@@ -813,7 +820,7 @@ class NatRuleUpdateIpv6Input(_NatRuleUpdateBase):
 class NatRuleMoveInput(BaseModel):
     """Body of ``moveNatRuleIpv4``/``moveNatRuleIpv6``.
 
-    The contract's description says the rule "must be identified by name", so ``name`` is
+    The API documentation says the rule "must be identified by name", so ``name`` is
     required here even though the schema lists only ``position`` as required. ``after`` and
     ``before`` are only meaningful with a ``reference_item``.
     """
@@ -838,15 +845,15 @@ class NatRuleMoveInput(BaseModel):
 # -- Outputs: bounded projections ------------------------------------------------------
 #
 # The field names below are the appliance's wire names (camelCase), like every other output
-# projection in this server: the model reads them, so it reads what the contract returns.
-# Object references keep the shared ``{"name": …}`` shape (M14).
+# projection in this server: the model reads them, so it reads what the API returns.
+# Object references keep the shared ``{"name": …}`` shape.
 
-#: Derived SNAT/DNAT discriminator of a NAT rule (M13).
+#: Derived SNAT/DNAT discriminator of a NAT rule.
 #:
-#: The contract declares no discriminator, so it is derived from which translation the
+#: The API declares no discriminator, so it is derived from which translation the
 #: appliance populated: ``snat`` when only ``translatedSource`` carries a value, ``dnat``
 #: when only ``translatedDestination`` does, and ``unknown`` when neither does -- or when
-#: both do, because the contract has no combined variant and the discriminator is never
+#: both do, because the API has no combined variant and the discriminator is never
 #: guessed.
 NatRuleKind = Literal["snat", "dnat", "unknown"]
 
@@ -893,7 +900,7 @@ class NatRuleTranslationOutput(BaseModel):
     """Projected source or destination translation.
 
     Exactly one member is set when the appliance returns a translation: ``masq`` for
-    masquerading, or the referenced address object in the family member the contract used
+    masquerading, or the referenced address object in the family member the API used
     (``ipv4Address``, ``fqdnAddress`` or ``ipv6Address``).
     """
 
@@ -906,7 +913,7 @@ class NatRuleTranslationOutput(BaseModel):
 class NatRuleHealthCheckOutput(BaseModel):
     """Projected health-check probe settings."""
 
-    protocol: str = Field(description="Probe protocol declared by the contract: tcp or icmp.")
+    protocol: str = Field(description="Probe protocol declared by the API: tcp or icmp.")
     port: int | None = None
     interval: int
     timeout: int
@@ -925,8 +932,8 @@ class NatRuleOutput(BaseModel):
 
     This is the explicit, bounded projection the tools publish: the field names are the
     appliance's wire names, object references keep the ``{"name": …}`` shape, and no raw
-    Sophos payload is returned. ``kind`` is derived from the populated translation (M13) and
-    ``position`` is derived by the list tools (M12). The epoch "never" sentinel is
+    Sophos payload is returned. ``kind`` is derived from the populated translation and
+    ``position`` is derived by the list tools. The epoch "never" sentinel is
     published as ``null`` (L6); see
     :func:`~sophos_firewall_mcp.models.objects.serialize_epoch_sentinel`.
     """
@@ -964,7 +971,7 @@ class NatRuleOutput(BaseModel):
     outboundInterfaces: NatRuleInterfacesOutput | None = None
     loadBalancingMethod: str | None = Field(
         default=None,
-        description="Load-balancing method; the contract declares roundRobin, firstAlive, "
+        description="Load-balancing method; the API declares roundRobin, firstAlive, "
         "random, stickyIp or oneToOne.",
     )
     healthCheck: NatRuleHealthCheckOutput | None = None
@@ -1207,7 +1214,7 @@ def _project_snat_override(wire: _WireSnatOverride) -> NatRuleSnatOverrideOutput
 def _translation_is_populated(translation: NatRuleTranslationOutput | None) -> bool:
     """Whether a projected translation actually carries a value.
 
-    The contract declares ``translatedSource``/``translatedDestination`` as a ``oneOf`` of
+    The API declares ``translatedSource``/``translatedDestination`` as a ``oneOf`` of
     ``masq`` and an address reference, so a present-but-empty object is not a translation:
     it is treated as absent rather than guessed into a ``kind``.
     """
@@ -1225,7 +1232,7 @@ def _derive_kind(
     translated_source: NatRuleTranslationOutput | None,
     translated_destination: NatRuleTranslationOutput | None,
 ) -> NatRuleKind:
-    """Derive the SNAT/DNAT discriminator from the populated translation (M13).
+    """Derive the SNAT/DNAT discriminator from the populated translation.
 
     ``snat`` when only the source translation carries a value, ``dnat`` when only the
     destination one does, and ``unknown`` when neither does -- or when both do, because the
@@ -1272,7 +1279,7 @@ def project_nat_rule(payload: Mapping[str, Any]) -> NatRuleOutput:
     """Project one NAT-rule payload into the bounded MCP output model.
 
     ``position`` is ``None``: the get/create/update operations do not return the rule's
-    evaluation position and the contract exposes no way to obtain it for a single rule. Only
+    evaluation position and the API exposes no way to obtain it for a single rule. Only
     :func:`project_nat_rule_page` can derive it, from the page offset and the item index.
     """
     return _project_nat_rule_wire(NatRuleWire.model_validate(payload))

@@ -1,4 +1,4 @@
-"""Pydantic models for the read-only Sophos VPN domains (issue #31).
+"""Pydantic models for the read-only Sophos VPN domains.
 
 Two read-only families live here:
 
@@ -8,7 +8,7 @@ Two read-only families live here:
   bookmarks, and global settings.
 
 VPN is read-only in v1: no request model here describes a mutation, and the tools register
-no write. Response models use the contract's wire names (camelCase) so every projection is
+no write. Response models use the API's wire names (camelCase) so every projection is
 auditable against ``firewall_config_openapi.yaml``; ``extra="ignore"`` keeps a server-side
 addition from breaking a read. Nothing in this module performs I/O.
 
@@ -81,7 +81,7 @@ __all__ = [
     "VpnRouteBasedConnectionRefInput",
 ]
 
-#: The eight clientless bookmark protocols the contract discriminates on.
+#: The eight clientless bookmark protocols the API discriminates on.
 BookmarkProtocol = Literal["rdp", "telnet", "ssh", "ftp", "ftps", "sftp", "smb", "vnc"]
 
 #: Protocol keys the bookmark projection flattens; the value is the protocol payload.
@@ -207,7 +207,7 @@ class _Output(BaseModel):
 
 
 class _Input(BaseModel):
-    """Base for closed request models: the contract is closed, unknown fields are a bug."""
+    """Base for closed request models: the API is closed, unknown fields are a bug."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
@@ -218,15 +218,19 @@ class _Input(BaseModel):
 class VpnPageInput(_Input):
     """One page of a paginated VPN collection.
 
-    The bounds mirror the contract and the client-side validation: ``page >= 1`` and
+    The bounds mirror the API and the client-side validation: ``page >= 1`` and
     ``1 <= pageSize <= 100``. Only the operations whose contract declares
     ``page``/``pageSize``/``pageTotal`` accept this model.
 
-    ``page_size`` defaults to 10 (M11): a default call must stay small enough for a model
+    ``page_size`` defaults to 10: a default call must stay small enough for a model
     context, and the caller raises it explicitly when it wants a bigger page.
     """
 
-    page: int = Field(default=1, ge=1, description="1-based page number.")
+    page: int = Field(
+        default=1,
+        ge=1,
+        description="1-based page number; 0 is rejected before the request is sent.",
+    )
     page_size: int = Field(
         default=10,
         ge=1,
@@ -242,12 +246,15 @@ class VpnPageInput(_Input):
         default=False,
         validation_alias=AliasChoices("page_total", "pageTotal"),
         serialization_alias="pageTotal",
-        description="Ask the appliance for pages.total and pages.items.",
+        description=(
+            "Also request pages.total (the number of pages) and pages.items (the number "
+            "of items) in the response metadata."
+        ),
     )
 
 
 class VpnFilteredPageInput(VpnPageInput):
-    """A page plus the ``nameContains``/``nameNotEquals`` filters the contract declares."""
+    """A page plus the ``nameContains``/``nameNotEquals`` filters the API declares."""
 
     name_contains: str | None = Field(
         default=None,
@@ -268,7 +275,7 @@ class VpnFilteredPageInput(VpnPageInput):
 
     @model_validator(mode="after")
     def _at_most_one_name_filter(self) -> "VpnFilteredPageInput":
-        """Reject both name filters: the contract declares them mutually exclusive."""
+        """Reject both name filters: the API declares them mutually exclusive."""
         if self.name_contains is not None and self.name_not_equals is not None:
             raise ValueError(
                 "name_contains and name_not_equals are mutually exclusive; set at most one"
@@ -289,7 +296,7 @@ class FailoverGroupListInput(VpnFilteredPageInput):
     """A page of failover groups.
 
     ``getFailovergroups`` also declares opaque ``filter`` and ``sort`` query parameters;
-    the contract documents no grammar for them, so they are passed through verbatim.
+    the API documents no grammar for them, so they are passed through verbatim.
     """
 
     filter: str | None = Field(
@@ -483,7 +490,7 @@ class IpsecFailoverGroup(_Output):
 class IpsecPeerId(_Output):
     """A local or remote peer identity.
 
-    The contract uses two different ``type`` enums for this field (``dns``/``fqdn`` plus
+    The API uses two different ``type`` enums for this field (``dns``/``fqdn`` plus
     ``ip``/``email``/``x509``), so it is carried as a string rather than a ``Literal``.
     """
 
@@ -502,7 +509,7 @@ class IpsecRemoteGateway(_Output):
 class IpsecGatewaySettings(_Output):
     """Gateway settings of a site-to-site connection.
 
-    The contract models preshared-key, certificate and RSA-key authentication as three
+    The API models preshared-key, certificate and RSA-key authentication as three
     ``oneOf`` variants; this projection carries the union of their response fields. A
     preshared key is never returned by the appliance -- only ``preSharedKeyConfigured``.
     """
@@ -664,7 +671,7 @@ class SophosConnectClientSettings(_Output):
 class IpsecRemoteAccessSettings(_Output):
     """The remote-access IPsec configuration (a single settings object).
 
-    ``configured`` is derived, not returned by the appliance. The contract requires
+    ``configured`` is derived, not returned by the appliance. The API requires
     ``connectionState`` and uses ``"unset"`` to mean "remote-access IPsec is not configured
     at all", so the projection lifts that sentinel into a boolean an agent can branch on
     without knowing it: ``configured`` is true only for ``enabled`` and ``disabled``. An
@@ -693,7 +700,7 @@ class IpsecRemoteAccessSettings(_Output):
 
         ``"unset"`` is the appliance's "never configured" sentinel, so it maps to false;
         ``"enabled"`` and ``"disabled"`` both mean a configuration exists. A missing
-        ``connectionState`` violates the contract and is reported as not configured rather
+        ``connectionState`` violates the API and is reported as not configured rather
         than guessed as configured.
         """
         self.configured = self.connectionState in ("enabled", "disabled")
@@ -743,7 +750,7 @@ class SslVpnRemoteAccessPolicy(_Output):
 class SslVpnBookmark(_Output):
     """One clientless SSL VPN bookmark, flattened across the eight protocol variants.
 
-    The contract models a bookmark as an ``oneOf`` over ``rdp``, ``telnet``, ``ssh``,
+    The API models a bookmark as an ``oneOf`` over ``rdp``, ``telnet``, ``ssh``,
     ``ftp``, ``ftps``, ``sftp``, ``smb`` and ``vnc`` payloads. This projection lifts the
     single protocol key into ``protocol`` and copies the protocol members that are common
     to the variants, so the model sees one flat object instead of eight shapes. Credentials

@@ -1,4 +1,4 @@
-"""Firewall-rule tools (issue #27) for the Sophos Firewall Configuration REST API.
+"""Firewall-rule tools for the Sophos Firewall Configuration REST API.
 
 This module implements the twelve audited firewall-rule operations for IPv4 and IPv6 and
 the four composite tools the curated scope adds on top of them:
@@ -36,13 +36,13 @@ Safety decisions encoded here:
 * WAF rules are out of v1 scope. ``create`` only accepts ``ruleType: firewall``; ``get``
   and ``clone`` reject a WAF target; ``list`` omits WAF rules and reports how many it
   skipped instead of hiding them.
-* The contract returns no evaluation ``position`` on a rule object (M12). The list tools
+* The API returns no evaluation ``position`` on a rule object. The list tools
   derive it from the page offset and the item's index in the returned page; a single-object
   read or write reports ``position: null`` rather than inventing a value.
-* PATCH sends only the fields the caller set (``exclude_unset=True``) with the contract's
+* PATCH sends only the fields the caller set (``exclude_unset=True``) with the API's
   ``application/json`` content type; an explicit ``null`` on an optional member is a JSON
   Merge Patch removal. Nothing is retried: the shared client never retries writes.
-* Bulk delete exists in the contract but is deliberately not registered: it is excluded
+* Bulk delete exists in the API but is deliberately not registered: it is excluded
   from v1 because of its blast radius.
 
 Annotation policy: read tools carry no write hints; every mutation declares
@@ -146,8 +146,7 @@ def _project_rule(payload: Mapping[str, Any], model: type[RuleT]) -> RuleT:
         first = exc.errors()[0]
         location = ".".join(str(part) for part in first.get("loc", ())) or "body"
         raise ToolError(
-            "the appliance returned a firewall rule that does not match the contract "
-            f"({location})"
+            "the appliance returned a firewall rule that does not match the API " f"({location})"
         ) from exc
 
 
@@ -173,7 +172,7 @@ def _require_firewall_rule(rule: RuleT | None) -> RuleT:
 def _rule_position(request: ListFirewallRulesInput, index: int) -> int:
     """Derive the 1-based evaluation position of the item at *index* in the returned page.
 
-    The contract returns no ``position`` on a rule object (M12), so the list tools derive
+    The API returns no ``position`` on a rule object, so the list tools derive
     it from the page offset and the item's index in the page the appliance returned:
     ``(page - 1) * page_size + index + 1``. ``index`` counts every item in the page,
     including the WAF rules the projection omits, so a position can skip a number when a
@@ -437,7 +436,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "nameContains or nameNotEquals (mutually exclusive). Each rule carries its "
             "1-based evaluation position, derived from the page offset and its index in the "
             "returned page. WAF rules are out of scope: they are omitted and counted in "
-            "wafRulesSkipped. Size: the lab appliance's 48-rule base is ~70 KB of JSON, so "
+            "wafRulesSkipped. Size: the tested appliance's 48-rule base is ~70 KB of JSON, so "
             "keep page_size small and page through the collection. The MCP SDK returns the "
             "payload both as a text block and as structuredContent; read one of them, not "
             "both. Read-only."
@@ -460,7 +459,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "collection automatically. page_size defaults to 10. Filter by name with "
             "nameContains or nameNotEquals (mutually exclusive). Each rule carries its "
             "1-based evaluation position, derived from the page offset and its index in the "
-            "returned page. Size: the lab appliance's 48-rule base is ~70 KB of JSON, so "
+            "returned page. Size: the tested appliance's 48-rule base is ~70 KB of JSON, so "
             "keep page_size small and page through the collection. The MCP SDK returns the "
             "payload both as a text block and as structuredContent; read one of them, not "
             "both. Read-only."
@@ -480,7 +479,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "Read one IPv4 firewall rule by id or name (getFirewallRuleIpv4). Returns the "
             "applied enabled state, the action, the logging flag, the schedule and the "
-            "match criteria. position is null: the contract does not return the evaluation "
+            "match criteria. position is null: the API does not return the evaluation "
             "position on a single-object read, so use firewall_rule_list_ipv4 to obtain it. "
             "WAF rules are out of scope and are rejected. Read-only."
         ),
@@ -499,7 +498,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "Read one IPv6 firewall rule by id or name (getFirewallRuleIpv6). Returns the "
             "applied enabled state, the action, the logging flag, the schedule and the "
-            "match criteria. position is null: the contract does not return the evaluation "
+            "match criteria. position is null: the API does not return the evaluation "
             "position on a single-object read, so use firewall_rule_list_ipv6 to obtain it. "
             "Read-only."
         ),

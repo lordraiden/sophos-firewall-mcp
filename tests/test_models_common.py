@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.models.common import (
     ListPage,
     ObjectName,
@@ -14,8 +17,36 @@ from sophos_firewall_mcp.models.common import (
     validate_object_name,
     validate_object_name_or_id,
 )
+from sophos_firewall_mcp.models.firewall import ListFirewallRulesInput
+from sophos_firewall_mcp.models.nat import NatRuleListInput
+from sophos_firewall_mcp.models.network import PageInput
+from sophos_firewall_mcp.models.objects import ListQuery
+from sophos_firewall_mcp.models.users import UserListInput
+from sophos_firewall_mcp.models.vpn import VpnPageInput
+from sophos_firewall_mcp.server import create_server
 
 UUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
+
+#: The pagination descriptions the six pagination input models publish (M7). They are
+#: identical on purpose: a model reading any paginated tool learns the same two facts.
+PAGE_DESCRIPTION = "1-based page number; 0 is rejected before the request is sent."
+PAGE_TOTAL_DESCRIPTION = (
+    "Also request pages.total (the number of pages) and pages.items (the number of "
+    "items) in the response metadata."
+)
+
+#: The tools whose published input schema declares ``page``/``page_total`` (M7).
+EXPECTED_PAGINATED_TOOL_COUNT = 41
+
+#: The six pagination input models, one per domain family that paginates.
+PAGINATION_INPUT_MODELS = [
+    ListFirewallRulesInput,
+    NatRuleListInput,
+    PageInput,
+    UserListInput,
+    VpnPageInput,
+    ListQuery,
+]
 
 
 def test_pages_parses_the_wire_shape_and_ignores_unknown_fields():
@@ -183,3 +214,98 @@ def test_object_name_or_id_annotation_is_enforced_by_pydantic():
     assert Model(identifier="LAN").identifier == "LAN"
     with pytest.raises(ValidationError):
         Model(identifier="bad,name")
+
+
+# -- Pagination inputs (M7) -------------------------------------------------------------
+
+
+def _published_input_properties(schema: dict[str, Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Every property the input schema publishes, at every depth, with its subschema.
+
+    Local ``$ref`` targets, array ``items`` and every ``allOf``/``oneOf``/``anyOf`` branch
+    are followed, so the request body is scanned wherever the SDK nests it. A ``$ref``
+    already on the current path is not followed again, which keeps a recursive model from
+    looping. Every occurrence is returned, not just the first, so a duplicated property
+    cannot hide an undocumented one.
+    """
+    found: list[tuple[str, dict[str, Any]]] = []
+    _collect_properties(schema, schema, found, frozenset())
+    return found
+
+
+def _collect_properties(
+    schema: dict[str, Any],
+    node: dict[str, Any],
+    found: list[tuple[str, dict[str, Any]]],
+    seen: frozenset[str],
+) -> None:
+    """Walk one schema node, appending every property it publishes to ``found``."""
+    if "$ref" in node:
+        target = node["$ref"].rsplit("/", 1)[-1]
+        if target in seen:
+            return
+        seen = seen | {target}
+        node = schema["$defs"][target]
+    for keyword in ("allOf", "oneOf", "anyOf"):
+        for branch in node.get(keyword) or ():
+            _collect_properties(schema, branch, found, seen)
+    for name, subschema in (node.get("properties") or {}).items():
+        found.append((name, subschema))
+        _collect_properties(schema, subschema, found, seen)
+    items = node.get("items")
+    if isinstance(items, dict):
+        _collect_properties(schema, items, found, seen)
+
+
+@pytest.mark.parametrize("model", PAGINATION_INPUT_MODELS)
+def test_the_pagination_input_models_document_page_and_page_total(model: type[BaseModel]):
+    """M7: the two flags are documented on the model, not only on ``page_size``."""
+    fields = model.model_fields
+
+    assert fields["page"].description == PAGE_DESCRIPTION
+    assert fields["page_total"].description == PAGE_TOTAL_DESCRIPTION
+    # Documentation only: the bounds and defaults are unchanged.
+    assert fields["page"].default == 1
+    assert fields["page_total"].default is False
+
+
+async def test_every_paginated_tool_publishes_the_page_descriptions():
+    """M7: the descriptions must reach the published input schema of every paginated tool.
+
+    A model cannot discover ``page_total`` from a schema that does not describe it, so it
+    never asks for ``pages.total``/``pages.items`` and pages blindly until an empty page.
+    The sweep covers the whole surface: every tool whose input schema declares ``page`` or
+    ``page_total`` must publish both descriptions, and the same two texts everywhere.
+    """
+    settings = Settings(
+        host="fw.example.com",
+        port=443,
+        api_key="sfos_test_key_0123456789abcdef",
+        verify_ssl=False,
+        timeout=5.0,
+        read_only_mode=False,
+    )
+    tools = await create_server(settings).list_tools()
+
+    paginated: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    for tool in tools:
+        properties = _published_input_properties(tool.input_schema)
+        if any(name in {"page", "page_total"} for name, _ in properties):
+            paginated[tool.name] = properties
+
+    assert len(paginated) == EXPECTED_PAGINATED_TOOL_COUNT
+
+    for name, properties in paginated.items():
+        page = [schema for property_name, schema in properties if property_name == "page"]
+        page_total = [
+            schema for property_name, schema in properties if property_name == "page_total"
+        ]
+
+        assert len(page) == 1, name
+        assert len(page_total) == 1, name
+        assert page[0].get("description") == PAGE_DESCRIPTION, name
+        assert page_total[0].get("description") == PAGE_TOTAL_DESCRIPTION, name
+        # The published bounds and defaults are unchanged by the documentation fix.
+        assert page[0]["default"] == 1, name
+        assert page[0]["minimum"] == 1, name
+        assert page_total[0]["default"] is False, name
