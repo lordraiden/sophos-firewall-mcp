@@ -8,6 +8,8 @@ Documentación de diseño y ejecución para reemplazar la integración XML por S
 - [Referencias](./REFERENCES.md): URLs del YAML del repositorio, documentación oficial Sophos, operaciones endpoints, RFC y SDK MCP.
 - [Acceso al laboratorio](./LAB-ACCESS.md): endpoint del appliance, API key de solo lectura, variables de entorno y advertencias. Credencial en claro por decisión del propietario; solo laboratorio.
 - [Informe de auditoría independiente](./INDEPENDENT_REVIEW_REPORT.md): revisión de 15 de noviembre de 2026 con baseline verificado, tabla de conformidad MCP/Sophos, hallazgos, cambios realizados en el plan y las issues, y evidencia pendiente del appliance.
+- [ADR-001 — REST client and model-generation strategy](../ADR-001-rest-client-strategy.md): decisión de cliente REST (HTTPX + Pydantic manual) con la POC acotada que la respalda, el baseline del contrato medido desde el fichero y la instrucción normativa para #25.
+- [API coverage](../../API-COVERAGE.md): inventario generado de las 700 operaciones con decisiones curadas por dominio, excepciones PATCH, paginación, identificadores y protocolo de verificación en vivo.
 - [Prompt de revisión independiente](./INDEPENDENT_REVIEW_PROMPT.md): auditoría exhaustiva de la planificación y las issues frente al contrato Sophos, la especificación MCP y el SDK Python oficial.
 - [Prompts de ejecución](./execution/README.md): maestro, fases 1–3 y protocolo de revisión para ejecutar el plan con subagentes y Agent Teams de DSH.
 
