@@ -351,8 +351,8 @@ administrator profile for any deployment that only needs inspection.
   Sophos wire name (`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`, …), because outputs are
   projections of the appliance payload. The convention is deliberate: inputs are snake_case because the
   model writes them, outputs are wire-faithful because the model reads them. This was a breaking change
-  from 0.5.0 for the 23 tools that still published snake_case outputs (NAT and the mixed domains);
-  callers that parsed `original_services_or_groups` or `translated_source` must update.
+  from 0.5.0 for the 23 tools that still published snake_case outputs (12 NAT, 8 users and 3 audit
+  tools); callers that parsed `original_services_or_groups` or `translated_source` must update.
 - **Firmware compatibility is limited to the tested build.** The lab appliance runs **SFOS 23.0.0
   GA-Build371** (owner-provided; the API exposes no version endpoint). The live evidence applies to that
   build; no general firmware compatibility claim is made for other SFOS versions. See

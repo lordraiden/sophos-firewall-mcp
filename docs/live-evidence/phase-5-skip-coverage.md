@@ -9,9 +9,9 @@
 and is blocked by the appliance itself (`dhcp_relay_get_ipv4` returns `401` on a real,
 listed relay). **17** remain deferred for scope or connectivity reasons (§6). One new
 output-contract defect was found (**P5-D1**, the DNS host entry address is dropped by the
-projection) and one phase-4 finding is corrected (**M9**: the DHCP relay sub-resource is
-`401` for every object, not only for an unknown UUID). Every object created for this run was
-deleted and verified gone; the appliance is back to its exact baseline (§8).
+projection; fixed in this PR, §7) and one phase-4 finding is corrected (**M9**: the DHCP relay
+sub-resource is `401` for every object, not only for an unknown UUID). Every object created for
+this run was deleted and verified gone; the appliance is back to its exact baseline (§8).
 
 This record follows the format in [`README.md`](README.md) §3. It is append-only: it adds a
 new dated record and does not rewrite the phase-4 files.
@@ -29,14 +29,18 @@ were reused unchanged. Each one was enforced mechanically by the driver, not by 
 | Delete everything created and verify it is gone | Each delete is followed by a `GET` of the same name; a `200` would have been recorded as `CLEANUP-FAILURE`. All returned `404`. A final sweep of 17 collections found zero objects containing `mcp-test` (§8). |
 
 Additional exclusions honoured: no interface, zone, gateway, route, IPsec or SSL VPN
-mutation; no live-user disconnect; no `network_user` write; no bulk delete.
+mutation; no live-user disconnect; no `network_user` write; no bulk delete — with the one
+deviation below.
 
-**One documented deviation.** The DHCP relay single-object `DELETE` returns `401` on this
-firmware (§7, P5-O1), so the relay fixture was removed through the contract's own delete
-endpoint (`POST /network/dhcp/relays/ipv4/delete`) with **exactly one item — the name of the
-object this run had just created**. It is not a bulk operation: the request body named one
-object, the response confirmed `deleted: true` for that one object, and the collection was
-empty afterwards. No other object was in scope.
+**One documented deviation: the relay fixture was removed through the bulk-delete endpoint.**
+The DHCP relay single-object `DELETE` returns `401` on this firmware (§7, P5-O1), so the relay
+fixture was removed with `POST /network/dhcp/relays/ipv4/delete` — the contract's
+`deleteDhcpRelaysIpv4` operation, which is the **bulk-delete endpoint** the safety rules
+exclude. The deviation is the endpoint, not the scope: the request body named **exactly one
+item, the object this run had just created**, the response confirmed `deleted: true` for that
+one object, and the collection was empty afterwards. No other object was in scope, so no
+object outside this run could be affected. Every other delete in the run used the
+single-object `DELETE`.
 
 ## 2. Environment
 
@@ -205,7 +209,7 @@ object was created, with the reason in the last column.
 | 12 | `dhcp_server_get_ipv6` | DEFERRED | no create tool; DHCP server mutations are excluded from the server |
 | 13 | `dhcp_relay_get_ipv4` | **BLOCKED** | object created and listed; sub-resource returns `401` (P5-O1) |
 | 14 | `dhcp_relay_get_ipv6` | DEFERRED | no create tool; the IPv6 sub-resource shows the same `401` signature |
-| 15 | `dns_host_entry_get` | **PASS** | fixture created out of band, read by name and by id, deleted |
+| 15 | `dns_host_entry_get` | **PASS** (defect found) | fixture created out of band, read by name and by id, deleted; the read exposed P5-D1, fixed in this PR (§7) |
 | 16 | `dns_request_route_get` | DEFERRED | no create tool; not in the agreed disposable-object list |
 | 17 | `static_neighbor_get_ipv4` | **PASS** | fixture created out of band, read by name and by id, deleted |
 | 18 | `static_neighbor_get_ipv6` | DEFERRED | the agreed list covers the IPv4 neighbour only |
@@ -220,6 +224,11 @@ object was created, with the reason in the last column.
 becomes **77 PASS / 18 SKIP** for the read-only surface, with the 18 SKIPs now classified as
 1 appliance-blocked and 17 deferred. The three phase-4 FAILs were fixed in 0.5.0 and are not
 re-measured here.
+
+One of the 6 PASS exposed a defect rather than confirming the tool: `dns_host_entry_get`
+returned a schema-valid object with the address dropped (P5-D1). It is counted PASS because
+the get-by-id path itself worked, but the projection was wrong until commit `7680ab0` fixed it
+in this PR, so the 6-PASS tally is not 6 clean conversions.
 
 **Supplementary (not a SKIP conversion):** `address_get_ipv6` was already PASS in phase 4,
 but only by UUID. This run also read an IPv6 address **by name** (`200`), so both identifier
@@ -266,7 +275,11 @@ surface the address (either flattened or as the nested object the appliance send
 otherwise correct, so the defect is invisible to schema validation — exactly the class the
 phase-4 run was designed to catch.
 
-**Not fixed here:** this record is evidence only; the fix belongs to a follow-up task.
+**Fixed in this PR:** commit `7680ab0` changes `DnsHostEntryRecord` to read the nested
+`hostEntries[].ipv4.ipv4Address` / `hostEntries[].ipv6.ipv6Interface` shape the appliance sends,
+and `tests/test_network.py::test_dns_host_entry_projects_the_nested_address` asserts the
+projected address and interface. The record above is the evidence that found the defect; the
+fix ships in 0.6.0.
 
 ### P5-O1 — the DHCP relay sub-resource returns `401` for every object (corrects phase-4 M9)
 
@@ -417,6 +430,7 @@ The three out-of-band fixtures were created with a direct REST `POST` to the sam
 tool for DHCP relays, DNS host entries or static neighbours.
 
 To reproduce P5-D1 without any write, the projection can be inspected locally: the appliance
-shape is `hostEntries[].ipv4.ipv4Address`, while `models.DnsHostEntryRecord` declares flat
-`ipv4Address` / `ipv4Interface` / `ipv6Address` / `ipv6Interface` members, so a nested payload
-projects to four `null`s.
+shape is `hostEntries[].ipv4.ipv4Address`, while the 0.5.0 `models.DnsHostEntryRecord` declared
+flat `ipv4Address` / `ipv4Interface` / `ipv6Address` / `ipv6Interface` members, so a nested
+payload projected to four `null`s. The 0.6.0 model declares the nested `ipv4` / `ipv6` objects
+instead (commit `7680ab0`), so the address now survives the projection.

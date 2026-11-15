@@ -14,19 +14,20 @@ any other SFOS build. It is not the Sophos Central Firewall Management API and n
 
 **Breaking: published output field names are unified on camelCase (the Sophos wire names).** 0.5.0
 unified the *inputs* on snake_case; the *outputs* were still split — 119 tools published camelCase
-because their outputs are projections of the appliance payload, while 23 tools (NAT, 18 of them, plus
-5 mixed domains) published snake_case. Every published output property is now the wire name
+because their outputs are projections of the appliance payload, while 23 tools (12 NAT, 8 users and
+3 audit tools) published snake_case. Every published output property is now the wire name
 (`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`, `originalServicesOrGroups`,
 `translatedSource`, …). The convention is deliberate and now documented: **inputs are snake_case
-because the model writes them, outputs are wire-faithful because the model reads them.** The JSON body
-sent to the appliance is unchanged in both directions. Callers that parsed the 0.5.0 snake_case output
-names must update.
+because the model writes them, outputs are wire-faithful because the model reads them.** The JSON
+request body sent to the appliance is unchanged; the default `pageSize` query value changes from 50
+to 10 (see M11 below). Callers that parsed the 0.5.0 snake_case output names must update.
 
 ### Fixed
 
 - **M11 — list and audit outputs no longer threaten a model context by default.** Every list tool
-  defaults to `page_size: 10`, and each description states the approximate size of a full page, so a
-  default call no longer returns a 72 KB firewall-rule collection (~18,000 tokens) into the context.
+  defaults to `page_size: 10`, and the heavy domains (firewall rules, NAT, services) state the
+  approximate size of a full page, so a default call no longer returns a 72 KB firewall-rule
+  collection (~18,000 tokens) into the context.
 - **M12 — firewall and NAT rule objects expose their evaluation `position`.** List outputs carry the
   page offset plus the index; a get-by-id returns `position: null`, because a single object has no
   evaluation order. Evaluation order no longer requires a full `audit_firewall_rules` run.
@@ -45,7 +46,7 @@ names must update.
   **pages** and `pages.items` the number of **items**; the ambiguity that made `total: 12` read as
   "12 addresses" is gone.
 - **L3 — the `audit_firewall_rules` description matches the finding shape.** Object-scoped findings
-  (`unused-object`) carry the object and leave `rule_name` / `rule_id` / `position` null, which the
+  (`unused-object`) carry the object and leave `ruleName` / `ruleId` / `position` null, which the
   description now says.
 - **L6 — the epoch sentinel is mapped to `null`.** Built-in objects no longer report
   `createdAt` / `updatedAt` as `1970-01-01T00:00:00Z`; the appliance's "never" sentinel becomes `null`,

@@ -9,7 +9,7 @@
 
 0.6.0 closes the remaining phase-4 dogfooding findings and makes the output surface as consistent as
 the input surface. 0.5.0 unified every published *input* parameter on snake_case; the *outputs* were
-still split, with 119 tools publishing camelCase and 23 tools (NAT, 18 of them, plus 5 mixed domains)
+still split, with 119 tools publishing camelCase and 23 tools (12 NAT, 8 users and 3 audit tools)
 publishing snake_case. 0.6.0 unifies them on **camelCase, the Sophos wire names**, because outputs are
 projections of the appliance payload.
 
@@ -18,15 +18,16 @@ Sophos Firewall 23 (SFOS 23.0)**, implementing the **Configuration REST API v1**
 (`/api/firewall-config/v1`). The live evidence in this repository was produced against **SFOS 23.0.0
 GA-Build371**; no general firmware compatibility claim is made for any other SFOS build.
 
-The only **breaking** change is the output naming. The JSON body sent to the appliance is unchanged in
-both directions.
+The **breaking** changes are the output naming and the new default page size. The JSON request body
+sent to the appliance is unchanged; the default `pageSize` query value changes from 50 to 10 (see
+§1.2).
 
 ### 1.2 Breaking changes
 
 - **Published output field names are camelCase everywhere.** Every published output property, at every
   depth, is now the Sophos wire name (`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`,
-  `originalServicesOrGroups`, `translatedSource`, …). 23 tools change: the 18 NAT tools and 5 mixed
-  domains. Callers that parsed the 0.5.0 snake_case output names must update. The convention is
+  `originalServicesOrGroups`, `translatedSource`, …). 23 tools change: 12 NAT, 8 users and 3 audit
+  tools. Callers that parsed the 0.5.0 snake_case output names must update. The convention is
   deliberate and now documented: **inputs are snake_case because the model writes them, outputs are
   wire-faithful because the model reads them.**
 - **List tools default to `page_size: 10`.** A default call no longer returns a whole collection. A
@@ -35,9 +36,9 @@ both directions.
 
 ### 1.3 Fixed
 
-- **M11 — default output size.** Every list tool defaults to `page_size: 10` and its description states
-  the approximate size of a full page, so a default call no longer returns a 72 KB firewall-rule
-  collection (~18,000 tokens) into a model context.
+- **M11 — default output size.** Every list tool defaults to `page_size: 10`, and the heavy domains
+  (firewall rules, NAT, services) state the approximate size of a full page, so a default call no
+  longer returns a 72 KB firewall-rule collection (~18,000 tokens) into a model context.
 - **M12 — evaluation `position`.** Firewall and NAT rule list outputs carry the page offset plus the
   index; a get-by-id returns `position: null`, because a single object has no evaluation order.
 - **M13 — NAT `kind`.** NAT rules carry a derived `kind` (`snat` / `dnat` / `unknown`), computed from
@@ -52,7 +53,7 @@ both directions.
 - **L1 — `Pages` semantics.** Field descriptions reach the published `outputSchema`: `pages.total` is
   the number of **pages**, `pages.items` the number of **items**.
 - **L3 — audit description.** The `audit_firewall_rules` description matches the finding shape:
-  object-scoped findings carry the object and leave `rule_name` / `rule_id` / `position` null.
+  object-scoped findings carry the object and leave `ruleName` / `ruleId` / `position` null.
 - **L6 — epoch sentinel.** Built-in objects report `createdAt` / `updatedAt` as `null` instead of
   `1970-01-01T00:00:00Z`.
 - **L7 — duplicated payload documented.** The JSON appears in a `TextContent` block and in
@@ -89,14 +90,14 @@ The server is stateless: rolling back changes no appliance configuration and no 
 1. Re-deploy the previous image `ghcr.io/lordraiden/sophos-firewall-mcp:0.5.0` (or the `0.5` alias).
 2. If you run from source, check out `v0.5.0` and reinstall.
 3. Clients that adopted the camelCase output names must go back to the 0.5.0 snake_case spellings for
-   the 23 affected tools; the wire body is unchanged in both directions.
+   the 23 affected tools; the JSON request body is unchanged.
 4. Clients that relied on the implicit 50-item default page size get it back; no other behaviour
    changes.
 
 ## 3. Publication checklist
 
-- [x] `pyproject.toml` and `uv.lock` both say `0.6.0`; `uv lock --check` passes. *(The Lead bumps the
-      version at integration; this release pack does not change it.)*
+- [x] `pyproject.toml` and `uv.lock` both say `0.6.0`; `uv lock --check` passes. The bump is part of
+      this PR (commit `6dd66a7`).
 - [ ] `CHANGELOG.md` has the `[0.6.0]` entry; `README.md` reflects 0.6.0.
 - [ ] `docs/API-COVERAGE.md` regenerates without a diff.
 - [ ] Independent review **APPROVE**
