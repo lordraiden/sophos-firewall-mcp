@@ -349,7 +349,9 @@ administrator profile for any deployment that only needs inspection.
   so an unknown argument is rejected instead of ignored.
 - **Output field naming is uniform on camelCase as of 0.6.0.** Every published output property is the
   Sophos wire name (`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`, …), because outputs are
-  projections of the appliance payload. The convention is deliberate: inputs are snake_case because the
+  projections of the appliance payload. The three audit composites (`audit_firewall_rules`,
+  `explain_connectivity`, `find_object_usage`) are camelCase by convention rather than wire names: they
+  are computed, not projections. The convention is deliberate: inputs are snake_case because the
   model writes them, outputs are wire-faithful because the model reads them. This was a breaking change
   from 0.5.0 for the 23 tools that still published snake_case outputs (12 NAT, 8 users and 3 audit
   tools); callers that parsed `original_services_or_groups` or `translated_source` must update.

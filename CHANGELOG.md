@@ -15,7 +15,9 @@ any other SFOS build. It is not the Sophos Central Firewall Management API and n
 **Breaking: published output field names are unified on camelCase (the Sophos wire names).** 0.5.0
 unified the *inputs* on snake_case; the *outputs* were still split — 119 tools published camelCase
 because their outputs are projections of the appliance payload, while 23 tools (12 NAT, 8 users and
-3 audit tools) published snake_case. Every published output property is now the wire name
+3 audit tools) published snake_case. Every published output property is now camelCase; for the 119
+projection tools that is the wire name, and the three audit composites are camelCase by convention
+because they are computed, not projections. The names are
 (`pageSize`, `nameContains`, `idOrName`, `servicesOrGroups`, `originalServicesOrGroups`,
 `translatedSource`, …). The convention is deliberate and now documented: **inputs are snake_case
 because the model writes them, outputs are wire-faithful because the model reads them.** The JSON

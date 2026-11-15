@@ -10,7 +10,8 @@
 0.6.0 closes the remaining phase-4 dogfooding findings and makes the output surface as consistent as
 the input surface. 0.5.0 unified every published *input* parameter on snake_case; the *outputs* were
 still split, with 119 tools publishing camelCase and 23 tools (12 NAT, 8 users and 3 audit tools)
-publishing snake_case. 0.6.0 unifies them on **camelCase, the Sophos wire names**, because outputs are
+publishing snake_case. 0.6.0 unifies them on **camelCase**: the wire names for the 119 projection
+tools, and camelCase by convention for the three audit composites, which are computed rather than
 projections of the appliance payload.
 
 This release also states the product's appliance support explicitly: this is an **MCP server for
