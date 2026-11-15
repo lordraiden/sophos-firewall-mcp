@@ -8,7 +8,7 @@
 
 **Estado:** credencial de laboratorio compartida para verificación en vivo.  
 **Última verificación:** 15 de noviembre de 2026 (smoke test de solo lectura, ver [api-smoke-2026-11-15.md](../live-evidence/api-smoke-2026-11-15.md)).  
-**Decisión del propietario:** la credencial se registra en claro en este repositorio para que los agentes de ejecución la encuentren sin fricción. Es un appliance de laboratorio, no producción. La clave se rotará al terminar las pruebas.
+**Decisión del propietario:** la credencial **no** se guarda en el repositorio. Se proporciona por `SOPHOS_API_KEY` / `SOPHOS_API_KEY_FILE` o por los secretos del entorno `live-lab`. La clave anterior quedó expuesta y **debe rotarse**.
 
 > ⚠️ **Alcance:** la clave pertenece a un administrador de **solo lectura**. No ejecutar escrituras, mutaciones, bulk delete, desconexiones ni cambios de interfaz/VPN sin aprobación explícita del propietario. Si una tarea requiere escritura, pedir primero una clave con permisos de escritura y un plan de prueba.
 
@@ -90,7 +90,7 @@ Sin token o con token inválido: `401 {"error":"unauthenticated","message":"Toke
 
 ## Advertencias de seguridad
 
-1. Esta credencial está en claro en el repositorio **por decisión explícita del propietario** y para un appliance de laboratorio. No reutilizarla en producción ni en otro entorno.
+1. La credencial no se guarda en el repositorio. La clave anterior quedó expuesta en el historial público y **debe rotarse**; no reutilizarla en producción ni en otro entorno.
 2. No incluirla en imágenes Docker, artefactos de release, logs de CI ni capturas.
 3. No ejecutar operaciones de escritura con esta clave; el perfil es de solo lectura y cualquier intento debe considerarse fuera de alcance.
-4. Al cerrar las pruebas, el propietario rotará la clave; actualizar este documento y `docs/live-evidence/` cuando ocurra.
+4. La clave anterior debe rotarse **ahora**; actualizar este documento y `docs/live-evidence/` cuando ocurra.

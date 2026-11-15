@@ -290,8 +290,9 @@ administrator profile for any deployment that only needs inspection.
 - **Bearer API key**, held as `SecretStr`, sent only in the `Authorization` header. It is never logged,
   never included in error messages, and never returned in tool output.
 - **TLS verified by default.** `SOPHOS_VERIFY_SSL=false` exists for lab appliances with self-signed
-  certificates; `SOPHOS_CA_BUNDLE` is the better option. No example in this repository disables
-  verification.
+  certificates; `SOPHOS_CA_BUNDLE` is the better option. No example in this README disables
+  verification; the lab runbooks under `docs/architecture/` use `SOPHOS_VERIFY_SSL=false` only for the
+  self-signed lab appliance and say so.
 - **No inherited proxy.** Proxy environment variables are ignored so the token cannot be routed through
   an unexpected proxy.
 - **No cross-origin redirects.** A redirect to another origin is refused rather than followed with the
@@ -307,12 +308,13 @@ administrator profile for any deployment that only needs inspection.
 
 ## Known limitations and accepted regressions
 
-- **Input parameter naming is not yet uniform.** Measured on the published schemas: 74 tools publish
-  camelCase-only inputs (`pageSize`, `nameContains`, `idOrName`; firewall, network, VPN), 55 publish
-  snake_case-only (`page_size`, `name_contains`, `id_or_name`; NAT, objects, users), 5 mix both, 6 have
-  only single-word fields and 12 take no parameters. Each tool's schema is self-describing, so this is
-  an ergonomics inconsistency, not a functional one. It is scheduled to be unified in **0.5.0** as a
-  documented breaking change.
+- **Input parameter naming is not yet uniform.** Measured by enumerating `tools/list` and classifying
+  each tool's `request` object: 74 tools publish camelCase-only inputs (`pageSize`, `nameContains`,
+  `idOrName`; firewall, network, VPN), 55 publish snake_case-only (`page_size`, `name_contains`,
+  `id_or_name`; NAT, objects, users), 5 mix both, 6 have only single-word fields, and 12 take no
+  parameters (8 declare no `request` property and 4 expose an empty request model). Each tool's schema
+  is self-describing, so this is an ergonomics inconsistency, not a functional one. It is scheduled to
+  be unified in **0.5.0** as a documented breaking change.
 - **Target firmware build is not verified.** The contract exposes no version endpoint
   (`getSystemSettings` returns only `hostname`, `loginDisclaimer` and `updatedAt`), so the SFOS build
   behind the checked-in OpenAPI file is unknown. This project makes **no firmware compatibility claim**;

@@ -98,12 +98,12 @@ placeholder tool is advertised:
 
 ### 1.6 Known limitations
 
-- **Input parameter naming is not yet uniform.** Measured on the published schemas: 74 tools publish
+- **Input parameter naming is not yet uniform.** Measured by enumerating `tools/list`: 74 tools publish
   camelCase-only inputs (firewall, network, VPN), 55 publish snake_case-only (NAT, objects, users), 5
-  mix both, 6 have only single-word fields and 12 take no parameters. Every tool schema is
-  self-describing, so this is an ergonomics inconsistency, not a functional defect. It will be unified
-  in **0.5.0** as a documented breaking change; callers that hard-code parameter names should expect
-  that change.
+  mix both, 6 have only single-word fields, and 12 take no parameters (8 declare no `request` property
+  and 4 expose an empty request model). Every tool schema is self-describing, so this is an ergonomics
+  inconsistency, not a functional defect. It will be unified in **0.5.0** as a documented breaking
+  change; callers that hard-code parameter names should expect that change.
 - **Target firmware build is unknown.** The contract exposes no version endpoint, so this release makes
   **no firmware compatibility claim**. Verify against your own appliance before relying on a tool.
 - **No live write validation.** The shared lab credential is read-only; no POST, PATCH or DELETE has been
@@ -266,12 +266,16 @@ docker manifest inspect ghcr.io/lordraiden/sophos-firewall-mcp:0.4   > /dev/null
 
 ### 3.4 Promote `latest` (approved promotion only)
 
-`latest` is moved **only** by this approved promotion — never by a push to `main`. The `release` job in
+`latest` is moved **only** by this approved promotion — never by a push to `main`. Note that
+`docker-publish.yml` has no `pull_request` trigger: it first runs on the merge to `main` (development
+tags) or on the `v*` tag (release job), so a PR run does not exercise it. The `release` job in
 `.github/workflows/docker-publish.yml` runs in the `release` GitHub Environment, so configure required
 reviewers there and let the workflow publish the semver tags and `latest`; promote manually only if that
 environment is unavailable, and record the digests.
 
-**Record the current `latest` digest first** — it is the rollback target (§2.4):
+**Record the current `latest` digest first, if one exists** — it is the rollback target (§2.4). On a
+first release there is no `latest` yet; record that instead and use the pre-promotion commit as the
+rollback target:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/lordraiden/sophos-firewall-mcp:latest
