@@ -36,7 +36,7 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from sophos_firewall_mcp.models.common import ObjectNameOrId, OutputModel
+from sophos_firewall_mcp.models.common import IpFamily, ObjectNameOrId, OutputModel
 
 __all__ = [
     "ALL_CHECKS",
@@ -87,9 +87,6 @@ MAX_EVIDENCE_FIELDS = 8
 
 #: Upper bound for every free-text field, in characters.
 MAX_TEXT = 400
-
-#: The IP family a rule or NAT rule belongs to.
-IpFamily = Literal["ipv4", "ipv6"]
 
 #: The address family of an address object (FQDN objects have no IP family).
 AddressFamily = Literal["ipv4", "ipv6", "fqdn"]

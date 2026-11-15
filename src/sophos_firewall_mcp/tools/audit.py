@@ -112,8 +112,7 @@ from sophos_firewall_mcp.models.audit import (
 )
 from sophos_firewall_mcp.models.common import ListPage, ObjectRef
 from sophos_firewall_mcp.models.firewall import (
-    FirewallRuleIpv4Output,
-    FirewallRuleIpv6Output,
+    FirewallRuleOutput,
     Ipv4NetworkMatchOutput,
     Ipv6NetworkMatchOutput,
     ListFirewallRulesInput,
@@ -138,18 +137,14 @@ from sophos_firewall_mcp.models.network import (
     Zone,
 )
 from sophos_firewall_mcp.models.objects import (
+    Address,
+    AddressGroupListInput,
+    AddressGroupOutput,
+    AddressListInput,
     FqdnAddress,
     FqdnAddressGroup,
     FqdnAddressGroupListInput,
     FqdnAddressListInput,
-    Ipv4Address,
-    Ipv4AddressGroup,
-    Ipv4AddressGroupListInput,
-    Ipv4AddressListInput,
-    Ipv6Address,
-    Ipv6AddressGroup,
-    Ipv6AddressGroupListInput,
-    Ipv6AddressListInput,
     Service,
     ServiceGroup,
     ServiceGroupListInput,
@@ -211,7 +206,10 @@ _NAT_NETWORK_FIELDS = (
 )
 
 #: A projected firewall rule of either IP family.
-RuleOutput = FirewallRuleIpv4Output | FirewallRuleIpv6Output
+RuleOutput = FirewallRuleOutput
+
+#: The two rule families, in evaluation order.
+_IP_FAMILIES: tuple[IpFamily, ...] = ("ipv4", "ipv6")
 
 #: The verdicts the rule evaluation can reach internally (``truncated`` is mapped later).
 _OutcomeVerdict = str
@@ -867,30 +865,15 @@ class AuditAdapter(DomainAdapter):
     async def _rules(self, family: IpFamily, budget: _Budget) -> list[RuleOutput]:
         """Read one family's firewall rule base in evaluation order."""
         adapter = FirewallRuleAdapter(self.context)
-        collected: list[RuleOutput] = []
-        if family == "ipv4":
 
-            async def fetch_ipv4(page: int) -> ListPage[FirewallRuleIpv4Output]:
-                return await adapter.list_ipv4(
-                    ListFirewallRulesInput(page=page, page_size=PAGE_SIZE, page_total=True)
+        async def fetch(page: int) -> ListPage[FirewallRuleOutput]:
+            return await adapter.list_rules(
+                ListFirewallRulesInput(
+                    ip_family=family, page=page, page_size=PAGE_SIZE, page_total=True
                 )
-
-            rules_ipv4: list[FirewallRuleIpv4Output] = await self._walk(
-                "firewall-rules-ipv4", budget, fetch_ipv4
             )
-            collected.extend(rules_ipv4)
-        else:
 
-            async def fetch_ipv6(page: int) -> ListPage[FirewallRuleIpv6Output]:
-                return await adapter.list_ipv6(
-                    ListFirewallRulesInput(page=page, page_size=PAGE_SIZE, page_total=True)
-                )
-
-            rules_ipv6: list[FirewallRuleIpv6Output] = await self._walk(
-                "firewall-rules-ipv6", budget, fetch_ipv6
-            )
-            collected.extend(rules_ipv6)
-        return collected
+        return await self._walk(f"firewall-rules-{family}", budget, fetch)
 
     async def _nat_rules(self, family: IpFamily, budget: _Budget) -> list[NatRuleOutput]:
         """Read one family's NAT rule base in evaluation order."""
@@ -899,7 +882,8 @@ class AuditAdapter(DomainAdapter):
 
         async def fetch(page: int) -> ListPage[NatRuleOutput]:
             return await adapter.list_rules(
-                path, NatRuleListInput(page=page, page_size=PAGE_SIZE, page_total=True)
+                path,
+                NatRuleListInput(ip_family=family, page=page, page_size=PAGE_SIZE, page_total=True),
             )
 
         return await self._walk(f"nat-rules-{family}", budget, fetch)
@@ -994,11 +978,14 @@ class AuditAdapter(DomainAdapter):
         """Read the address objects of the requested families."""
         adapter = ObjectsAdapter(self.context)
         entries: list[_ObjectEntry] = []
-        if "ipv4" in families:
+        for family in _IP_FAMILIES:
+            if family not in families:
+                continue
 
-            async def fetch_ipv4(page: int) -> ListPage[Ipv4Address]:
-                return await adapter.list_ipv4_addresses(
-                    Ipv4AddressListInput(
+            async def fetch(page: int, family: IpFamily = family) -> ListPage[Address]:
+                return await adapter.list_addresses(
+                    AddressListInput(
+                        ip_family=family,
                         page=page,
                         page_size=PAGE_SIZE,
                         page_total=True,
@@ -1007,45 +994,14 @@ class AuditAdapter(DomainAdapter):
                     )
                 )
 
-            for address_ipv4 in await self._walk("addresses-ipv4", budget, fetch_ipv4):
+            for address in await self._walk(f"addresses-{family}", budget, fetch):
                 entries.append(
                     _ObjectEntry(
-                        address_ipv4.name,
-                        address_ipv4.id,
+                        address.name,
+                        address.id,
                         "address",
-                        "ipv4",
-                        _is_built_in(
-                            address_ipv4.name,
-                            address_ipv4.created_at,
-                            address_ipv4.updated_at,
-                        ),
-                    )
-                )
-        if "ipv6" in families:
-
-            async def fetch_ipv6(page: int) -> ListPage[Ipv6Address]:
-                return await adapter.list_ipv6_addresses(
-                    Ipv6AddressListInput(
-                        page=page,
-                        page_size=PAGE_SIZE,
-                        page_total=True,
-                        name_contains=None,
-                        name_not_equals=None,
-                    )
-                )
-
-            for address_ipv6 in await self._walk("addresses-ipv6", budget, fetch_ipv6):
-                entries.append(
-                    _ObjectEntry(
-                        address_ipv6.name,
-                        address_ipv6.id,
-                        "address",
-                        "ipv6",
-                        _is_built_in(
-                            address_ipv6.name,
-                            address_ipv6.created_at,
-                            address_ipv6.updated_at,
-                        ),
+                        family,
+                        _is_built_in(address.name, address.created_at, address.updated_at),
                     )
                 )
         if "fqdn" in families:
@@ -1080,11 +1036,14 @@ class AuditAdapter(DomainAdapter):
         """Read the address groups of the requested families."""
         adapter = ObjectsAdapter(self.context)
         entries: list[_GroupEntry] = []
-        if "ipv4" in families:
+        for family in _IP_FAMILIES:
+            if family not in families:
+                continue
 
-            async def fetch_ipv4(page: int) -> ListPage[Ipv4AddressGroup]:
-                return await adapter.list_ipv4_address_groups(
-                    Ipv4AddressGroupListInput(
+            async def fetch(page: int, family: IpFamily = family) -> ListPage[AddressGroupOutput]:
+                return await adapter.list_address_groups(
+                    AddressGroupListInput(
+                        ip_family=family,
                         page=page,
                         page_size=PAGE_SIZE,
                         page_total=True,
@@ -1093,39 +1052,16 @@ class AuditAdapter(DomainAdapter):
                     )
                 )
 
-            for group_ipv4 in await self._walk("address-groups-ipv4", budget, fetch_ipv4):
-                if group_ipv4.name is not None:
+            for group in await self._walk(f"address-groups-{family}", budget, fetch):
+                if group.name is not None:
+                    members = group.ipv4_addresses if family == "ipv4" else group.ipv6_addresses
                     entries.append(
                         _GroupEntry(
-                            group_ipv4.name,
-                            group_ipv4.id,
+                            group.name,
+                            group.id,
                             "address-group",
-                            "ipv4",
-                            [member.name for member in group_ipv4.ipv4_addresses],
-                        )
-                    )
-        if "ipv6" in families:
-
-            async def fetch_ipv6(page: int) -> ListPage[Ipv6AddressGroup]:
-                return await adapter.list_ipv6_address_groups(
-                    Ipv6AddressGroupListInput(
-                        page=page,
-                        page_size=PAGE_SIZE,
-                        page_total=True,
-                        name_contains=None,
-                        name_not_equals=None,
-                    )
-                )
-
-            for group_ipv6 in await self._walk("address-groups-ipv6", budget, fetch_ipv6):
-                if group_ipv6.name is not None:
-                    entries.append(
-                        _GroupEntry(
-                            group_ipv6.name,
-                            group_ipv6.id,
-                            "address-group",
-                            "ipv6",
-                            [member.name for member in group_ipv6.ipv6_addresses],
+                            family,
+                            [member.name for member in members],
                         )
                     )
         if "fqdn" in families:

@@ -5,7 +5,7 @@ model-controlled actions, resources are application-controlled passive context, 
 prompts are user-controlled templates. This server's tools are narrow and typed, so the
 context a model needs *before* it calls them -- the REST API surface, the coverage matrix,
 the read-only policy and the calling conventions -- is published here once instead of
-being repeated in 152 tool descriptions.
+being repeated in 112 tool descriptions.
 
 Every resource is a constant for the process lifetime. The read-only mode is resolved
 before registration and nothing else in the content depends on request state, which is why
@@ -69,27 +69,31 @@ API_COMPONENT_SCHEMAS = 32
 #: GET operations that declare ``page``/``pageSize``/``pageTotal``.
 API_PAGINATED_GET_OPERATIONS = 83
 
-#: Tools that map one-to-one to an audited operation.
+#: Audited operations exposed as tools (the curated ``tool_map``).
 TOOL_MAP_COUNT = 145
 
+#: Tools that map one-to-one to an audited operation.
+#:
+#: Lower than :data:`TOOL_MAP_COUNT` because the IPv4/IPv6 pairs are one tool each: 38
+#: one-to-one pairs cover 76 operations with 38 tools.
+ONE_TO_ONE_TOOL_COUNT = 107
+
 #: Tools that compose audited operations and add no endpoint.
-COMPOSITE_TOOL_COUNT = 7
+COMPOSITE_TOOL_COUNT = 5
 
 #: Tools published with every domain registered.
-TOTAL_TOOL_COUNT = TOOL_MAP_COUNT + COMPOSITE_TOOL_COUNT
+TOTAL_TOOL_COUNT = ONE_TO_ONE_TOOL_COUNT + COMPOSITE_TOOL_COUNT
 
 #: Tools whose annotation is ``readOnlyHint=true``.
-READ_ONLY_TOOL_COUNT = 98
+READ_ONLY_TOOL_COUNT = 74
 
 #: Tools that mutate the appliance; absent when read-only mode is on.
 MUTATION_TOOL_COUNT = TOTAL_TOOL_COUNT - READ_ONLY_TOOL_COUNT
 
-#: The seven composite tools, named so the surface resource can list them.
+#: The five composite tools, named so the surface resource can list them.
 COMPOSITE_TOOLS: tuple[str, ...] = (
-    "firewall_rule_set_enabled_ipv4",
-    "firewall_rule_set_enabled_ipv6",
-    "firewall_rule_clone_ipv4",
-    "firewall_rule_clone_ipv6",
+    "firewall_rule_set_enabled",
+    "firewall_rule_clone",
     "audit_firewall_rules",
     "explain_connectivity",
     "find_object_usage",
@@ -97,8 +101,6 @@ COMPOSITE_TOOLS: tuple[str, ...] = (
 
 #: Tools that publish no ``request`` wrapper because they take no arguments.
 NO_ARGUMENT_TOOLS: tuple[str, ...] = (
-    "dhcp_lease_list_ipv4",
-    "dhcp_lease_list_ipv6",
     "dns_settings_get",
     "ipsec_live_connection_list_ipv4",
     "ipsec_remote_access_settings_get",
@@ -141,12 +143,12 @@ class CoverageDomain(NamedTuple):
 #: ``api_operations`` sums to :data:`API_OPERATIONS` and ``tools`` to
 #: :data:`TOTAL_TOOL_COUNT`; both are asserted in ``tests/test_server.py``.
 COVERAGE_DOMAINS: tuple[CoverageDomain, ...] = (
-    CoverageDomain("Firewall rules", 14, 16, "read + write", ("firewall_rule_",)),
-    CoverageDomain("NAT rules", 14, 12, "read + write", ("nat_rule_",)),
+    CoverageDomain("Firewall rules", 14, 8, "read + write", ("firewall_rule_",)),
+    CoverageDomain("NAT rules", 14, 6, "read + write", ("nat_rule_",)),
     CoverageDomain(
         "Addresses and address groups",
         48,
-        37,
+        27,
         "read + write",
         ("address_", "mac_address_", "country_group_"),
     ),
@@ -164,7 +166,7 @@ COVERAGE_DOMAINS: tuple[CoverageDomain, ...] = (
     CoverageDomain(
         "Network",
         113,
-        44,
+        28,
         "read + VLAN-only write",
         (
             "network_interface_",
@@ -216,6 +218,7 @@ a header.
 | Operations | {API_OPERATIONS} ({methods}) |
 | Component schemas | {API_COMPONENT_SCHEMAS} |
 | Operations exposed as tools | {TOOL_MAP_COUNT} |
+| One-to-one tools over those operations | {ONE_TO_ONE_TOOL_COUNT} |
 | Composite tools over those operations | {COMPOSITE_TOOL_COUNT} |
 | Tools published | {TOTAL_TOOL_COUNT} ({READ_ONLY_TOOL_COUNT} read-only, {MUTATION_TOOL_COUNT} mutations) |
 
@@ -241,10 +244,12 @@ property.
 
 ## Tool mapping
 
-One tool per audited operation, named `<resource>_<verb>_<family>`: for example
-`firewall_rule_list_ipv4`, `nat_rule_get_ipv6`, `address_create_fqdn`.
+One tool per concept, named `<resource>_<verb>`: for example `firewall_rule_list`,
+`nat_rule_get`, `address_create_fqdn`. The IPv4 and IPv6 families share one tool and the
+required `ip_family` argument (`ipv4` or `ipv6`) selects the collection, so the family is
+never inferred. The wire body is unchanged for each family.
 
-Seven composite tools compose audited operations and add no endpoint:
+Five composite tools compose audited operations and add no endpoint:
 
 {composites}
 
@@ -263,8 +268,8 @@ def _coverage_document() -> str:
     tool_total = sum(domain.tools for domain in COVERAGE_DOMAINS)
     return f"""# Coverage matrix
 
-{api_total} operations across {API_PATHS} paths, published as {tool_total} tools: {TOOL_MAP_COUNT} tools map one-to-one
-to an audited operation and {COMPOSITE_TOOL_COUNT} are composites over those same operations.
+{api_total} operations across {API_PATHS} paths, published as {tool_total} tools: {ONE_TO_ONE_TOOL_COUNT} tools map one-to-one
+to an audited operation (the IPv4/IPv6 pairs share one tool each) and {COMPOSITE_TOOL_COUNT} are composites over those same operations.
 
 | Domain | API operations | Tools | Access |
 |---|---:|---:|---|
@@ -350,8 +355,8 @@ the flat-argument shape most MCP examples use, so a call that puts the fields at
 level is rejected.
 
 ```json
-{{"name": "firewall_rule_list_ipv4",
- "arguments": {{"request": {{"page": 1, "page_size": 10, "page_total": true}}}}}}
+{{"name": "firewall_rule_list",
+ "arguments": {{"request": {{"ip_family": "ipv4", "page": 1, "page_size": 10, "page_total": true}}}}}}
 ```
 
 {WRAPPED_TOOL_COUNT} of the {TOTAL_TOOL_COUNT} tools are wrapped. The other {len(NO_ARGUMENT_TOOLS)} take an empty `arguments` object
@@ -369,8 +374,17 @@ invalid arguments: request is required; id_or_name is not an accepted argument; 
 ## Names
 
 Input names are snake_case (`page_size`, `name_contains`, `id_or_name`, `rule_type`,
-`reference_item`). Output names are the appliance's camelCase (`pageSize`, `nameContains`,
-`idOrName`).
+`reference_item`, `ip_family`). Output names are the appliance's camelCase (`pageSize`,
+`nameContains`, `idOrName`).
+
+## The IP family
+
+A tool that exists for both IP families publishes one required `ip_family` argument
+(`ipv4` or `ipv6`) instead of two tools. It is required, not defaulted: a default would
+silently target one family, and for a mutation (delete, update, move, enable/disable,
+clone) that would make a destructive target a guess. The audit composites are the one
+exception: they are read-only and can span both families, so their `ip_family` is optional
+and omitting it means both.
 
 ## One page per call
 

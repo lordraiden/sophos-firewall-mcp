@@ -60,20 +60,14 @@ IPV6_MOVE_URL = f"{BASE}{IPV6_MOVE_PATH}"
 UUID = "3f2504e0-4f89-11d3-9a0c-0305e82c3301"
 
 READ_TOOLS = {
-    "nat_rule_list_ipv4",
-    "nat_rule_get_ipv4",
-    "nat_rule_list_ipv6",
-    "nat_rule_get_ipv6",
+    "nat_rule_list",
+    "nat_rule_get",
 }
 MUTATION_TOOLS = {
-    "nat_rule_create_ipv4",
-    "nat_rule_update_ipv4",
-    "nat_rule_delete_ipv4",
-    "nat_rule_move_ipv4",
-    "nat_rule_create_ipv6",
-    "nat_rule_update_ipv6",
-    "nat_rule_delete_ipv6",
-    "nat_rule_move_ipv6",
+    "nat_rule_create",
+    "nat_rule_update",
+    "nat_rule_delete",
+    "nat_rule_move",
 }
 ALL_TOOLS = READ_TOOLS | MUTATION_TOOLS
 
@@ -141,6 +135,7 @@ IPV6_RULE: dict[str, Any] = {
 
 #: Minimal valid create body for IPv4 (the six contract-required fields).
 MINIMAL_CREATE: dict[str, Any] = {
+    "ip_family": "ipv4",
     "name": "outbound-masq",
     "original_services_or_groups": {"any": True},
     "inbound_interfaces": {"any": True},
@@ -167,8 +162,27 @@ def make_server(*, read_only: bool = False):
     return create_server(make_settings(read_only=read_only), domains=[register_nat_tools])
 
 
-async def call_tool(name: str, request: dict[str, Any], *, read_only: bool = False) -> Any:
+#: The tools that take the required ``ip_family`` argument.
+MERGED_TOOLS = {
+    "nat_rule_list",
+    "nat_rule_get",
+    "nat_rule_create",
+    "nat_rule_update",
+    "nat_rule_delete",
+    "nat_rule_move",
+}
+
+
+async def call_tool(
+    name: str,
+    request: dict[str, Any],
+    *,
+    read_only: bool = False,
+    family: str = "ipv4",
+) -> Any:
     """Call one registered tool through the official SDK client."""
+    if name in MERGED_TOOLS:
+        request = {"ip_family": family, **request}
     async with Client(make_server(read_only=read_only)) as client:
         return await client.call_tool(name, {"request": request})
 
@@ -187,11 +201,11 @@ def router() -> Any:
 # -- Discovery, annotations and read-only mode ----------------------------------------
 
 
-async def test_registers_exactly_the_twelve_curated_tools():
+async def test_registers_exactly_the_six_curated_tools():
     tools = await tools_by_name()
 
     assert set(tools) == ALL_TOOLS
-    assert len(tools) == 12
+    assert len(tools) == 6
     for tool in tools.values():
         assert tool.title
         assert tool.description
@@ -228,18 +242,18 @@ async def test_mutation_tools_declare_explicit_hints():
         assert isinstance(annotations["destructiveHint"], bool)
         assert isinstance(annotations["idempotentHint"], bool)
 
-    for name in ("nat_rule_create_ipv4", "nat_rule_create_ipv6"):
+    for name in ("nat_rule_create", "nat_rule_create"):
         annotations = tools[name].annotations.model_dump(by_alias=True, exclude_none=True)
         assert annotations["destructiveHint"] is False
         assert annotations["idempotentHint"] is False
 
     for name in (
-        "nat_rule_update_ipv4",
-        "nat_rule_update_ipv6",
-        "nat_rule_delete_ipv4",
-        "nat_rule_delete_ipv6",
-        "nat_rule_move_ipv4",
-        "nat_rule_move_ipv6",
+        "nat_rule_update",
+        "nat_rule_update",
+        "nat_rule_delete",
+        "nat_rule_delete",
+        "nat_rule_move",
+        "nat_rule_move",
     ):
         annotations = tools[name].annotations.model_dump(by_alias=True, exclude_none=True)
         assert annotations["destructiveHint"] is True
@@ -269,7 +283,7 @@ async def test_input_schema_is_closed_and_excludes_the_context_parameter():
 async def test_list_output_schema_is_a_bounded_page():
     tools = await tools_by_name()
 
-    for name in ("nat_rule_list_ipv4", "nat_rule_list_ipv6"):
+    for name in ("nat_rule_list", "nat_rule_list"):
         schema = tools[name].output_schema
         assert schema["type"] == "object"
         assert set(schema["properties"]) == {"items", "pages"}
@@ -291,7 +305,7 @@ async def test_list_ipv4_sends_pagination_and_one_name_filter(router: Any):
     )
 
     result = await call_tool(
-        "nat_rule_list_ipv4",
+        "nat_rule_list",
         {"page": 2, "page_size": 10, "page_total": True, "name_contains": "outbound"},
     )
 
@@ -321,7 +335,7 @@ async def test_list_ipv4_sends_pagination_and_one_name_filter(router: Any):
 async def test_list_ipv6_sends_default_pagination(router: Any):
     route = router.get(IPV6_URL).mock(return_value=httpx.Response(200, json={"items": [IPV6_RULE]}))
 
-    result = await call_tool("nat_rule_list_ipv6", {})
+    result = await call_tool("nat_rule_list", {}, family="ipv6")
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -336,7 +350,7 @@ async def test_list_ipv6_sends_default_pagination(router: Any):
 async def test_list_rejects_both_name_filters_without_any_request(router: Any):
     route = router.get(IPV4_URL).mock(return_value=httpx.Response(200, json={"items": []}))
 
-    result = await call_tool("nat_rule_list_ipv4", {"name_contains": "a", "name_not_equals": "b"})
+    result = await call_tool("nat_rule_list", {"name_contains": "a", "name_not_equals": "b"})
 
     assert result.is_error is True
     assert "mutually exclusive" in result.content[0].text
@@ -351,7 +365,7 @@ async def test_get_ipv4_percent_encodes_the_name(router: Any):
         return_value=httpx.Response(200, json=IPV4_RULE)
     )
 
-    result = await call_tool("nat_rule_get_ipv4", {"id_or_name": "My Rule"})
+    result = await call_tool("nat_rule_get", {"id_or_name": "My Rule"})
 
     assert result.is_error is False
     assert str(route.calls.last.request.url) == f"{IPV4_URL}/My%20Rule"
@@ -361,7 +375,7 @@ async def test_get_ipv4_percent_encodes_the_name(router: Any):
 async def test_get_ipv6_accepts_a_uuid(router: Any):
     route = router.get(f"{IPV6_URL}/{UUID}").mock(return_value=httpx.Response(200, json=IPV6_RULE))
 
-    result = await call_tool("nat_rule_get_ipv6", {"id_or_name": UUID})
+    result = await call_tool("nat_rule_get", {"id_or_name": UUID}, family="ipv6")
 
     assert result.is_error is False
     assert str(route.calls.last.request.url) == f"{IPV6_URL}/{UUID}"
@@ -374,7 +388,7 @@ async def test_create_ipv4_sends_the_contract_body_and_content_type(router: Any)
     route = router.post(IPV4_URL).mock(return_value=httpx.Response(201, json=IPV4_RULE))
 
     result = await call_tool(
-        "nat_rule_create_ipv4",
+        "nat_rule_create",
         {
             "name": "outbound-masq",
             "description": "Masquerade outbound traffic on WAN.",
@@ -416,7 +430,7 @@ async def test_create_always_sends_the_resolved_enabled_flag(router: Any):
         return_value=httpx.Response(201, json={**IPV4_RULE, "enabled": False})
     )
 
-    result = await call_tool("nat_rule_create_ipv4", {**MINIMAL_CREATE, "enabled": False})
+    result = await call_tool("nat_rule_create", {**MINIMAL_CREATE, "enabled": False})
 
     assert result.is_error is False
     body = json.loads(route.calls.last.request.content)
@@ -428,7 +442,7 @@ async def test_create_ipv6_sends_the_family_specific_body(router: Any):
     route = router.post(IPV6_URL).mock(return_value=httpx.Response(201, json=IPV6_RULE))
 
     result = await call_tool(
-        "nat_rule_create_ipv6",
+        "nat_rule_create",
         {
             "name": "outbound-masq-v6",
             "original_services_or_groups": {"services": [{"name": "https"}]},
@@ -439,6 +453,7 @@ async def test_create_ipv6_sends_the_family_specific_body(router: Any):
             "translated_source": {"ipv6_address": {"name": "port2-egress-v6"}},
             "translated_destination": {"ipv6_address": {"name": "dmz-ipv6-host"}},
         },
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -457,9 +472,7 @@ async def test_update_ipv4_sends_only_the_set_fields(router: Any):
         return_value=httpx.Response(200, json=IPV4_RULE)
     )
 
-    result = await call_tool(
-        "nat_rule_update_ipv4", {"id_or_name": "outbound-masq", "enabled": False}
-    )
+    result = await call_tool("nat_rule_update", {"id_or_name": "outbound-masq", "enabled": False})
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -474,7 +487,7 @@ async def test_update_ipv4_explicit_null_removes_an_optional_property(router: An
     )
 
     result = await call_tool(
-        "nat_rule_update_ipv4",
+        "nat_rule_update",
         {"id_or_name": "outbound-masq", "translated_source": None},
     )
 
@@ -489,12 +502,13 @@ async def test_update_ipv6_sends_a_partial_body(router: Any):
     )
 
     result = await call_tool(
-        "nat_rule_update_ipv6",
+        "nat_rule_update",
         {
             "id_or_name": UUID,
             "description": "updated",
             "original_source_networks": {"ipv6_addresses": [{"name": "lan-subnet-v6"}]},
         },
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -513,7 +527,7 @@ async def test_delete_ipv4_sends_delete_without_a_body(router: Any):
         return_value=httpx.Response(200, json={"deleted": True})
     )
 
-    result = await call_tool("nat_rule_delete_ipv4", {"id_or_name": "outbound-masq"})
+    result = await call_tool("nat_rule_delete", {"id_or_name": "outbound-masq"})
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -530,7 +544,7 @@ async def test_delete_ipv6_sends_delete(router: Any):
         return_value=httpx.Response(200, json={"deleted": True})
     )
 
-    result = await call_tool("nat_rule_delete_ipv6", {"id_or_name": UUID})
+    result = await call_tool("nat_rule_delete", {"id_or_name": UUID}, family="ipv6")
 
     assert result.is_error is False
     assert str(route.calls.last.request.url) == f"{IPV6_URL}/{UUID}"
@@ -543,7 +557,7 @@ async def test_move_ipv4_sends_name_position_and_reference(router: Any):
     route = router.post(IPV4_MOVE_URL).mock(return_value=httpx.Response(200, json={}))
 
     result = await call_tool(
-        "nat_rule_move_ipv4",
+        "nat_rule_move",
         {
             "name": "outbound-masq",
             "position": "before",
@@ -570,7 +584,9 @@ async def test_move_ipv4_sends_name_position_and_reference(router: Any):
 async def test_move_ipv6_sends_only_the_position_when_top(router: Any):
     route = router.post(IPV6_MOVE_URL).mock(return_value=httpx.Response(200, json={}))
 
-    result = await call_tool("nat_rule_move_ipv6", {"name": "outbound-masq-v6", "position": "top"})
+    result = await call_tool(
+        "nat_rule_move", {"name": "outbound-masq-v6", "position": "top"}, family="ipv6"
+    )
 
     assert result.is_error is False
     assert json.loads(route.calls.last.request.content) == {
@@ -587,35 +603,35 @@ async def test_move_ipv6_sends_only_the_position_when_top(router: Any):
     ("tool", "payload", "status", "error_code", "fragment"),
     [
         (
-            "nat_rule_get_ipv4",
+            "nat_rule_get",
             {"id_or_name": "missing"},
             404,
             "objectNotFound",
             "does not exist",
         ),
         (
-            "nat_rule_create_ipv4",
+            "nat_rule_create",
             MINIMAL_CREATE,
             409,
             "objectAlreadyExists",
             "conflicts with the current firewall state",
         ),
         (
-            "nat_rule_update_ipv4",
+            "nat_rule_update",
             {"id_or_name": "outbound-masq", "enabled": False},
             400,
             "invalidRequest",
             "rejected the request as invalid",
         ),
         (
-            "nat_rule_delete_ipv4",
+            "nat_rule_delete",
             {"id_or_name": "outbound-masq"},
             401,
             "authenticationFailed",
             "authentication failed",
         ),
         (
-            "nat_rule_list_ipv4",
+            "nat_rule_list",
             {},
             500,
             "internalError",
@@ -632,18 +648,18 @@ async def test_transport_errors_become_sanitized_tool_errors(
     fragment: str,
 ):
     method = {
-        "nat_rule_get_ipv4": router.get,
-        "nat_rule_create_ipv4": router.post,
-        "nat_rule_update_ipv4": router.patch,
-        "nat_rule_delete_ipv4": router.delete,
-        "nat_rule_list_ipv4": router.get,
+        "nat_rule_get": router.get,
+        "nat_rule_create": router.post,
+        "nat_rule_update": router.patch,
+        "nat_rule_delete": router.delete,
+        "nat_rule_list": router.get,
     }[tool]
     url = {
-        "nat_rule_get_ipv4": f"{IPV4_URL}/missing",
-        "nat_rule_create_ipv4": IPV4_URL,
-        "nat_rule_update_ipv4": f"{IPV4_URL}/outbound-masq",
-        "nat_rule_delete_ipv4": f"{IPV4_URL}/outbound-masq",
-        "nat_rule_list_ipv4": IPV4_URL,
+        "nat_rule_get": f"{IPV4_URL}/missing",
+        "nat_rule_create": IPV4_URL,
+        "nat_rule_update": f"{IPV4_URL}/outbound-masq",
+        "nat_rule_delete": f"{IPV4_URL}/outbound-masq",
+        "nat_rule_list": IPV4_URL,
     }[tool]
     method(url).mock(
         return_value=httpx.Response(
@@ -670,7 +686,7 @@ async def test_list_rejects_a_malformed_rule_payload(router: Any):
         return_value=httpx.Response(200, json={"items": [malformed], "pages": None})
     )
 
-    result = await call_tool("nat_rule_list_ipv4", {})
+    result = await call_tool("nat_rule_list", {})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -706,7 +722,7 @@ def test_create_has_no_snat_dnat_discriminator():
 
 def test_create_serializes_the_camel_case_wire_names():
     body = NatRuleCreateIpv4Input.model_validate(MINIMAL_CREATE).model_dump(
-        by_alias=True, exclude_unset=True
+        by_alias=True, exclude_unset=True, exclude={"ip_family"}
     )
 
     assert body == {
@@ -723,11 +739,12 @@ def test_create_ipv6_uses_the_ipv6_network_and_translation_shapes():
     body = NatRuleCreateIpv6Input.model_validate(
         {
             **MINIMAL_CREATE,
+            "ip_family": "ipv6",
             "original_source_networks": {"ipv6_addresses": [{"name": "lan-v6"}]},
             "translated_source": {"ipv6_address": {"name": "egress-v6"}},
             "translated_destination": {"ipv6_address": {"name": "dmz-v6"}},
         }
-    ).model_dump(by_alias=True, exclude_unset=True)
+    ).model_dump(by_alias=True, exclude_unset=True, exclude={"ip_family"})
 
     assert body["originalSourceNetworks"] == {"ipv6Addresses": [{"name": "lan-v6"}]}
     assert body["translatedSource"] == {"ipv6Address": {"name": "egress-v6"}}
@@ -890,12 +907,16 @@ def test_ipv6_translated_destination_requires_ipv6_address():
 
 def test_position_and_load_balancing_enums_are_closed():
     for position in ("top", "bottom", "after", "before"):
-        payload: dict[str, Any] = {"name": "r1", "position": position}
+        payload: dict[str, Any] = {
+            "ip_family": "ipv4",
+            "name": "r1",
+            "position": position,
+        }
         if position in ("after", "before"):
             payload["reference_item"] = {"name": "anchor"}
         assert NatRuleMoveInput.model_validate(payload).position == position
     with pytest.raises(ValidationError):
-        NatRuleMoveInput.model_validate({"name": "r1", "position": "middle"})
+        NatRuleMoveInput.model_validate({"ip_family": "ipv4", "name": "r1", "position": "middle"})
 
     with pytest.raises(ValidationError):
         NatRuleCreateIpv4Input.model_validate(
@@ -933,24 +954,29 @@ def test_object_names_follow_the_documented_format():
 
 
 def test_id_or_name_accepts_names_and_uuids_but_not_path_escapes():
-    assert NatRuleGetInput.model_validate({"id_or_name": "My Rule"}).id_or_name == "My Rule"
-    assert NatRuleGetInput.model_validate({"id_or_name": UUID}).id_or_name == UUID
+    assert (
+        NatRuleGetInput.model_validate({"ip_family": "ipv4", "id_or_name": "My Rule"}).id_or_name
+        == "My Rule"
+    )
+    assert (
+        NatRuleGetInput.model_validate({"ip_family": "ipv4", "id_or_name": UUID}).id_or_name == UUID
+    )
 
     for invalid in ("..", "a?b", "a#b", "a\\b", "a://b"):
         with pytest.raises(ValidationError):
-            NatRuleGetInput.model_validate({"id_or_name": invalid})
+            NatRuleGetInput.model_validate({"ip_family": "ipv4", "id_or_name": invalid})
 
 
 def test_list_input_validates_pagination_and_filters():
-    defaults = NatRuleListInput()
+    defaults = NatRuleListInput(ip_family="ipv4")
     assert (defaults.page, defaults.page_size, defaults.page_total) == (1, 10, False)
 
     with pytest.raises(ValidationError):
-        NatRuleListInput(page=0)
+        NatRuleListInput(ip_family="ipv4", page=0)
     with pytest.raises(ValidationError):
-        NatRuleListInput(page_size=101)
+        NatRuleListInput(ip_family="ipv4", page_size=101)
     with pytest.raises(ValidationError):
-        NatRuleListInput(name_contains="a", name_not_equals="b")
+        NatRuleListInput(ip_family="ipv4", name_contains="a", name_not_equals="b")
 
 
 # -- Model contract: update and move ---------------------------------------------------
@@ -958,21 +984,28 @@ def test_list_input_validates_pagination_and_filters():
 
 def test_update_requires_at_least_one_field():
     with pytest.raises(ValidationError):
-        NatRuleUpdateIpv4Input.model_validate({"id_or_name": "outbound-masq"})
+        NatRuleUpdateIpv4Input.model_validate({"ip_family": "ipv4", "id_or_name": "outbound-masq"})
 
 
 def test_update_rejects_null_name_and_enabled_but_allows_null_removal():
     for invalid in (
-        {"id_or_name": "outbound-masq", "name": None},
-        {"id_or_name": "outbound-masq", "enabled": None},
+        {"ip_family": "ipv4", "id_or_name": "outbound-masq", "name": None},
+        {"ip_family": "ipv4", "id_or_name": "outbound-masq", "enabled": None},
     ):
         with pytest.raises(ValidationError):
             NatRuleUpdateIpv4Input.model_validate(invalid)
 
     update = NatRuleUpdateIpv4Input.model_validate(
-        {"id_or_name": "outbound-masq", "translated_source": None, "description": None}
+        {
+            "ip_family": "ipv4",
+            "id_or_name": "outbound-masq",
+            "translated_source": None,
+            "description": None,
+        }
     )
-    assert update.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
+    assert update.model_dump(
+        by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
+    ) == {
         "description": None,
         "translatedSource": None,
     }
@@ -981,23 +1014,24 @@ def test_update_rejects_null_name_and_enabled_but_allows_null_removal():
 def test_update_ipv6_accepts_partial_family_fields():
     update = NatRuleUpdateIpv6Input.model_validate(
         {
+            "ip_family": "ipv6",
             "id_or_name": UUID,
             "original_destination_networks": {"ipv6_groups": [{"name": "grp-v6"}]},
         }
     )
 
-    assert update.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
-        "originalDestinationNetworks": {"ipv6Groups": [{"name": "grp-v6"}]}
-    }
+    assert update.model_dump(
+        by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
+    ) == {"originalDestinationNetworks": {"ipv6Groups": [{"name": "grp-v6"}]}}
 
 
 def test_move_requires_a_name_and_a_position():
     with pytest.raises(ValidationError):
-        NatRuleMoveInput.model_validate({"position": "top"})
+        NatRuleMoveInput.model_validate({"ip_family": "ipv4", "position": "top"})
     with pytest.raises(ValidationError):
-        NatRuleMoveInput.model_validate({"name": "r1"})
+        NatRuleMoveInput.model_validate({"ip_family": "ipv4", "name": "r1"})
     with pytest.raises(ValidationError):
-        NatRuleMoveInput.model_validate({"name": "r1", "position": "middle"})
+        NatRuleMoveInput.model_validate({"ip_family": "ipv4", "name": "r1", "position": "middle"})
 
 
 def test_anchored_positions_require_a_reference_item():
@@ -1006,7 +1040,9 @@ def test_anchored_positions_require_a_reference_item():
         with pytest.raises(ValidationError, match="requires referenceItem"):
             NatRuleCreateIpv4Input.model_validate({**MINIMAL_CREATE, "position": position})
         with pytest.raises(ValidationError, match="requires referenceItem"):
-            NatRuleMoveInput.model_validate({"name": "r1", "position": position})
+            NatRuleMoveInput.model_validate(
+                {"ip_family": "ipv4", "name": "r1", "position": position}
+            )
 
     anchored = NatRuleCreateIpv4Input.model_validate(
         {**MINIMAL_CREATE, "position": "before", "reference_item": {"name": "anchor"}}
@@ -1018,7 +1054,7 @@ def test_anchored_positions_require_a_reference_item():
 async def test_move_refuses_an_anchored_position_without_an_anchor(router: Any):
     route = router.post(IPV4_MOVE_URL).mock(return_value=httpx.Response(200, json={}))
 
-    result = await call_tool("nat_rule_move_ipv4", {"name": "r1", "position": "after"})
+    result = await call_tool("nat_rule_move", {"name": "r1", "position": "after"})
 
     assert result.is_error is True
     assert "requires referenceItem" in result.content[0].text
@@ -1048,10 +1084,10 @@ async def test_published_output_schema_uses_the_wire_names():
     tools = await tools_by_name()
 
     for name in (
-        "nat_rule_list_ipv4",
-        "nat_rule_get_ipv4",
-        "nat_rule_list_ipv6",
-        "nat_rule_get_ipv6",
+        "nat_rule_list",
+        "nat_rule_get",
+        "nat_rule_list",
+        "nat_rule_get",
     ):
         names = _schema_property_names(tools[name].output_schema)
         assert {
@@ -1074,8 +1110,8 @@ async def test_published_output_schema_uses_the_wire_names():
         } <= names
         assert not {published for published in names if "_" in published}
 
-    assert "idOrName" in _schema_property_names(tools["nat_rule_delete_ipv4"].output_schema)
-    assert "referenceItem" in _schema_property_names(tools["nat_rule_move_ipv4"].output_schema)
+    assert "idOrName" in _schema_property_names(tools["nat_rule_delete"].output_schema)
+    assert "referenceItem" in _schema_property_names(tools["nat_rule_move"].output_schema)
 
 
 def test_project_nat_rule_uses_the_wire_names_and_ignores_unknown_fields():
@@ -1180,7 +1216,7 @@ async def test_list_projects_object_references_in_the_structured_content(router:
         )
     )
 
-    result = await call_tool("nat_rule_list_ipv4", {})
+    result = await call_tool("nat_rule_list", {})
 
     assert result.is_error is False
     item = result.structured_content["items"][0]
@@ -1226,7 +1262,7 @@ async def test_get_exposes_the_derived_kind(router: Any):
     snat_only = {**IPV4_RULE, "translatedDestination": None}
     router.get(f"{IPV4_URL}/outbound-masq").mock(return_value=httpx.Response(200, json=snat_only))
 
-    result = await call_tool("nat_rule_get_ipv4", {"id_or_name": "outbound-masq"})
+    result = await call_tool("nat_rule_get", {"id_or_name": "outbound-masq"})
 
     assert result.is_error is False
     assert result.structured_content["kind"] == "snat"
@@ -1247,7 +1283,7 @@ async def test_list_derives_position_from_the_page_offset_and_the_index(router: 
         return_value=httpx.Response(200, json={"items": [IPV4_RULE, IPV4_RULE]})
     )
 
-    result = await call_tool("nat_rule_list_ipv4", {"page": 2, "page_size": 10})
+    result = await call_tool("nat_rule_list", {"page": 2, "page_size": 10})
 
     assert result.is_error is False
     assert [item["position"] for item in result.structured_content["items"]] == [11, 12]
@@ -1257,21 +1293,19 @@ async def test_get_returns_a_null_position(router: Any):
     """M12: the get operation does not return the evaluation position, so it is null."""
     router.get(f"{IPV4_URL}/outbound-masq").mock(return_value=httpx.Response(200, json=IPV4_RULE))
 
-    result = await call_tool("nat_rule_get_ipv4", {"id_or_name": "outbound-masq"})
+    result = await call_tool("nat_rule_get", {"id_or_name": "outbound-masq"})
 
     assert result.is_error is False
     assert result.structured_content["position"] is None
-    assert "position is null" in (await tools_by_name())["nat_rule_get_ipv4"].description
+    assert "position is null" in (await tools_by_name())["nat_rule_get"].description
 
 
 async def test_create_and_update_return_a_null_position(router: Any):
     router.post(IPV4_URL).mock(return_value=httpx.Response(201, json=IPV4_RULE))
     router.patch(f"{IPV4_URL}/outbound-masq").mock(return_value=httpx.Response(200, json=IPV4_RULE))
 
-    created = await call_tool("nat_rule_create_ipv4", MINIMAL_CREATE)
-    updated = await call_tool(
-        "nat_rule_update_ipv4", {"id_or_name": "outbound-masq", "enabled": False}
-    )
+    created = await call_tool("nat_rule_create", MINIMAL_CREATE)
+    updated = await call_tool("nat_rule_update", {"id_or_name": "outbound-masq", "enabled": False})
 
     assert created.structured_content["position"] is None
     assert updated.structured_content["position"] is None
@@ -1314,20 +1348,20 @@ def test_output_models_are_object_rooted():
 
 def test_list_input_defaults_to_ten() -> None:
     """M11: a NAT rule is large, so the default page must stay small."""
-    parsed = NatRuleListInput()
+    parsed = NatRuleListInput(ip_family="ipv4")
 
     assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
     description = NatRuleListInput.model_json_schema()["properties"]["page_size"]["description"]
     assert "Defaults to 10" in description
     # The bounds are unchanged: this is a default, not a schema break.
-    assert NatRuleListInput(page_size=100).page_size == 100
+    assert NatRuleListInput(ip_family="ipv4", page_size=100).page_size == 100
 
 
 async def test_list_descriptions_state_the_page_size_and_the_duplicated_payload() -> None:
     """M11/L7: the size of a full page and the SDK's double payload are documented."""
     tools = await tools_by_name()
 
-    for name in ("nat_rule_list_ipv4", "nat_rule_list_ipv6"):
+    for name in ("nat_rule_list", "nat_rule_list"):
         description = tools[name].description
         assert "page_size defaults to 10" in description, name
         assert "~44 KB" in description, name

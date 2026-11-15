@@ -16,12 +16,13 @@ version: 1
 release:
   phase: "Phase 2 (#27-#31, #35)"
   summary: >-
-    145 operations and 152 MCP tools across 11 domains: firewall rules, NAT
+    145 operations and 112 MCP tools across 11 domains: firewall rules, NAT
     rules, addresses and address groups, services and service groups,
     authentication users, live users, read-only IPsec/SSL VPN, network
     architecture (read-only plus VLAN-only interface writes), two read-only
-    status endpoints, and three read-only audit/composite tools. The 152 tools
-    are 145 one-to-one tools plus 7 composite tools.
+    status endpoints, and three read-only audit/composite tools. The 112 tools
+    are 107 one-to-one tools plus 5 composite tools; the IPv4/IPv6 pairs share
+    one tool each and the required `ip_family` argument selects the family.
   rule: >-
     An operation is part of the v1 surface only when it appears in `tool_map`.
     Composite tools reuse those audited operations and add no new Sophos
@@ -40,9 +41,8 @@ domains:
     title: "Firewall rules"
     v1_scope: >-
       Individual CRUD and move for IPv4 and IPv6 rules, plus two composite
-      tools per family: enable/disable (`firewall_rule_set_enabled_*`, a PATCH
-      of `enabled`) and clone (`firewall_rule_clone_*`, a get followed by a
-      create). `enabled` and `position` are explicit inputs; a created rule is
+      tools: enable/disable (`firewall_rule_set_enabled`, a PATCH of `enabled`)
+      and clone (`firewall_rule_clone`, a get followed by a create). `enabled` and `position` are explicit inputs; a created rule is
       never auto-enabled.
     exclusions:
       - "Bulk delete (`bulkDeleteFirewallRulesIpv4/Ipv6`): high blast radius and not required for individual CRUD (PLAN §4)."
@@ -54,7 +54,7 @@ domains:
       - "`idOrName` values are rejected when they cannot be one URL path segment (no `/`, `\\`, `..`, `?`, `#`), so the failure is a clear validation error instead of a transport error."
       - "`move` changes rule ordering and is a separate operation (`moveFirewallRuleIpv4/Ipv6`)."
       - "The Firewall AI Assistant default (disabled, placed last) is not evidence for the REST POST default; represent and return the applied state explicitly."
-      - "`firewall_rule_set_enabled_*` and `firewall_rule_clone_*` are composite tools over the audited operations; they add no new endpoint."
+      - "`firewall_rule_set_enabled` and `firewall_rule_clone` are composite tools over the audited operations; they add no new endpoint."
     default_exclusion: "Not in the v1 first-release scope; classified for later phases (PLAN §4)."
 
   nat_rules:
@@ -213,44 +213,42 @@ domains:
 # ---------------------------------------------------------------------------
 tool_map:
   # Firewall rules (#27)
-  getAllFirewallRulesIpv4: firewall_rule_list_ipv4
-  getFirewallRuleIpv4: firewall_rule_get_ipv4
-  createFirewallRuleIpv4: firewall_rule_create_ipv4
-  updateFirewallRuleIpv4: firewall_rule_update_ipv4
-  deleteFirewallRuleIpv4: firewall_rule_delete_ipv4
-  moveFirewallRuleIpv4: firewall_rule_move_ipv4
-  getAllFirewallRulesIpv6: firewall_rule_list_ipv6
-  getFirewallRuleIpv6: firewall_rule_get_ipv6
-  createFirewallRuleIpv6: firewall_rule_create_ipv6
-  updateFirewallRuleIpv6: firewall_rule_update_ipv6
-  deleteFirewallRuleIpv6: firewall_rule_delete_ipv6
-  moveFirewallRuleIpv6: firewall_rule_move_ipv6
-
+  getAllFirewallRulesIpv4: firewall_rule_list
+  getFirewallRuleIpv4: firewall_rule_get
+  createFirewallRuleIpv4: firewall_rule_create
+  updateFirewallRuleIpv4: firewall_rule_update
+  deleteFirewallRuleIpv4: firewall_rule_delete
+  moveFirewallRuleIpv4: firewall_rule_move
+  getAllFirewallRulesIpv6: firewall_rule_list
+  getFirewallRuleIpv6: firewall_rule_get
+  createFirewallRuleIpv6: firewall_rule_create
+  updateFirewallRuleIpv6: firewall_rule_update
+  deleteFirewallRuleIpv6: firewall_rule_delete
+  moveFirewallRuleIpv6: firewall_rule_move
   # NAT rules (#28)
-  getAllNatRulesIpv4: nat_rule_list_ipv4
-  getNatRuleIpv4ByIdOrName: nat_rule_get_ipv4
-  createNatRuleIpv4: nat_rule_create_ipv4
-  updateNatRuleIpv4ByIdOrName: nat_rule_update_ipv4
-  deleteNatRuleIpv4ByIdOrName: nat_rule_delete_ipv4
-  moveNatRuleIpv4: nat_rule_move_ipv4
-  getAllNatRulesIpv6: nat_rule_list_ipv6
-  getNatRuleIpv6ByIdOrName: nat_rule_get_ipv6
-  createNatRuleIpv6: nat_rule_create_ipv6
-  updateNatRuleIpv6ByIdOrName: nat_rule_update_ipv6
-  deleteNatRuleIpv6ByIdOrName: nat_rule_delete_ipv6
-  moveNatRuleIpv6: nat_rule_move_ipv6
-
+  getAllNatRulesIpv4: nat_rule_list
+  getNatRuleIpv4ByIdOrName: nat_rule_get
+  createNatRuleIpv4: nat_rule_create
+  updateNatRuleIpv4ByIdOrName: nat_rule_update
+  deleteNatRuleIpv4ByIdOrName: nat_rule_delete
+  moveNatRuleIpv4: nat_rule_move
+  getAllNatRulesIpv6: nat_rule_list
+  getNatRuleIpv6ByIdOrName: nat_rule_get
+  createNatRuleIpv6: nat_rule_create
+  updateNatRuleIpv6ByIdOrName: nat_rule_update
+  deleteNatRuleIpv6ByIdOrName: nat_rule_delete
+  moveNatRuleIpv6: nat_rule_move
   # Addresses (#29)
-  getAllIpAddresses: address_list_ipv4
-  getIpAddressByIdOrName: address_get_ipv4
-  createIpAddress: address_create_ipv4
-  updateIpAddressByIdOrName: address_update_ipv4
-  deleteIpAddressByIdOrName: address_delete_ipv4
-  getAllIpv6Addresses: address_list_ipv6
-  getIpv6AddressByIdOrName: address_get_ipv6
-  createIpv6Address: address_create_ipv6
-  updateIpv6AddressByIdOrName: address_update_ipv6
-  deleteIpv6AddressByIdOrName: address_delete_ipv6
+  getAllIpAddresses: address_list
+  getIpAddressByIdOrName: address_get
+  createIpAddress: address_create
+  updateIpAddressByIdOrName: address_update
+  deleteIpAddressByIdOrName: address_delete
+  getAllIpv6Addresses: address_list
+  getIpv6AddressByIdOrName: address_get
+  createIpv6Address: address_create
+  updateIpv6AddressByIdOrName: address_update
+  deleteIpv6AddressByIdOrName: address_delete
   getAllFqdns: address_list_fqdn
   getFqdnByIdOrName: address_get_fqdn
   createFqdn: address_create_fqdn
@@ -269,16 +267,16 @@ tool_map:
   getCountryGroupByIdOrName: country_group_get
 
   # Address groups (#29)
-  getAllIpv4AddressGroups: address_group_list_ipv4
-  getIpv4AddressGroupByIdOrName: address_group_get_ipv4
-  createIpv4AddressGroup: address_group_create_ipv4
-  updateIpv4AddressGroupByIdOrName: address_group_update_ipv4
-  deleteIpv4AddressGroupByIdOrName: address_group_delete_ipv4
-  getAllIpv6AddressGroups: address_group_list_ipv6
-  getIpv6AddressGroupByIdOrName: address_group_get_ipv6
-  createIpv6AddressGroup: address_group_create_ipv6
-  updateIpv6AddressGroupByIdOrName: address_group_update_ipv6
-  deleteIpv6AddressGroupByIdOrName: address_group_delete_ipv6
+  getAllIpv4AddressGroups: address_group_list
+  getIpv4AddressGroupByIdOrName: address_group_get
+  createIpv4AddressGroup: address_group_create
+  updateIpv4AddressGroupByIdOrName: address_group_update
+  deleteIpv4AddressGroupByIdOrName: address_group_delete
+  getAllIpv6AddressGroups: address_group_list
+  getIpv6AddressGroupByIdOrName: address_group_get
+  createIpv6AddressGroup: address_group_create
+  updateIpv6AddressGroupByIdOrName: address_group_update
+  deleteIpv6AddressGroupByIdOrName: address_group_delete
   getAllFqdnGroups: address_group_list_fqdn
   getFqdnGroupByIdOrName: address_group_get_fqdn
   createFqdnGroup: address_group_create_fqdn
@@ -339,44 +337,43 @@ tool_map:
   deleteNetworkInterface: network_interface_delete_vlan
   getAllZones: zone_list
   getZone: zone_get
-  getGatewaysIpv4: gateway_list_ipv4
-  getWanGatewaysIpv4: wan_gateway_list_ipv4
-  getWanGatewayIpv4ByIdOrName: wan_gateway_get_ipv4
-  getCustomGatewaysIpv4: custom_gateway_list_ipv4
-  getCustomGatewayIpv4ByIdOrName: custom_gateway_get_ipv4
-  getGatewaysIpv6: gateway_list_ipv6
-  getWanGatewaysIpv6: wan_gateway_list_ipv6
-  getWanGatewayIpv6ByIdOrName: wan_gateway_get_ipv6
-  getCustomGatewaysIpv6: custom_gateway_list_ipv6
-  getCustomGatewayIpv6ByIdOrName: custom_gateway_get_ipv6
-  getUnicastRoutesIPv4: unicast_route_list_ipv4
-  getUnicastRouteIPv4: unicast_route_get_ipv4
-  getUnicastRoutesIPv6: unicast_route_list_ipv6
-  getUnicastRouteIPv6: unicast_route_get_ipv6
-  listSdwanRoutesIpv4: sdwan_route_list_ipv4
-  getSdwanRouteIpv4: sdwan_route_get_ipv4
-  listSdwanRoutesIpv6: sdwan_route_list_ipv6
-  getSdwanRouteIpv6: sdwan_route_get_ipv6
-  listDhcpServersIpv4: dhcp_server_list_ipv4
-  getDhcpServerIpv4: dhcp_server_get_ipv4
-  listDhcpServersIpv6: dhcp_server_list_ipv6
-  getDhcpServerIpv6: dhcp_server_get_ipv6
-  getDhcpLeasesIpv4: dhcp_lease_list_ipv4
-  getDhcpLeasesIpv6: dhcp_lease_list_ipv6
-  getAllDhcpRelayIpv4: dhcp_relay_list_ipv4
-  getDhcpRelayByIdIpv4: dhcp_relay_get_ipv4
-  getAllDhcpRelayIpv6: dhcp_relay_list_ipv6
-  getDhcpRelayByIdIpv6: dhcp_relay_get_ipv6
+  getGatewaysIpv4: gateway_list
+  getWanGatewaysIpv4: wan_gateway_list
+  getWanGatewayIpv4ByIdOrName: wan_gateway_get
+  getCustomGatewaysIpv4: custom_gateway_list
+  getCustomGatewayIpv4ByIdOrName: custom_gateway_get
+  getGatewaysIpv6: gateway_list
+  getWanGatewaysIpv6: wan_gateway_list
+  getWanGatewayIpv6ByIdOrName: wan_gateway_get
+  getCustomGatewaysIpv6: custom_gateway_list
+  getCustomGatewayIpv6ByIdOrName: custom_gateway_get
+  getUnicastRoutesIPv4: unicast_route_list
+  getUnicastRouteIPv4: unicast_route_get
+  getUnicastRoutesIPv6: unicast_route_list
+  getUnicastRouteIPv6: unicast_route_get
+  listSdwanRoutesIpv4: sdwan_route_list
+  getSdwanRouteIpv4: sdwan_route_get
+  listSdwanRoutesIpv6: sdwan_route_list
+  getSdwanRouteIpv6: sdwan_route_get
+  listDhcpServersIpv4: dhcp_server_list
+  getDhcpServerIpv4: dhcp_server_get
+  listDhcpServersIpv6: dhcp_server_list
+  getDhcpServerIpv6: dhcp_server_get
+  getDhcpLeasesIpv4: dhcp_lease_list
+  getDhcpLeasesIpv6: dhcp_lease_list
+  getAllDhcpRelayIpv4: dhcp_relay_list
+  getDhcpRelayByIdIpv4: dhcp_relay_get
+  getAllDhcpRelayIpv6: dhcp_relay_list
+  getDhcpRelayByIdIpv6: dhcp_relay_get
   getDnsSettings: dns_settings_get
   getAllDnsHostEntries: dns_host_entry_list
   getDnsHostEntryById: dns_host_entry_get
   getAllDnsRequestRoutes: dns_request_route_list
   getDnsRequestRouteById: dns_request_route_get
-  getAllStaticNeighborIpv4s: static_neighbor_list_ipv4
-  getStaticNeighborIpv4: static_neighbor_get_ipv4
-  getAllStaticNeighborIpv6s: static_neighbor_list_ipv6
-  getStaticNeighborIpv6: static_neighbor_get_ipv6
-
+  getAllStaticNeighborIpv4s: static_neighbor_list
+  getStaticNeighborIpv4: static_neighbor_get
+  getAllStaticNeighborIpv6s: static_neighbor_list
+  getStaticNeighborIpv6: static_neighbor_get
   # Read-only status (#31)
   getDnsProtectionStatus: network_status_dns_protection
   getCellularWanStatus: network_status_cellular_wan
@@ -407,37 +404,27 @@ tool_notes:
 # below are the intended composition.
 # ---------------------------------------------------------------------------
 composite_tools:
-  - name: firewall_rule_set_enabled_ipv4
+  - name: firewall_rule_set_enabled
     domain: firewall_rules
     kind: mutation
-    operation_ids: ["updateFirewallRuleIpv4"]
+    operation_ids: ["updateFirewallRuleIpv4", "updateFirewallRuleIpv6"]
     description: >-
-      Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses
-      `updateFirewallRuleIpv4` and adds no new endpoint.
+      Enable or disable a firewall rule by PATCHing `enabled`; the required
+      `ip_family` selects `updateFirewallRuleIpv4` or `updateFirewallRuleIpv6`
+      and the tool adds no new endpoint.
 
-  - name: firewall_rule_set_enabled_ipv6
+  - name: firewall_rule_clone
     domain: firewall_rules
     kind: mutation
-    operation_ids: ["updateFirewallRuleIpv6"]
+    operation_ids:
+      - getFirewallRuleIpv4
+      - createFirewallRuleIpv4
+      - getFirewallRuleIpv6
+      - createFirewallRuleIpv6
     description: >-
-      Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses
-      `updateFirewallRuleIpv6` and adds no new endpoint.
-
-  - name: firewall_rule_clone_ipv4
-    domain: firewall_rules
-    kind: mutation
-    operation_ids: ["getFirewallRuleIpv4", "createFirewallRuleIpv4"]
-    description: >-
-      Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then
-      create a copy with `createFirewallRuleIpv4`.
-
-  - name: firewall_rule_clone_ipv6
-    domain: firewall_rules
-    kind: mutation
-    operation_ids: ["getFirewallRuleIpv6", "createFirewallRuleIpv6"]
-    description: >-
-      Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then
-      create a copy with `createFirewallRuleIpv6`.
+      Clone a rule: read the source with `getFirewallRuleIpv4`/`Ipv6`, then
+      create a copy with `createFirewallRuleIpv4`/`Ipv6`; the required
+      `ip_family` selects the family.
 
   - name: audit_firewall_rules
     domain: audit

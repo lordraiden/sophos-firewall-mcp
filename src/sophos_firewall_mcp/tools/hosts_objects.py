@@ -1,17 +1,21 @@
 """MCP tools for Sophos network addresses, address groups, MAC objects and country groups.
 
-Thirty-seven operations from the audited v1 scope (#29), one tool each:
+Twenty-seven tools from the audited v1 scope (#29):
 
-* IPv4, IPv6 and FQDN addresses: list/get/create/update/delete (15 tools);
-* IPv4, IPv6 and FQDN address groups: list/get/create/update/delete (15 tools);
+* IPv4/IPv6 addresses: list/get/create/update/delete (5 merged tools, ``ip_family``
+  selects the collection) plus the five FQDN address tools (10 tools);
+* IPv4/IPv6 address groups: list/get/create/update/delete (5 merged tools) plus the five
+  FQDN group tools (10 tools);
 * MAC address objects: list/get/create/update/delete (5 tools);
 * country groups: list/get only (2 tools). Country groups are built-in and read-only in
   v1; no mutation tool exists for them.
 
-Bulk delete is excluded from v1 and is not registered. Every family keeps its own models:
-an IPv4 object is not an IPv6 object, an FQDN object is not a MAC object, and a group only
-references members of its own family. Deletion never cascades: an in-use object returns a
-conflict from the appliance and nothing is deleted.
+Bulk delete is excluded from v1 and is not registered. The IPv4 and IPv6 families keep
+their own wire models: an IPv4 object is not an IPv6 object, an FQDN object is not a MAC
+object, and a group only references members of its own family. The merged tools take a
+required ``ip_family`` and the adapter selects the collection; the wire body is unchanged
+for each family. Deletion never cascades: an in-use object returns a conflict from the
+appliance and nothing is deleted.
 
 :func:`register_objects_tools` is the single entry point the server factory wires into
 ``DEFAULT_DOMAINS``; it registers these 37 tools and delegates the ten service tools to
@@ -33,6 +37,15 @@ from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
 from sophos_firewall_mcp.models.common import ListPage
 from sophos_firewall_mcp.models.objects import (
+    Address,
+    AddressCreateInput,
+    AddressGroupCreateInput,
+    AddressGroupListInput,
+    AddressGroupOutput,
+    AddressGroupUpdateInput,
+    AddressListInput,
+    AddressResult,
+    AddressUpdateInput,
     CountryGroup,
     CountryGroupListInput,
     DeleteResult,
@@ -44,24 +57,7 @@ from sophos_firewall_mcp.models.objects import (
     FqdnAddressGroupUpdateInput,
     FqdnAddressListInput,
     FqdnAddressUpdateInput,
-    Ipv4Address,
-    Ipv4AddressCreate,
-    Ipv4AddressGroup,
-    Ipv4AddressGroupCreate,
-    Ipv4AddressGroupListInput,
-    Ipv4AddressGroupUpdateInput,
-    Ipv4AddressListInput,
-    Ipv4AddressResult,
-    Ipv4AddressUpdateInput,
-    Ipv6Address,
-    Ipv6AddressCreate,
-    Ipv6AddressGroup,
-    Ipv6AddressGroupCreate,
-    Ipv6AddressGroupListInput,
-    Ipv6AddressGroupUpdateInput,
-    Ipv6AddressListInput,
-    Ipv6AddressResult,
-    Ipv6AddressUpdateInput,
+    IpFamilyObjectIdentifierInput,
     ListQuery,
     MacAddress,
     MacAddressCreate,
@@ -187,53 +183,39 @@ class ObjectsAdapter(DomainAdapter):
         # appliance accepted the deletion, so the projection reports it as applied.
         return DeleteResult(deleted=True)
 
-    # -- IPv4 addresses -----------------------------------------------------------
+    # -- Addresses (IPv4 and IPv6; ``ip_family`` selects the collection) ----------
 
-    async def list_ipv4_addresses(self, request: Ipv4AddressListInput) -> ListPage[Ipv4Address]:
-        return await self._list(IPV4_ADDRESSES_PATH, request, ListPage[Ipv4Address])
+    async def list_addresses(self, request: AddressListInput) -> ListPage[Address]:
+        path = IPV6_ADDRESSES_PATH if request.ip_family == "ipv6" else IPV4_ADDRESSES_PATH
+        return await self._list(path, request, ListPage[Address])
 
-    async def get_ipv4_address(self, request: ObjectIdentifierInput) -> Ipv4AddressResult:
-        payload = await self._get(IPV4_ADDRESSES_PATH, request.id_or_name)
-        return _project({"address": payload}, Ipv4AddressResult, IPV4_ADDRESSES_PATH)
+    async def get_address(self, request: IpFamilyObjectIdentifierInput) -> AddressResult:
+        path = IPV6_ADDRESSES_PATH if request.ip_family == "ipv6" else IPV4_ADDRESSES_PATH
+        payload = await self._get(path, request.id_or_name)
+        return _project({"address": payload}, AddressResult, path)
 
-    async def create_ipv4_address(self, request: Ipv4AddressCreate) -> Ipv4AddressResult:
-        body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        payload = await self._create(IPV4_ADDRESSES_PATH, body)
-        return _project({"address": payload}, Ipv4AddressResult, IPV4_ADDRESSES_PATH)
-
-    async def update_ipv4_address(self, request: Ipv4AddressUpdateInput) -> Ipv4AddressResult:
+    async def create_address(self, request: AddressCreateInput) -> AddressResult:
+        path = IPV6_ADDRESSES_PATH if request.ip_family == "ipv6" else IPV4_ADDRESSES_PATH
         body = request.model_dump(
-            mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
+            mode="json", by_alias=True, exclude_unset=True, exclude={"ip_family"}
         )
-        payload = await self._update(IPV4_ADDRESSES_PATH, request.id_or_name, body)
-        return _project({"address": payload}, Ipv4AddressResult, IPV4_ADDRESSES_PATH)
+        payload = await self._create(path, body)
+        return _project({"address": payload}, AddressResult, path)
 
-    async def delete_ipv4_address(self, request: ObjectIdentifierInput) -> DeleteResult:
-        return await self._delete(IPV4_ADDRESSES_PATH, request.id_or_name)
-
-    # -- IPv6 addresses -----------------------------------------------------------
-
-    async def list_ipv6_addresses(self, request: Ipv6AddressListInput) -> ListPage[Ipv6Address]:
-        return await self._list(IPV6_ADDRESSES_PATH, request, ListPage[Ipv6Address])
-
-    async def get_ipv6_address(self, request: ObjectIdentifierInput) -> Ipv6AddressResult:
-        payload = await self._get(IPV6_ADDRESSES_PATH, request.id_or_name)
-        return _project({"address": payload}, Ipv6AddressResult, IPV6_ADDRESSES_PATH)
-
-    async def create_ipv6_address(self, request: Ipv6AddressCreate) -> Ipv6AddressResult:
-        body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        payload = await self._create(IPV6_ADDRESSES_PATH, body)
-        return _project({"address": payload}, Ipv6AddressResult, IPV6_ADDRESSES_PATH)
-
-    async def update_ipv6_address(self, request: Ipv6AddressUpdateInput) -> Ipv6AddressResult:
+    async def update_address(self, request: AddressUpdateInput) -> AddressResult:
+        path = IPV6_ADDRESSES_PATH if request.ip_family == "ipv6" else IPV4_ADDRESSES_PATH
         body = request.model_dump(
-            mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
+            mode="json",
+            by_alias=True,
+            exclude_unset=True,
+            exclude={"id_or_name", "ip_family"},
         )
-        payload = await self._update(IPV6_ADDRESSES_PATH, request.id_or_name, body)
-        return _project({"address": payload}, Ipv6AddressResult, IPV6_ADDRESSES_PATH)
+        payload = await self._update(path, request.id_or_name, body)
+        return _project({"address": payload}, AddressResult, path)
 
-    async def delete_ipv6_address(self, request: ObjectIdentifierInput) -> DeleteResult:
-        return await self._delete(IPV6_ADDRESSES_PATH, request.id_or_name)
+    async def delete_address(self, request: IpFamilyObjectIdentifierInput) -> DeleteResult:
+        path = IPV6_ADDRESSES_PATH if request.ip_family == "ipv6" else IPV4_ADDRESSES_PATH
+        return await self._delete(path, request.id_or_name)
 
     # -- FQDN addresses -----------------------------------------------------------
 
@@ -259,61 +241,41 @@ class ObjectsAdapter(DomainAdapter):
     async def delete_fqdn_address(self, request: ObjectIdentifierInput) -> DeleteResult:
         return await self._delete(FQDN_ADDRESSES_PATH, request.id_or_name)
 
-    # -- IPv4 address groups ------------------------------------------------------
+    # -- Address groups (IPv4 and IPv6; ``ip_family`` selects the collection) -----
 
-    async def list_ipv4_address_groups(
-        self, request: Ipv4AddressGroupListInput
-    ) -> ListPage[Ipv4AddressGroup]:
-        return await self._list(IPV4_GROUPS_PATH, request, ListPage[Ipv4AddressGroup])
+    async def list_address_groups(
+        self, request: AddressGroupListInput
+    ) -> ListPage[AddressGroupOutput]:
+        path = IPV6_GROUPS_PATH if request.ip_family == "ipv6" else IPV4_GROUPS_PATH
+        return await self._list(path, request, ListPage[AddressGroupOutput])
 
-    async def get_ipv4_address_group(self, request: ObjectIdentifierInput) -> Ipv4AddressGroup:
-        payload = await self._get(IPV4_GROUPS_PATH, request.id_or_name)
-        return _project(payload, Ipv4AddressGroup, IPV4_GROUPS_PATH)
+    async def get_address_group(self, request: IpFamilyObjectIdentifierInput) -> AddressGroupOutput:
+        path = IPV6_GROUPS_PATH if request.ip_family == "ipv6" else IPV4_GROUPS_PATH
+        payload = await self._get(path, request.id_or_name)
+        return _project(payload, AddressGroupOutput, path)
 
-    async def create_ipv4_address_group(self, request: Ipv4AddressGroupCreate) -> Ipv4AddressGroup:
-        body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        payload = await self._create(IPV4_GROUPS_PATH, body)
-        return _project(payload, Ipv4AddressGroup, IPV4_GROUPS_PATH)
-
-    async def update_ipv4_address_group(
-        self, request: Ipv4AddressGroupUpdateInput
-    ) -> Ipv4AddressGroup:
+    async def create_address_group(self, request: AddressGroupCreateInput) -> AddressGroupOutput:
+        path = IPV6_GROUPS_PATH if request.ip_family == "ipv6" else IPV4_GROUPS_PATH
         body = request.model_dump(
-            mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
+            mode="json", by_alias=True, exclude_unset=True, exclude={"ip_family"}
         )
-        payload = await self._update(IPV4_GROUPS_PATH, request.id_or_name, body)
-        return _project(payload, Ipv4AddressGroup, IPV4_GROUPS_PATH)
+        payload = await self._create(path, body)
+        return _project(payload, AddressGroupOutput, path)
 
-    async def delete_ipv4_address_group(self, request: ObjectIdentifierInput) -> DeleteResult:
-        return await self._delete(IPV4_GROUPS_PATH, request.id_or_name)
-
-    # -- IPv6 address groups ------------------------------------------------------
-
-    async def list_ipv6_address_groups(
-        self, request: Ipv6AddressGroupListInput
-    ) -> ListPage[Ipv6AddressGroup]:
-        return await self._list(IPV6_GROUPS_PATH, request, ListPage[Ipv6AddressGroup])
-
-    async def get_ipv6_address_group(self, request: ObjectIdentifierInput) -> Ipv6AddressGroup:
-        payload = await self._get(IPV6_GROUPS_PATH, request.id_or_name)
-        return _project(payload, Ipv6AddressGroup, IPV6_GROUPS_PATH)
-
-    async def create_ipv6_address_group(self, request: Ipv6AddressGroupCreate) -> Ipv6AddressGroup:
-        body = request.model_dump(mode="json", by_alias=True, exclude_unset=True)
-        payload = await self._create(IPV6_GROUPS_PATH, body)
-        return _project(payload, Ipv6AddressGroup, IPV6_GROUPS_PATH)
-
-    async def update_ipv6_address_group(
-        self, request: Ipv6AddressGroupUpdateInput
-    ) -> Ipv6AddressGroup:
+    async def update_address_group(self, request: AddressGroupUpdateInput) -> AddressGroupOutput:
+        path = IPV6_GROUPS_PATH if request.ip_family == "ipv6" else IPV4_GROUPS_PATH
         body = request.model_dump(
-            mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
+            mode="json",
+            by_alias=True,
+            exclude_unset=True,
+            exclude={"id_or_name", "ip_family"},
         )
-        payload = await self._update(IPV6_GROUPS_PATH, request.id_or_name, body)
-        return _project(payload, Ipv6AddressGroup, IPV6_GROUPS_PATH)
+        payload = await self._update(path, request.id_or_name, body)
+        return _project(payload, AddressGroupOutput, path)
 
-    async def delete_ipv6_address_group(self, request: ObjectIdentifierInput) -> DeleteResult:
-        return await self._delete(IPV6_GROUPS_PATH, request.id_or_name)
+    async def delete_address_group(self, request: IpFamilyObjectIdentifierInput) -> DeleteResult:
+        path = IPV6_GROUPS_PATH if request.ip_family == "ipv6" else IPV4_GROUPS_PATH
+        return await self._delete(path, request.id_or_name)
 
     # -- FQDN address groups ------------------------------------------------------
 
@@ -380,64 +342,28 @@ class ObjectsAdapter(DomainAdapter):
 # -- Handlers --------------------------------------------------------------------------
 
 
-async def address_list_ipv4(
-    request: Ipv4AddressListInput, ctx: Context[AppContext]
-) -> ListPage[Ipv4Address]:
-    return await ObjectsAdapter.from_context(ctx).list_ipv4_addresses(request)
+async def address_list(request: AddressListInput, ctx: Context[AppContext]) -> ListPage[Address]:
+    return await ObjectsAdapter.from_context(ctx).list_addresses(request)
 
 
-async def address_get_ipv4(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
-) -> Ipv4AddressResult:
-    return await ObjectsAdapter.from_context(ctx).get_ipv4_address(request)
+async def address_get(
+    request: IpFamilyObjectIdentifierInput, ctx: Context[AppContext]
+) -> AddressResult:
+    return await ObjectsAdapter.from_context(ctx).get_address(request)
 
 
-async def address_create_ipv4(
-    request: Ipv4AddressCreate, ctx: Context[AppContext]
-) -> Ipv4AddressResult:
-    return await ObjectsAdapter.from_context(ctx).create_ipv4_address(request)
+async def address_create(request: AddressCreateInput, ctx: Context[AppContext]) -> AddressResult:
+    return await ObjectsAdapter.from_context(ctx).create_address(request)
 
 
-async def address_update_ipv4(
-    request: Ipv4AddressUpdateInput, ctx: Context[AppContext]
-) -> Ipv4AddressResult:
-    return await ObjectsAdapter.from_context(ctx).update_ipv4_address(request)
+async def address_update(request: AddressUpdateInput, ctx: Context[AppContext]) -> AddressResult:
+    return await ObjectsAdapter.from_context(ctx).update_address(request)
 
 
-async def address_delete_ipv4(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
+async def address_delete(
+    request: IpFamilyObjectIdentifierInput, ctx: Context[AppContext]
 ) -> DeleteResult:
-    return await ObjectsAdapter.from_context(ctx).delete_ipv4_address(request)
-
-
-async def address_list_ipv6(
-    request: Ipv6AddressListInput, ctx: Context[AppContext]
-) -> ListPage[Ipv6Address]:
-    return await ObjectsAdapter.from_context(ctx).list_ipv6_addresses(request)
-
-
-async def address_get_ipv6(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
-) -> Ipv6AddressResult:
-    return await ObjectsAdapter.from_context(ctx).get_ipv6_address(request)
-
-
-async def address_create_ipv6(
-    request: Ipv6AddressCreate, ctx: Context[AppContext]
-) -> Ipv6AddressResult:
-    return await ObjectsAdapter.from_context(ctx).create_ipv6_address(request)
-
-
-async def address_update_ipv6(
-    request: Ipv6AddressUpdateInput, ctx: Context[AppContext]
-) -> Ipv6AddressResult:
-    return await ObjectsAdapter.from_context(ctx).update_ipv6_address(request)
-
-
-async def address_delete_ipv6(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
-) -> DeleteResult:
-    return await ObjectsAdapter.from_context(ctx).delete_ipv6_address(request)
+    return await ObjectsAdapter.from_context(ctx).delete_address(request)
 
 
 async def address_list_fqdn(
@@ -466,64 +392,34 @@ async def address_delete_fqdn(
     return await ObjectsAdapter.from_context(ctx).delete_fqdn_address(request)
 
 
-async def address_group_list_ipv4(
-    request: Ipv4AddressGroupListInput, ctx: Context[AppContext]
-) -> ListPage[Ipv4AddressGroup]:
-    return await ObjectsAdapter.from_context(ctx).list_ipv4_address_groups(request)
+async def address_group_list(
+    request: AddressGroupListInput, ctx: Context[AppContext]
+) -> ListPage[AddressGroupOutput]:
+    return await ObjectsAdapter.from_context(ctx).list_address_groups(request)
 
 
-async def address_group_get_ipv4(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
-) -> Ipv4AddressGroup:
-    return await ObjectsAdapter.from_context(ctx).get_ipv4_address_group(request)
+async def address_group_get(
+    request: IpFamilyObjectIdentifierInput, ctx: Context[AppContext]
+) -> AddressGroupOutput:
+    return await ObjectsAdapter.from_context(ctx).get_address_group(request)
 
 
-async def address_group_create_ipv4(
-    request: Ipv4AddressGroupCreate, ctx: Context[AppContext]
-) -> Ipv4AddressGroup:
-    return await ObjectsAdapter.from_context(ctx).create_ipv4_address_group(request)
+async def address_group_create(
+    request: AddressGroupCreateInput, ctx: Context[AppContext]
+) -> AddressGroupOutput:
+    return await ObjectsAdapter.from_context(ctx).create_address_group(request)
 
 
-async def address_group_update_ipv4(
-    request: Ipv4AddressGroupUpdateInput, ctx: Context[AppContext]
-) -> Ipv4AddressGroup:
-    return await ObjectsAdapter.from_context(ctx).update_ipv4_address_group(request)
+async def address_group_update(
+    request: AddressGroupUpdateInput, ctx: Context[AppContext]
+) -> AddressGroupOutput:
+    return await ObjectsAdapter.from_context(ctx).update_address_group(request)
 
 
-async def address_group_delete_ipv4(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
+async def address_group_delete(
+    request: IpFamilyObjectIdentifierInput, ctx: Context[AppContext]
 ) -> DeleteResult:
-    return await ObjectsAdapter.from_context(ctx).delete_ipv4_address_group(request)
-
-
-async def address_group_list_ipv6(
-    request: Ipv6AddressGroupListInput, ctx: Context[AppContext]
-) -> ListPage[Ipv6AddressGroup]:
-    return await ObjectsAdapter.from_context(ctx).list_ipv6_address_groups(request)
-
-
-async def address_group_get_ipv6(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
-) -> Ipv6AddressGroup:
-    return await ObjectsAdapter.from_context(ctx).get_ipv6_address_group(request)
-
-
-async def address_group_create_ipv6(
-    request: Ipv6AddressGroupCreate, ctx: Context[AppContext]
-) -> Ipv6AddressGroup:
-    return await ObjectsAdapter.from_context(ctx).create_ipv6_address_group(request)
-
-
-async def address_group_update_ipv6(
-    request: Ipv6AddressGroupUpdateInput, ctx: Context[AppContext]
-) -> Ipv6AddressGroup:
-    return await ObjectsAdapter.from_context(ctx).update_ipv6_address_group(request)
-
-
-async def address_group_delete_ipv6(
-    request: ObjectIdentifierInput, ctx: Context[AppContext]
-) -> DeleteResult:
-    return await ObjectsAdapter.from_context(ctx).delete_ipv6_address_group(request)
+    return await ObjectsAdapter.from_context(ctx).delete_address_group(request)
 
 
 async def address_group_list_fqdn(
@@ -619,126 +515,68 @@ _DELETE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
 
 _TOOL_SPECS: tuple[_ToolSpec, ...] = (
     _ToolSpec(
-        name="address_list_ipv4",
-        title="List IPv4 addresses",
+        name="address_list",
+        title="List addresses",
         description=(
-            "List one page of IPv4 address objects (single address, network, range or IP "
-            "list). Read-only. `page` is 1-based, `page_size` is 1-100 (default 10) and "
-            "`page_total` requests total metadata; `name_contains` and `name_not_equals` are "
-            "mutually exclusive. Returns the page items and the appliance `pages` metadata; "
-            "it never auto-paginates."
+            "List one page of IPv4 or IPv6 address objects (single address, network, range "
+            "or IP list), selected by the required `ip_family`. Read-only. `page` is 1-based, "
+            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
+            "`name_contains` and `name_not_equals` are mutually exclusive. Returns the page "
+            "items and the appliance `pages` metadata; it never auto-paginates."
         ),
         kind=ToolKind.READ,
-        handler=address_list_ipv4,
+        handler=address_list,
     ),
     _ToolSpec(
-        name="address_get_ipv4",
-        title="Get an IPv4 address",
+        name="address_get",
+        title="Get an address",
         description=(
-            "Read one IPv4 address object by UUID or name (`id_or_name`). Read-only. The "
-            "response is discriminated by `type` (ipv4Address, ipv4Network, ipv4Range, "
-            "ipv4List); use it before updating or deleting to confirm the shape."
+            "Read one IPv4 or IPv6 address object by UUID or name (`id_or_name`), selected "
+            "by the required `ip_family`. Read-only. The response is discriminated by `type` "
+            "(ipv4Address/ipv4Network/ipv4Range/ipv4List or the IPv6 equivalents); use it "
+            "before updating or deleting to confirm the shape."
         ),
         kind=ToolKind.READ,
-        handler=address_get_ipv4,
+        handler=address_get,
     ),
     _ToolSpec(
-        name="address_create_ipv4",
-        title="Create an IPv4 address",
+        name="address_create",
+        title="Create an address",
         description=(
-            "Create an IPv4 address object. `type` selects the shape: ipv4Address "
-            "(`ipv4Address`), ipv4Network (`ipv4NetworkAddress` + `cidr` 1-31), ipv4Range "
-            "(`ipv4AddressStart` + `ipv4AddressEnd`) or ipv4List (`ipv4Addresses`). `name` "
-            "is required and must be a valid Sophos object name. A duplicate name returns "
-            "a conflict and nothing is created."
+            "Create an IPv4 or IPv6 address object, selected by the required `ip_family`. "
+            "`type` selects the shape: a single address, a network (address + `cidr` or "
+            "`prefix_length`), a range (start + end) or a list. `name` is required and must "
+            "be a valid Sophos object name. A duplicate name returns a conflict and nothing "
+            "is created."
         ),
         kind=ToolKind.MUTATION,
-        handler=address_create_ipv4,
+        handler=address_create,
         annotations=_CREATE,
     ),
     _ToolSpec(
-        name="address_update_ipv4",
-        title="Update an IPv4 address",
+        name="address_update",
+        title="Update an address",
         description=(
-            "Partially update an IPv4 address object by UUID or name. PATCH uses JSON "
-            "Merge Patch: omitted fields keep their stored value and `description: null` "
-            "clears the description. The object `type` cannot be changed and is not "
-            "accepted. Mutating."
+            "Partially update an IPv4 or IPv6 address object by UUID or name, selected by "
+            "the required `ip_family`. PATCH uses JSON Merge Patch: omitted fields keep "
+            "their stored value and `description: null` clears the description. The object "
+            "`type` cannot be changed and is not accepted. Mutating."
         ),
         kind=ToolKind.MUTATION,
-        handler=address_update_ipv4,
+        handler=address_update,
         annotations=_UPDATE,
     ),
     _ToolSpec(
-        name="address_delete_ipv4",
-        title="Delete an IPv4 address",
+        name="address_delete",
+        title="Delete an address",
         description=(
-            "Delete an IPv4 address object by UUID or name. Destructive and not "
-            "cascading: if the object is still referenced by a rule, group or NAT entry "
-            "the appliance returns a conflict and nothing is deleted."
+            "Delete an IPv4 or IPv6 address object by UUID or name, selected by the "
+            "required `ip_family`. Destructive and not cascading: if the object is still "
+            "referenced by a rule, group or NAT entry the appliance returns a conflict and "
+            "nothing is deleted."
         ),
         kind=ToolKind.MUTATION,
-        handler=address_delete_ipv4,
-        annotations=_DELETE,
-    ),
-    _ToolSpec(
-        name="address_list_ipv6",
-        title="List IPv6 addresses",
-        description=(
-            "List one page of IPv6 address objects (single address, network, range or IP "
-            "list). Read-only. `page` is 1-based, `page_size` is 1-100 (default 10) and "
-            "`page_total` requests total metadata; `name_contains` and `name_not_equals` are "
-            "mutually exclusive. Returns the page items and the appliance `pages` metadata."
-        ),
-        kind=ToolKind.READ,
-        handler=address_list_ipv6,
-    ),
-    _ToolSpec(
-        name="address_get_ipv6",
-        title="Get an IPv6 address",
-        description=(
-            "Read one IPv6 address object by UUID or name (`id_or_name`). Read-only. The "
-            "response is discriminated by `type` (ipv6Address, ipv6Network, ipv6Range, "
-            "ipv6List); use it before updating or deleting to confirm the shape."
-        ),
-        kind=ToolKind.READ,
-        handler=address_get_ipv6,
-    ),
-    _ToolSpec(
-        name="address_create_ipv6",
-        title="Create an IPv6 address",
-        description=(
-            "Create an IPv6 address object. `type` selects the shape: ipv6Address "
-            "(`ipv6Address`), ipv6Network (`ipv6NetworkAddress` + `prefixLength` 1-127), "
-            "ipv6Range (`ipv6AddressStart` + `ipv6AddressEnd`) or ipv6List "
-            "(`ipv6Addresses`). `name` is required. A duplicate name returns a conflict."
-        ),
-        kind=ToolKind.MUTATION,
-        handler=address_create_ipv6,
-        annotations=_CREATE,
-    ),
-    _ToolSpec(
-        name="address_update_ipv6",
-        title="Update an IPv6 address",
-        description=(
-            "Partially update an IPv6 address object by UUID or name. PATCH uses JSON "
-            "Merge Patch: omitted fields keep their stored value and `description: null` "
-            "clears the description. The object `type` cannot be changed. Mutating."
-        ),
-        kind=ToolKind.MUTATION,
-        handler=address_update_ipv6,
-        annotations=_UPDATE,
-    ),
-    _ToolSpec(
-        name="address_delete_ipv6",
-        title="Delete an IPv6 address",
-        description=(
-            "Delete an IPv6 address object by UUID or name. Destructive and not "
-            "cascading: if the object is still referenced the appliance returns a "
-            "conflict and nothing is deleted."
-        ),
-        kind=ToolKind.MUTATION,
-        handler=address_delete_ipv6,
+        handler=address_delete,
         annotations=_DELETE,
     ),
     _ToolSpec(
@@ -799,122 +637,66 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         annotations=_DELETE,
     ),
     _ToolSpec(
-        name="address_group_list_ipv4",
-        title="List IPv4 address groups",
+        name="address_group_list",
+        title="List address groups",
         description=(
-            "List one page of IPv4 address groups. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
-            "`name_contains` and `name_not_equals` are mutually exclusive. Members are "
-            "returned as name references."
+            "List one page of IPv4 or IPv6 address groups, selected by the required "
+            "`ip_family`. Read-only. `page` is 1-based, `page_size` is 1-100 (default 10) "
+            "and `page_total` requests total metadata; `name_contains` and `name_not_equals` "
+            "are mutually exclusive. Members are returned as name references."
         ),
         kind=ToolKind.READ,
-        handler=address_group_list_ipv4,
+        handler=address_group_list,
     ),
     _ToolSpec(
-        name="address_group_get_ipv4",
-        title="Get an IPv4 address group",
+        name="address_group_get",
+        title="Get an address group",
         description=(
-            "Read one IPv4 address group by UUID or name (`id_or_name`). Read-only. "
-            "Members are IPv4 address objects referenced by name; a group never mixes "
-            "address families."
+            "Read one IPv4 or IPv6 address group by UUID or name (`id_or_name`), selected by "
+            "the required `ip_family`. Read-only. Members are address objects of the same "
+            "family referenced by name; a group never mixes address families."
         ),
         kind=ToolKind.READ,
-        handler=address_group_get_ipv4,
+        handler=address_group_get,
     ),
     _ToolSpec(
-        name="address_group_create_ipv4",
-        title="Create an IPv4 address group",
+        name="address_group_create",
+        title="Create an address group",
         description=(
-            "Create an IPv4 address group from existing IPv4 address objects. `name` and "
-            '`ipv4Addresses` (a list of `{"name": ...}` references, possibly empty) are '
-            "required. Members must already exist and must be IPv4 address objects; the "
-            "appliance rejects an unknown or wrong-family name."
+            "Create an IPv4 or IPv6 address group from existing address objects of the same "
+            "family, selected by the required `ip_family`. `name` and the family's member "
+            'list (`ipv4Addresses` or `ipv6Addresses`, a list of `{"name": ...}` references, '
+            "possibly empty) are required. Members must already exist and must belong to "
+            "the same family; the appliance rejects an unknown or wrong-family name."
         ),
         kind=ToolKind.MUTATION,
-        handler=address_group_create_ipv4,
+        handler=address_group_create,
         annotations=_CREATE,
     ),
     _ToolSpec(
-        name="address_group_update_ipv4",
-        title="Update an IPv4 address group",
+        name="address_group_update",
+        title="Update an address group",
         description=(
-            "Partially update an IPv4 address group by UUID or name. PATCH uses JSON "
-            "Merge Patch: omitted fields keep their stored value and `ipv4Addresses` "
-            "replaces the whole member list. Mutating."
+            "Partially update an IPv4 or IPv6 address group by UUID or name, selected by the "
+            "required `ip_family`. PATCH uses JSON Merge Patch: omitted fields keep their "
+            "stored value and the family's member list replaces the whole member list. "
+            "Mutating."
         ),
         kind=ToolKind.MUTATION,
-        handler=address_group_update_ipv4,
+        handler=address_group_update,
         annotations=_UPDATE,
     ),
     _ToolSpec(
-        name="address_group_delete_ipv4",
-        title="Delete an IPv4 address group",
+        name="address_group_delete",
+        title="Delete an address group",
         description=(
-            "Delete an IPv4 address group by UUID or name. Destructive and not "
-            "cascading: if the group is still referenced by a rule or another group the "
-            "appliance returns a conflict and nothing is deleted."
+            "Delete an IPv4 or IPv6 address group by UUID or name, selected by the required "
+            "`ip_family`. Destructive and not cascading: if the group is still referenced by "
+            "a rule or another group the appliance returns a conflict and nothing is "
+            "deleted."
         ),
         kind=ToolKind.MUTATION,
-        handler=address_group_delete_ipv4,
-        annotations=_DELETE,
-    ),
-    _ToolSpec(
-        name="address_group_list_ipv6",
-        title="List IPv6 address groups",
-        description=(
-            "List one page of IPv6 address groups. Read-only. `page` is 1-based, "
-            "`page_size` is 1-100 (default 10) and `page_total` requests total metadata; "
-            "`name_contains` and `name_not_equals` are mutually exclusive. Members are "
-            "returned as name references."
-        ),
-        kind=ToolKind.READ,
-        handler=address_group_list_ipv6,
-    ),
-    _ToolSpec(
-        name="address_group_get_ipv6",
-        title="Get an IPv6 address group",
-        description=(
-            "Read one IPv6 address group by UUID or name (`id_or_name`). Read-only. "
-            "Members are IPv6 address objects referenced by name; a group never mixes "
-            "address families."
-        ),
-        kind=ToolKind.READ,
-        handler=address_group_get_ipv6,
-    ),
-    _ToolSpec(
-        name="address_group_create_ipv6",
-        title="Create an IPv6 address group",
-        description=(
-            "Create an IPv6 address group from existing IPv6 address objects. `name` and "
-            '`ipv6Addresses` (a list of `{"name": ...}` references, possibly empty) are '
-            "required. Members must already exist and must be IPv6 address objects."
-        ),
-        kind=ToolKind.MUTATION,
-        handler=address_group_create_ipv6,
-        annotations=_CREATE,
-    ),
-    _ToolSpec(
-        name="address_group_update_ipv6",
-        title="Update an IPv6 address group",
-        description=(
-            "Partially update an IPv6 address group by UUID or name. PATCH uses JSON "
-            "Merge Patch: omitted fields keep their stored value and `ipv6Addresses` "
-            "replaces the whole member list. Mutating."
-        ),
-        kind=ToolKind.MUTATION,
-        handler=address_group_update_ipv6,
-        annotations=_UPDATE,
-    ),
-    _ToolSpec(
-        name="address_group_delete_ipv6",
-        title="Delete an IPv6 address group",
-        description=(
-            "Delete an IPv6 address group by UUID or name. Destructive and not "
-            "cascading: if the group is still referenced the appliance returns a "
-            "conflict and nothing is deleted."
-        ),
-        kind=ToolKind.MUTATION,
-        handler=address_group_delete_ipv6,
+        handler=address_group_delete,
         annotations=_DELETE,
     ),
     _ToolSpec(

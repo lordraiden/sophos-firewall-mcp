@@ -53,9 +53,10 @@ Bearer API key.
 
 ## What it does
 
-- **152 typed tools across 11 domains**, covering 145 audited operations of the checked-in OpenAPI
-  contract (`firewall_config_openapi.yaml`, 700 operations) plus 7 composite tools that add no new
-  endpoint. Every tool maps to a documented `operationId`; the mapping is in
+- **112 typed tools across 11 domains**, covering 145 audited operations of the checked-in OpenAPI
+  contract (`firewall_config_openapi.yaml`, 700 operations) plus 5 composite tools that add no new
+  endpoint. The IPv4 and IPv6 families share one tool each, selected by a required `ip_family`
+  argument. Every tool maps to a documented `operationId`; the mapping is in
   [`docs/API-COVERAGE.md`](docs/API-COVERAGE.md).
 - **One shared async REST client** (`httpx.AsyncClient`) created in the MCP lifespan and closed exactly
   once on shutdown. No client is created per tool call.
@@ -131,20 +132,20 @@ one key across automations.
 
 ## Tool surface
 
-152 tools, 11 domains. The Access column shows whether a domain exposes mutation tools; with
-`SOPHOS_READ_ONLY_MODE=true` the server registers **98 tools and 0 mutations**.
+112 tools, 11 domains. The Access column shows whether a domain exposes mutation tools; with
+`SOPHOS_READ_ONLY_MODE=true` the server registers **74 tools and 0 mutations**.
 
 | Domain | Tools | Access | Coverage |
 |---|---:|---|---|
-| Firewall rules (IPv4/IPv6) | 16 | read + write | List, get, create, update, delete and move, plus `firewall_rule_set_enabled_*` (PATCH `enabled`) and `firewall_rule_clone_*` (get + create). A created rule is never auto-enabled or repositioned. |
-| NAT rules (IPv4/IPv6) | 12 | read + write | List, get, create, update, delete and move. |
-| Addresses and address groups | 37 | read + write | IPv4, IPv6 and FQDN addresses and groups (full CRUD), MAC addresses (full CRUD), country groups (read-only). |
+| Firewall rules (IPv4/IPv6) | 8 | read + write | List, get, create, update, delete and move, plus `firewall_rule_set_enabled` (PATCH `enabled`) and `firewall_rule_clone` (get + create). The required `ip_family` selects the IPv4 or IPv6 rule base. A created rule is never auto-enabled or repositioned. |
+| NAT rules (IPv4/IPv6) | 6 | read + write | List, get, create, update, delete and move; `ip_family` selects the rule base. |
+| Addresses and address groups | 27 | read + write | IPv4/IPv6 addresses and groups (one tool each, `ip_family` selects the collection), FQDN addresses and groups (full CRUD), MAC addresses (full CRUD), country groups (read-only). |
 | Services and service groups | 10 | read + write | List, get, create, update, delete. |
 | Network users | 6 | read + write | General user list and network-user CRUD. Passwords are write-only and never returned or logged. |
 | Live users | 2 | read + write | List active sessions and disconnect one session. |
 | IPsec VPN | 11 | read-only | Profiles, failover groups, site-to-site connections (policy- and route-based, IPv4), live connections, remote-access settings. |
 | SSL VPN | 9 | read-only | Remote-access policies, clientless policies, bookmark groups, bookmarks, global settings. |
-| Network architecture | 44 | read + VLAN-only write | Interfaces, zones, gateways, static unicast routes, SD-WAN routes, DHCP servers/leases/relays, DNS settings/host entries/request routes, static neighbors. The only writes are `network_interface_create_vlan`, `network_interface_update_vlan` and `network_interface_delete_vlan`, which read the interface first and refuse any type other than `vlan`. |
+| Network architecture | 28 | read + VLAN-only write | Interfaces, zones, gateways, static unicast routes, SD-WAN routes, DHCP servers/leases/relays, DNS settings/host entries/request routes, static neighbors. The only writes are `network_interface_create_vlan`, `network_interface_update_vlan` and `network_interface_delete_vlan`, which read the interface first and refuse any type other than `vlan`. |
 | Network status | 2 | read-only | DNS protection status and cellular WAN modem status. |
 | Audit (composite) | 3 | read-only | `audit_firewall_rules`, `explain_connectivity`, `find_object_usage`. Configuration analysis over the audited read operations; they add no new endpoint. |
 
@@ -162,10 +163,10 @@ Every tool that takes arguments publishes **exactly one top-level property, `req
 is the real argument object. This is the MCP SDK's single-argument convention, not the flat-argument
 shape most MCP examples use, so a call that puts the fields at the top level is rejected.
 
-144 of the 152 tools are wrapped. The other 8 declare no request parameters and take an empty
-`arguments` object: `dns_settings_get`, `dhcp_lease_list_ipv4`, `dhcp_lease_list_ipv6`,
-`ipsec_live_connection_list_ipv4`, `ipsec_remote_access_settings_get`, `sslvpn_global_settings_get`,
-`network_status_dns_protection` and `network_status_cellular_wan`.
+106 of the 112 tools are wrapped. The other 6 declare no request parameters and take an empty
+`arguments` object: `dns_settings_get`, `ipsec_live_connection_list_ipv4`,
+`ipsec_remote_access_settings_get`, `sslvpn_global_settings_get`, `network_status_dns_protection`
+and `network_status_cellular_wan`.
 
 The rejection is actionable and names the accepted argument, so a model can self-correct on the next
 call:
@@ -188,22 +189,31 @@ A **no-argument read** — the tool publishes no `request`, so `arguments` is em
  "params": {"name": "dns_settings_get", "arguments": {}}}
 ```
 
-A **paginated list** — `firewall_rule_list_ipv4` publishes `page`, `page_size`, `page_total`,
-`name_contains` and `name_not_equals` inside `request`:
+A **paginated list** — `firewall_rule_list` publishes `ip_family`, `page`, `page_size`,
+`page_total`, `name_contains` and `name_not_equals` inside `request`:
 
 ```json
 {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
- "params": {"name": "firewall_rule_list_ipv4",
-            "arguments": {"request": {"page": 1, "page_size": 10, "page_total": true}}}}
+ "params": {"name": "firewall_rule_list",
+            "arguments": {"request": {"ip_family": "ipv4", "page": 1, "page_size": 10, "page_total": true}}}}
 ```
 
-A **delete** — `firewall_rule_delete_ipv4` publishes only `id_or_name` inside `request`:
+A **delete** — `firewall_rule_delete` publishes `ip_family` and `id_or_name` inside `request`:
 
 ```json
 {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
- "params": {"name": "firewall_rule_delete_ipv4",
-            "arguments": {"request": {"id_or_name": "Allow LAN to WAN"}}}}
+ "params": {"name": "firewall_rule_delete",
+            "arguments": {"request": {"ip_family": "ipv4", "id_or_name": "Allow LAN to WAN"}}}}
 ```
+
+### The IP family
+
+A tool that exists for both IP families publishes one required `ip_family` argument (`ipv4` or
+`ipv6`) instead of two tools. It is **required, not defaulted**: a default would silently target one
+family, and for a mutation (delete, update, move, enable/disable, clone) that would make a destructive
+target a guess. The audit composites are the one exception: they are read-only and can span both
+families, so their `ip_family` is optional and omitting it means both. The wire body is unchanged for
+each family; the adapter strips `ip_family` and selects the IPv4 or IPv6 path.
 
 ### Read one of `content` / `structuredContent`, not both
 
@@ -215,7 +225,7 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **152 tools in a single response**: **807,900 bytes**, roughly **202k tokens**
+`tools/list` returns all **112 tools in a single response**: **655,479 bytes**, roughly **164k tokens**
 at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO
 with the legacy `initialize` handshake, including the trailing newline; the 2026-07-28 era adds a few
 dozen bytes of envelope. There is no pagination cursor, so a client
@@ -228,16 +238,17 @@ The catalog is static for the process lifetime, so:
 - **Prefer progressive discovery** when the client supports it: load a subset of tools on demand
   instead of every definition up front. The MCP client guidance puts the threshold at 1–5% of the
   context window.
-- **Use read-only mode** (`SOPHOS_READ_ONLY_MODE=true`) to publish 98 tools instead of 152 when the
+- **Use read-only mode** (`SOPHOS_READ_ONLY_MODE=true`) to publish 74 tools instead of 112 when the
   deployment only inspects.
 - The server publishes **4 resources** (`sophos://api/surface`, `sophos://coverage`,
   `sophos://read-only-policy`, `sophos://conventions`) and **3 prompts** (`audit_firewall`,
   `explain_flow`, `find_unused_objects`), so a client can read the contract and the conventions
   without loading the tool catalog.
 
-The payload is dominated by the output schemas (471 KB after the catalog trim, which removed 2,783
-auto-generated property `title` keys and compacted 1,646 nullable unions); the 40 IPv4/IPv6 tool pairs
-account for 243 KB between them.
+The payload is dominated by the output schemas. Merging the 40 IPv4/IPv6 tool pairs behind
+`ip_family` removed **152,421 bytes** from the catalog (807,900 → 655,479) and 40 tools, on top of the
+earlier catalog trim that removed 2,783 auto-generated property `title` keys and compacted 1,646
+nullable unions.
 
 ## Configuration
 
@@ -401,7 +412,7 @@ docker run -i --rm \
 
 ## Read-only mode
 
-Set `SOPHOS_READ_ONLY_MODE=true` to register only the 98 read-only tools. Mutation tools are not
+Set `SOPHOS_READ_ONLY_MODE=true` to register only the 74 read-only tools. Mutation tools are not
 registered at all, so a client cannot discover or call them. This is defence in depth, not the primary
 control: the API key's administrator profile is what actually authorizes a request. Use a read-only
 administrator profile for any deployment that only needs inspection.

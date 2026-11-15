@@ -1,13 +1,13 @@
-"""Global surface invariants for the complete 152-tool server (phase-2 review finding 8).
+"""Global surface invariants for the complete 112-tool server (phase-2 review finding 8).
 
 Every other domain test asserts its own subset, so a duplicated, stray or missing tool could
 pass CI unnoticed. These tests build the real server with every domain registered and assert
 the invariants that only the whole surface can prove:
 
 * the registered set is exactly the curated ``tool_map`` (145 operationIds) plus the seven
-  declared composites -- 152 tools with 152 unique names;
-* the full surface declares exactly 54 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
-  exactly those, leaving 98 read-only tools and zero mutations;
+  declared composites -- 112 tools with 112 unique names;
+* the full surface declares exactly 38 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
+  exactly those, leaving 74 read-only tools and zero mutations;
 * every tool publishes an object-rooted output schema, a non-empty input schema and
   ``openWorldHint=true``;
 * every published input property name, at every depth of the request body, is snake_case
@@ -43,23 +43,23 @@ HOST = "fw.example.com"
 KEY = "sfos_test_key_0123456789abcdef"
 
 #: The phase-2 exit-criteria counts (ADR-001 section 10, API-COVERAGE section 4).
-EXPECTED_TOOL_COUNT = 152
-EXPECTED_READ_ONLY_TOOL_COUNT = 98
-EXPECTED_MUTATION_COUNT = 54
+EXPECTED_TOOL_COUNT = 112
+EXPECTED_READ_ONLY_TOOL_COUNT = 74
+EXPECTED_MUTATION_COUNT = 38
 EXPECTED_TOOL_MAP_COUNT = 145
-EXPECTED_COMPOSITE_COUNT = 7
+EXPECTED_COMPOSITE_COUNT = 5
 
 #: Tools whose operation declares no request parameters: they publish no ``request``.
-EXPECTED_NO_ARGUMENT_TOOL_COUNT = 8
+EXPECTED_NO_ARGUMENT_TOOL_COUNT = 6
 
 #: The published input surface, pinned: property occurrences at every depth and the number
 #: of distinct names. A change here means the input schema changed.
-EXPECTED_INPUT_PROPERTY_COUNT = 1495
+EXPECTED_INPUT_PROPERTY_COUNT = 1428
 EXPECTED_INPUT_PROPERTY_NAME_COUNT = 167
 
 #: The published output surface, pinned: property occurrences at every depth and the number
 #: of distinct names. A change here means the output schema changed.
-EXPECTED_OUTPUT_PROPERTY_COUNT = 4547
+EXPECTED_OUTPUT_PROPERTY_COUNT = 3518
 EXPECTED_OUTPUT_PROPERTY_NAME_COUNT = 430
 
 #: The published input naming convention (M1): lowercase words joined by underscores.
@@ -265,7 +265,7 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
     digit or underscore. A single lowercase word such as ``from`` or ``to`` is identical
     in both conventions and passes.
 
-    The counts are pinned deliberately. 144 tools publish a ``request`` object (152 minus
+    The counts are pinned deliberately. 106 tools publish a ``request`` object (112 minus
     the 8 tools whose operation declares no parameters), and the walk reaches 1,495
     property occurrences over 167 distinct names, at every depth the schema nests. A
     change to any of those numbers means the published input surface changed and must be
@@ -293,7 +293,7 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
     assert len(distinct) == EXPECTED_INPUT_PROPERTY_NAME_COUNT
 
     # The union-request tools are the ones a top-level-only scan skipped; prove they are in.
-    for name in ("address_create_ipv4", "address_create_ipv6", "mac_address_create"):
+    for name in ("address_create", "mac_address_create"):
         assert scanned[name], name
 
     assert offending == {}
@@ -307,7 +307,7 @@ async def test_every_published_output_property_is_camel_case_at_every_depth() ->
     same global test: the per-domain tests only cover the domains that were converted, so
     three audit composites kept publishing snake_case output properties through the whole
     phase and CI stayed green (phase-5 review finding 1). This test walks the published
-    ``outputSchema`` of all 152 tools -- local ``$ref`` targets, array ``items`` and every
+    ``outputSchema`` of all 112 tools -- local ``$ref`` targets, array ``items`` and every
     ``allOf``/``oneOf``/``anyOf`` branch -- so a snake_case name at any depth fails here
     instead of reaching a caller.
 
@@ -315,8 +315,8 @@ async def test_every_published_output_property_is_camel_case_at_every_depth() ->
     letters and digits only -- no underscore and no leading uppercase letter. A single
     lowercase word such as ``name`` or ``kind`` is identical in both conventions and passes.
 
-    The counts are pinned deliberately. All 152 tools publish an object-rooted output
-    schema, and the walk reaches 4,547 property occurrences over 430 distinct names, at
+    The counts are pinned deliberately. All 112 tools publish an object-rooted output
+    schema, and the walk reaches 3,518 property occurrences over 430 distinct names, at
     every depth the schema nests. A change to any of those numbers means the published
     output surface changed and must be acknowledged here rather than silently shrinking the
     scan.
@@ -370,7 +370,7 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
     runs ``tools/list``.
 
     The sweep is deliberately global and strict: it walks the description, the title, the
-    annotations, the input schema and the output schema of all 152 tools plus the server
+    annotations, the input schema and the output schema of all 112 tools plus the server
     instructions, with no allowlist, so a single reintroduced marker fails here instead of
     reaching a caller. The counts are pinned so the scan cannot silently shrink to a subset
     of the surface.
@@ -404,7 +404,7 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
         blobs[f"{tool.name} inputSchema"] = json.dumps(tool.input_schema, sort_keys=True)
         blobs[f"{tool.name} outputSchema"] = json.dumps(tool.output_schema, sort_keys=True)
 
-    # 152 tools x 5 published strings, plus the server instructions.
+    # 112 tools x 5 published strings, plus the server instructions.
     assert len(blobs) == EXPECTED_TOOL_COUNT * 5 + 1
 
     offenders: list[str] = []

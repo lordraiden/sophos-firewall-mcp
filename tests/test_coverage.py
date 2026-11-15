@@ -160,7 +160,8 @@ def test_curated_decisions_present(generator: Any, curated: Any) -> None:
     assert curated["version"] == 1
     assert list(curated["domains"]) == list(generator.DOMAIN_ORDER)
     assert len(curated["tool_map"]) == 145
-    assert len(set(curated["tool_map"].values())) == 145
+    # The IPv4/IPv6 pairs share one tool each, so 145 operations map to 107 distinct tools.
+    assert len(set(curated["tool_map"].values())) == 107
     operations = _iter_operations(_load_yaml(SPEC_PATH))
     known = {operation["operationId"] for operation in operations}
     assert set(curated["tool_map"]) <= known
@@ -237,7 +238,7 @@ def test_curated_decisions_present(generator: Any, curated: Any) -> None:
 
 def test_scope_change_is_recorded(generator: Any, curated: Any) -> None:
     release_summary = curated["release"]["summary"]
-    for token in ("145", "152", "11"):
+    for token in ("145", "112", "11"):
         assert token in release_summary
     assert "composite" in release_summary
 
@@ -307,27 +308,26 @@ def test_scope_change_is_recorded(generator: Any, curated: Any) -> None:
     # Composite tools are declared, audited and distinct from the 1:1 map.
     composite = {tool["name"]: tool for tool in curated["composite_tools"]}
     assert set(composite) == {
-        "firewall_rule_set_enabled_ipv4",
-        "firewall_rule_set_enabled_ipv6",
-        "firewall_rule_clone_ipv4",
-        "firewall_rule_clone_ipv6",
+        "firewall_rule_set_enabled",
+        "firewall_rule_clone",
         "audit_firewall_rules",
         "explain_connectivity",
         "find_object_usage",
     }
-    assert composite["firewall_rule_set_enabled_ipv4"]["operation_ids"] == [
-        "updateFirewallRuleIpv4"
+    assert composite["firewall_rule_set_enabled"]["operation_ids"] == [
+        "updateFirewallRuleIpv4",
+        "updateFirewallRuleIpv6",
     ]
-    assert composite["firewall_rule_clone_ipv4"]["operation_ids"] == [
+    assert composite["firewall_rule_clone"]["operation_ids"] == [
         "getFirewallRuleIpv4",
         "createFirewallRuleIpv4",
+        "getFirewallRuleIpv6",
+        "createFirewallRuleIpv6",
     ]
     assert composite["audit_firewall_rules"]["domain"] == "audit"
     assert {name: tool["kind"] for name, tool in composite.items()} == {
-        "firewall_rule_set_enabled_ipv4": "mutation",
-        "firewall_rule_set_enabled_ipv6": "mutation",
-        "firewall_rule_clone_ipv4": "mutation",
-        "firewall_rule_clone_ipv6": "mutation",
+        "firewall_rule_set_enabled": "mutation",
+        "firewall_rule_clone": "mutation",
         "audit_firewall_rules": "read",
         "explain_connectivity": "read",
         "find_object_usage": "read",
@@ -460,13 +460,11 @@ def test_document_documents_the_mapping_rule(generator: Any, generated: str) -> 
 
 
 def test_document_records_the_scope_change(generated: str) -> None:
-    assert "145 operations and 152 MCP tools across 11 domains" in generated
-    assert "| **Total** | **145** | **152** |" in generated
+    assert "145 operations and 112 MCP tools across 11 domains" in generated
+    assert "| **Total** | **145** | **112** |" in generated
     for tool in (
-        "firewall_rule_set_enabled_ipv4",
-        "firewall_rule_set_enabled_ipv6",
-        "firewall_rule_clone_ipv4",
-        "firewall_rule_clone_ipv6",
+        "firewall_rule_set_enabled",
+        "firewall_rule_clone",
         "audit_firewall_rules",
         "explain_connectivity",
         "find_object_usage",
@@ -474,8 +472,8 @@ def test_document_records_the_scope_change(generated: str) -> None:
         assert f"`{tool}`" in generated
     assert "### 4.2 Composite tools" in generated
     assert "| Tool | Kind | Domain | Underlying operationIds | Description |" in generated
-    assert "`firewall_rule_set_enabled_ipv4` | `mutation`" in generated
-    assert "`firewall_rule_clone_ipv4` | `mutation`" in generated
+    assert "`firewall_rule_set_enabled` | `mutation`" in generated
+    assert "`firewall_rule_clone` | `mutation`" in generated
     assert "`audit_firewall_rules` | `read`" in generated
     assert "They are read-only" not in generated
     assert "SOPHOS_READ_ONLY_MODE=true" in generated

@@ -95,9 +95,10 @@ def _audit_message(
    NAT-scoped finding names the object instead.
 
 3. Confirm every high-severity finding before you report it:
-   - a rule finding: `firewall_rule_get_ipv4` or `firewall_rule_get_ipv6` with
-     {_request({"id_or_name": "<rule name>"})}
-   - a NAT finding: `nat_rule_get_ipv4` or `nat_rule_get_ipv6` with the same shape
+   - a rule finding: `firewall_rule_get` with `ip_family` set to the finding's family and
+     {_request({"ip_family": "ipv4", "id_or_name": "<rule name>"})}
+   - a NAT finding: `nat_rule_get` with the same shape (the same `ip_family` and
+     `id_or_name`)
    - an unused-object finding: `find_object_usage` with
      {_request({"object_type": "address", "identifier": "<object name>"})}
 
@@ -154,8 +155,9 @@ def _explain_message(
 
 4. If the verdict is `not-verifiable`, say which criterion could not be resolved: an
    address- or service-object membership, or an FQDN without DNS. Confirm the surrounding
-   configuration with `firewall_rule_list_ipv4` or `firewall_rule_list_ipv6`
-   ({_request({"page": 1, "page_size": 10})}), `zone_list` and `network_interface_list`.
+   configuration with `firewall_rule_list`
+   ({_request({"ip_family": "ipv4", "page": 1, "page_size": 10})}), `zone_list` and
+   `network_interface_list`.
 
 5. This is configuration analysis, not a packet test. The API exposes no ping, traceroute,
    packet capture or live flow simulation, so never claim the appliance forwarded or

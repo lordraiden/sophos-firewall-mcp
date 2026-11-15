@@ -1,12 +1,13 @@
 """Network-architecture tools for the Sophos Firewall Configuration REST API.
 
-This module owns the network domain's 44 tools:
+This module owns the network domain's 28 tools:
 
-* **41 read-only tools** that project the firewall's network architecture: interfaces,
+* **25 read-only tools** that project the firewall's network architecture: interfaces,
   zones, IPv4/IPv6 routing gateways (WAN and custom), static unicast routes, SD-WAN routes,
   DHCP servers, DHCP leases, DHCP relays, DNS settings, DNS host entries, DNS request
-  routes and static neighbors. They are configuration and live-state views; the API
-  exposes no live routing table, so none is promised.
+  routes and static neighbors. The IPv4/IPv6 pairs are one tool each, selected by the
+  required ``ip_family``. They are configuration and live-state views; the API exposes no
+  live routing table, so none is promised.
 * **3 VLAN-only interface mutations** -- ``network_interface_create_vlan``,
   ``network_interface_update_vlan`` and ``network_interface_delete_vlan``. They are the
   only writes in this domain and the only interface writes this server exposes. Physical,
@@ -25,7 +26,7 @@ interface cannot carry a VLAN), and the body it sends always declares ``type: "v
 
 Registration
 ------------
-``register_network_tools`` is this domain's single entry point: it registers the 44 network
+``register_network_tools`` is this domain's single entry point: it registers the 28 network
 tools and then delegates to :func:`sophos_firewall_mcp.tools.vpn.register_vpn_tools` (20
 read-only VPN tools) and :func:`sophos_firewall_mcp.tools.system.register_status_tools` (2
 read-only status tools), which are the other two surfaces of the network domain. Wire only
@@ -290,7 +291,7 @@ class NetworkAdapter(DomainAdapter):
 
 
 def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
-    """Register the network domain: 44 network tools plus the VPN and status surfaces.
+    """Register the network domain: 28 network tools plus the VPN and status surfaces.
 
     This is the only registration function the network domain needs in ``DEFAULT_DOMAINS``: it
     registers the network tools itself and delegates to
@@ -441,181 +442,102 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         payload = await NetworkAdapter.from_context(ctx).object(ZONES_PATH, request.id_or_name)
         return _project(payload, models.Zone, ZONES_PATH)
 
-    # -- IPv4 gateways -----------------------------------------------------------------
+    # -- Gateways (IPv4 and IPv6; ``ip_family`` selects the collection) ----------------
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="gateway_list_ipv4",
-        title="List IPv4 gateways",
+        name="gateway_list",
+        title="List gateways",
         description=(
-            "List the configured IPv4 routing gateways (both WAN and custom) one page at a "
-            "time, with optional name filters. This is configuration, not live gateway state. "
-            "Read-only: gateway mutations are excluded from this server."
+            "List the configured IPv4 or IPv6 routing gateways (both WAN and custom), "
+            "selected by the required `ip_family`, one page at a time, with optional name "
+            "filters. This is configuration, not live gateway state. Read-only: gateway "
+            "mutations are excluded from this server."
         ),
     )
-    async def gateway_list_ipv4(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.GatewayIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(GATEWAYS_IPV4_PATH, request)
-        return _project(payload, ListPage[models.GatewayIpv4], GATEWAYS_IPV4_PATH)
+    async def gateway_list(
+        request: models.IpFamilyFilteredPageInput, ctx: Context[AppContext]
+    ) -> ListPage[models.GatewayOutput]:
+        path = GATEWAYS_IPV6_PATH if request.ip_family == "ipv6" else GATEWAYS_IPV4_PATH
+        payload = await NetworkAdapter.from_context(ctx).page(path, request)
+        return _project(payload, ListPage[models.GatewayOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="wan_gateway_list_ipv4",
-        title="List IPv4 WAN gateways",
+        name="wan_gateway_list",
+        title="List WAN gateways",
         description=(
-            "List the IPv4 WAN gateways one page at a time, with optional name filters. Each "
-            "gateway carries its active/backup role, weight, interface, address, backup "
-            "activation settings and health-check rules. Read-only."
+            "List the IPv4 or IPv6 WAN gateways, selected by the required `ip_family`, one "
+            "page at a time, with optional name filters. Each gateway carries its "
+            "active/backup role, weight, interface, address, backup activation settings and "
+            "health-check rules. Read-only."
         ),
     )
-    async def wan_gateway_list_ipv4(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.WanGatewayIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(_WAN_GATEWAYS_IPV4, request)
-        return _project(payload, ListPage[models.WanGatewayIpv4], _WAN_GATEWAYS_IPV4)
+    async def wan_gateway_list(
+        request: models.IpFamilyFilteredPageInput, ctx: Context[AppContext]
+    ) -> ListPage[models.WanGatewayOutput]:
+        path = _WAN_GATEWAYS_IPV6 if request.ip_family == "ipv6" else _WAN_GATEWAYS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).page(path, request)
+        return _project(payload, ListPage[models.WanGatewayOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="wan_gateway_get_ipv4",
-        title="Get an IPv4 WAN gateway",
-        description="Read one IPv4 WAN gateway by name or UUID. Read-only.",
-    )
-    async def wan_gateway_get_ipv4(
-        request: models.GatewayRefInput, ctx: Context[AppContext]
-    ) -> models.WanGatewayIpv4:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _WAN_GATEWAYS_IPV4, request.id_or_name
-        )
-        return _project(payload, models.WanGatewayIpv4, _WAN_GATEWAYS_IPV4)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="custom_gateway_list_ipv4",
-        title="List custom IPv4 gateways",
+        name="wan_gateway_get",
+        title="Get a WAN gateway",
         description=(
-            "List the custom IPv4 gateways one page at a time, with optional name filters. "
-            "Each gateway carries its interface, zone, address and health-check settings. "
-            "Read-only."
+            "Read one IPv4 or IPv6 WAN gateway by name or UUID, selected by the required "
+            "`ip_family`. Read-only."
         ),
     )
-    async def custom_gateway_list_ipv4(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.CustomGatewayIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(_CUSTOM_GATEWAYS_IPV4, request)
-        return _project(payload, ListPage[models.CustomGatewayIpv4], _CUSTOM_GATEWAYS_IPV4)
+    async def wan_gateway_get(
+        request: models.IpFamilyGatewayRefInput, ctx: Context[AppContext]
+    ) -> models.WanGatewayOutput:
+        path = _WAN_GATEWAYS_IPV6 if request.ip_family == "ipv6" else _WAN_GATEWAYS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id_or_name)
+        return _project(payload, models.WanGatewayOutput, path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="custom_gateway_get_ipv4",
-        title="Get a custom IPv4 gateway",
-        description="Read one custom IPv4 gateway by name or UUID. Read-only.",
-    )
-    async def custom_gateway_get_ipv4(
-        request: models.GatewayRefInput, ctx: Context[AppContext]
-    ) -> models.CustomGatewayIpv4:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _CUSTOM_GATEWAYS_IPV4, request.id_or_name
-        )
-        return _project(payload, models.CustomGatewayIpv4, _CUSTOM_GATEWAYS_IPV4)
-
-    # -- IPv6 gateways -----------------------------------------------------------------
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="gateway_list_ipv6",
-        title="List IPv6 gateways",
+        name="custom_gateway_list",
+        title="List custom gateways",
         description=(
-            "List the configured IPv6 routing gateways (both WAN and custom) one page at a "
-            "time, with optional name filters. This is configuration, not live gateway state. "
-            "Read-only."
+            "List the custom IPv4 or IPv6 gateways, selected by the required `ip_family`, "
+            "one page at a time, with optional name filters. Each gateway carries its "
+            "interface, zone, address and health-check settings. Read-only."
         ),
     )
-    async def gateway_list_ipv6(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.GatewayIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(GATEWAYS_IPV6_PATH, request)
-        return _project(payload, ListPage[models.GatewayIpv6], GATEWAYS_IPV6_PATH)
+    async def custom_gateway_list(
+        request: models.IpFamilyFilteredPageInput, ctx: Context[AppContext]
+    ) -> ListPage[models.CustomGatewayOutput]:
+        path = _CUSTOM_GATEWAYS_IPV6 if request.ip_family == "ipv6" else _CUSTOM_GATEWAYS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).page(path, request)
+        return _project(payload, ListPage[models.CustomGatewayOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="wan_gateway_list_ipv6",
-        title="List IPv6 WAN gateways",
+        name="custom_gateway_get",
+        title="Get a custom gateway",
         description=(
-            "List the IPv6 WAN gateways one page at a time, with optional name filters. Each "
-            "gateway carries its active/backup role, weight, interface, address, backup "
-            "activation settings and health-check rules. Read-only."
+            "Read one custom IPv4 or IPv6 gateway by name or UUID, selected by the required "
+            "`ip_family`. Read-only."
         ),
     )
-    async def wan_gateway_list_ipv6(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.WanGatewayIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(_WAN_GATEWAYS_IPV6, request)
-        return _project(payload, ListPage[models.WanGatewayIpv6], _WAN_GATEWAYS_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="wan_gateway_get_ipv6",
-        title="Get an IPv6 WAN gateway",
-        description="Read one IPv6 WAN gateway by name or UUID. Read-only.",
-    )
-    async def wan_gateway_get_ipv6(
-        request: models.GatewayRefInput, ctx: Context[AppContext]
-    ) -> models.WanGatewayIpv6:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _WAN_GATEWAYS_IPV6, request.id_or_name
-        )
-        return _project(payload, models.WanGatewayIpv6, _WAN_GATEWAYS_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="custom_gateway_list_ipv6",
-        title="List custom IPv6 gateways",
-        description=(
-            "List the custom IPv6 gateways one page at a time, with optional name filters. "
-            "Each gateway carries its interface, zone, address and health-check settings. "
-            "Read-only."
-        ),
-    )
-    async def custom_gateway_list_ipv6(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.CustomGatewayIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(_CUSTOM_GATEWAYS_IPV6, request)
-        return _project(payload, ListPage[models.CustomGatewayIpv6], _CUSTOM_GATEWAYS_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="custom_gateway_get_ipv6",
-        title="Get a custom IPv6 gateway",
-        description="Read one custom IPv6 gateway by name or UUID. Read-only.",
-    )
-    async def custom_gateway_get_ipv6(
-        request: models.GatewayRefInput, ctx: Context[AppContext]
-    ) -> models.CustomGatewayIpv6:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _CUSTOM_GATEWAYS_IPV6, request.id_or_name
-        )
-        return _project(payload, models.CustomGatewayIpv6, _CUSTOM_GATEWAYS_IPV6)
+    async def custom_gateway_get(
+        request: models.IpFamilyGatewayRefInput, ctx: Context[AppContext]
+    ) -> models.CustomGatewayOutput:
+        path = _CUSTOM_GATEWAYS_IPV6 if request.ip_family == "ipv6" else _CUSTOM_GATEWAYS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id_or_name)
+        return _project(payload, models.CustomGatewayOutput, path)
 
     # -- Static unicast routes ---------------------------------------------------------
 
@@ -623,69 +545,39 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="unicast_route_list_ipv4",
-        title="List IPv4 static unicast routes",
+        name="unicast_route_list",
+        title="List static unicast routes",
         description=(
-            "List the configured IPv4 static unicast routes one page at a time. This operation "
-            "declares no name filters. It is configuration, not the live routing table, which "
-            "the API does not expose. Read-only: route mutations are excluded."
+            "List the configured IPv4 or IPv6 static unicast routes, selected by the "
+            "required `ip_family`, one page at a time. This operation declares no name "
+            "filters. It is configuration, not the live routing table, which the API does "
+            "not expose. Read-only: route mutations are excluded."
         ),
     )
-    async def unicast_route_list_ipv4(
-        request: models.PageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.UnicastRouteIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(UNICAST_ROUTES_IPV4_PATH, request)
-        return _project(payload, ListPage[models.UnicastRouteIpv4], UNICAST_ROUTES_IPV4_PATH)
+    async def unicast_route_list(
+        request: models.IpFamilyPageInput, ctx: Context[AppContext]
+    ) -> ListPage[models.UnicastRouteOutput]:
+        path = UNICAST_ROUTES_IPV6_PATH if request.ip_family == "ipv6" else UNICAST_ROUTES_IPV4_PATH
+        payload = await NetworkAdapter.from_context(ctx).page(path, request)
+        return _project(payload, ListPage[models.UnicastRouteOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="unicast_route_get_ipv4",
-        title="Get an IPv4 static unicast route",
-        description="Read one IPv4 static unicast route by name or UUID. Read-only.",
-    )
-    async def unicast_route_get_ipv4(
-        request: models.WideRefInput, ctx: Context[AppContext]
-    ) -> models.UnicastRouteIpv4:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            UNICAST_ROUTES_IPV4_PATH, request.id_or_name
-        )
-        return _project(payload, models.UnicastRouteIpv4, UNICAST_ROUTES_IPV4_PATH)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="unicast_route_list_ipv6",
-        title="List IPv6 static unicast routes",
+        name="unicast_route_get",
+        title="Get a static unicast route",
         description=(
-            "List the configured IPv6 static unicast routes one page at a time. This operation "
-            "declares no name filters. It is configuration, not the live routing table. "
-            "Read-only."
+            "Read one IPv4 or IPv6 static unicast route by name or UUID, selected by the "
+            "required `ip_family`. Read-only."
         ),
     )
-    async def unicast_route_list_ipv6(
-        request: models.PageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.UnicastRouteIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(UNICAST_ROUTES_IPV6_PATH, request)
-        return _project(payload, ListPage[models.UnicastRouteIpv6], UNICAST_ROUTES_IPV6_PATH)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="unicast_route_get_ipv6",
-        title="Get an IPv6 static unicast route",
-        description="Read one IPv6 static unicast route by name or UUID. Read-only.",
-    )
-    async def unicast_route_get_ipv6(
-        request: models.WideRefInput, ctx: Context[AppContext]
-    ) -> models.UnicastRouteIpv6:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            UNICAST_ROUTES_IPV6_PATH, request.id_or_name
-        )
-        return _project(payload, models.UnicastRouteIpv6, UNICAST_ROUTES_IPV6_PATH)
+    async def unicast_route_get(
+        request: models.IpFamilyWideRefInput, ctx: Context[AppContext]
+    ) -> models.UnicastRouteOutput:
+        path = UNICAST_ROUTES_IPV6_PATH if request.ip_family == "ipv6" else UNICAST_ROUTES_IPV4_PATH
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id_or_name)
+        return _project(payload, models.UnicastRouteOutput, path)
 
     # -- SD-WAN routes -----------------------------------------------------------------
 
@@ -693,70 +585,40 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="sdwan_route_list_ipv4",
-        title="List IPv4 SD-WAN routes",
+        name="sdwan_route_list",
+        title="List SD-WAN routes",
         description=(
-            "List the configured IPv4 SD-WAN routes one page at a time, with optional name "
-            "filters. Each route carries its interface/service/application/user selectors, "
-            "link selection and source/destination networks. Read-only: SD-WAN mutations and "
-            "moves are excluded."
+            "List the configured IPv4 or IPv6 SD-WAN routes, selected by the required "
+            "`ip_family`, one page at a time, with optional name filters. Each route carries "
+            "its interface/service/application/user selectors, link selection and "
+            "source/destination networks. Read-only: SD-WAN mutations and moves are "
+            "excluded."
         ),
     )
-    async def sdwan_route_list_ipv4(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
+    async def sdwan_route_list(
+        request: models.IpFamilyFilteredPageInput, ctx: Context[AppContext]
     ) -> ListPage[models.SdwanRoute]:
-        payload = await NetworkAdapter.from_context(ctx).page(_SDWAN_ROUTES_IPV4, request)
-        return _project(payload, ListPage[models.SdwanRoute], _SDWAN_ROUTES_IPV4)
+        path = _SDWAN_ROUTES_IPV6 if request.ip_family == "ipv6" else _SDWAN_ROUTES_IPV4
+        payload = await NetworkAdapter.from_context(ctx).page(path, request)
+        return _project(payload, ListPage[models.SdwanRoute], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="sdwan_route_get_ipv4",
-        title="Get an IPv4 SD-WAN route",
-        description="Read one IPv4 SD-WAN route by name or UUID. Read-only.",
-    )
-    async def sdwan_route_get_ipv4(
-        request: models.SdwanRefInput, ctx: Context[AppContext]
-    ) -> models.SdwanRoute:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _SDWAN_ROUTES_IPV4, request.id_or_name
-        )
-        return _project(payload, models.SdwanRoute, _SDWAN_ROUTES_IPV4)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="sdwan_route_list_ipv6",
-        title="List IPv6 SD-WAN routes",
+        name="sdwan_route_get",
+        title="Get an SD-WAN route",
         description=(
-            "List the configured IPv6 SD-WAN routes one page at a time, with optional name "
-            "filters. Each route carries its selectors, link selection and source/destination "
-            "networks. Read-only."
+            "Read one IPv4 or IPv6 SD-WAN route by name or UUID, selected by the required "
+            "`ip_family`. Read-only."
         ),
     )
-    async def sdwan_route_list_ipv6(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.SdwanRoute]:
-        payload = await NetworkAdapter.from_context(ctx).page(_SDWAN_ROUTES_IPV6, request)
-        return _project(payload, ListPage[models.SdwanRoute], _SDWAN_ROUTES_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="sdwan_route_get_ipv6",
-        title="Get an IPv6 SD-WAN route",
-        description="Read one IPv6 SD-WAN route by name or UUID. Read-only.",
-    )
-    async def sdwan_route_get_ipv6(
-        request: models.SdwanRefInput, ctx: Context[AppContext]
+    async def sdwan_route_get(
+        request: models.IpFamilySdwanRefInput, ctx: Context[AppContext]
     ) -> models.SdwanRoute:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _SDWAN_ROUTES_IPV6, request.id_or_name
-        )
-        return _project(payload, models.SdwanRoute, _SDWAN_ROUTES_IPV6)
+        path = _SDWAN_ROUTES_IPV6 if request.ip_family == "ipv6" else _SDWAN_ROUTES_IPV4
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id_or_name)
+        return _project(payload, models.SdwanRoute, path)
 
     # -- DHCP servers ------------------------------------------------------------------
 
@@ -764,70 +626,39 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="dhcp_server_list_ipv4",
-        title="List IPv4 DHCP servers",
+        name="dhcp_server_list",
+        title="List DHCP servers",
         description=(
-            "List the IPv4 DHCP servers with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call and pages is null. "
-            "Configuration only: use dhcp_lease_list_ipv4 for live leases. Read-only: DHCP "
-            "mutations are excluded."
+            "List the IPv4 or IPv6 DHCP servers, selected by the required `ip_family`, with "
+            "optional name filters. The operation declares no pagination, so the whole "
+            "collection is returned in one call and pages is null. Configuration only: use "
+            "dhcp_lease_list for live leases. Read-only: DHCP mutations are excluded."
         ),
     )
-    async def dhcp_server_list_ipv4(
-        request: models.FilterInput, ctx: Context[AppContext]
-    ) -> models.UnpaginatedList[models.DhcpServerIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_SERVERS_IPV4, request)
-        return _project(payload, models.UnpaginatedList[models.DhcpServerIpv4], _DHCP_SERVERS_IPV4)
+    async def dhcp_server_list(
+        request: models.IpFamilyFilterInput, ctx: Context[AppContext]
+    ) -> models.UnpaginatedList[models.DhcpServerOutput]:
+        path = _DHCP_SERVERS_IPV6 if request.ip_family == "ipv6" else _DHCP_SERVERS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).collection(path, request)
+        return _project(payload, models.UnpaginatedList[models.DhcpServerOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="dhcp_server_get_ipv4",
-        title="Get an IPv4 DHCP server",
-        description="Read one IPv4 DHCP server by name or UUID. Read-only.",
-    )
-    async def dhcp_server_get_ipv4(
-        request: models.WideRefInput, ctx: Context[AppContext]
-    ) -> models.DhcpServerIpv4:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _DHCP_SERVERS_IPV4, request.id_or_name
-        )
-        return _project(payload, models.DhcpServerIpv4, _DHCP_SERVERS_IPV4)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="dhcp_server_list_ipv6",
-        title="List IPv6 DHCP servers",
+        name="dhcp_server_get",
+        title="Get a DHCP server",
         description=(
-            "List the IPv6 DHCP servers with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call and pages is null. "
-            "Configuration only: use dhcp_lease_list_ipv6 for live leases. Read-only."
+            "Read one IPv4 or IPv6 DHCP server by name or UUID, selected by the required "
+            "`ip_family`. Read-only."
         ),
     )
-    async def dhcp_server_list_ipv6(
-        request: models.FilterInput, ctx: Context[AppContext]
-    ) -> models.UnpaginatedList[models.DhcpServerIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_SERVERS_IPV6, request)
-        return _project(payload, models.UnpaginatedList[models.DhcpServerIpv6], _DHCP_SERVERS_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="dhcp_server_get_ipv6",
-        title="Get an IPv6 DHCP server",
-        description="Read one IPv6 DHCP server by name or UUID. Read-only.",
-    )
-    async def dhcp_server_get_ipv6(
-        request: models.WideRefInput, ctx: Context[AppContext]
-    ) -> models.DhcpServerIpv6:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _DHCP_SERVERS_IPV6, request.id_or_name
-        )
-        return _project(payload, models.DhcpServerIpv6, _DHCP_SERVERS_IPV6)
+    async def dhcp_server_get(
+        request: models.IpFamilyWideRefInput, ctx: Context[AppContext]
+    ) -> models.DhcpServerOutput:
+        path = _DHCP_SERVERS_IPV6 if request.ip_family == "ipv6" else _DHCP_SERVERS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id_or_name)
+        return _project(payload, models.DhcpServerOutput, path)
 
     # -- DHCP leases -------------------------------------------------------------------
 
@@ -835,47 +666,26 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="dhcp_lease_list_ipv4",
-        title="List IPv4 DHCP leases",
+        name="dhcp_lease_list",
+        title="List DHCP leases",
         description=(
-            "List the active IPv4 DHCP leases. This is live state, not configuration. The API "
-            "declares no page/pageSize parameters for this operation (it returns "
-            "keyset metadata), so the call takes no pagination input and returns one page with "
-            "its pages metadata preserved. Only the first page is reachable: a non-null "
-            "pages.nextKey means the list is incomplete and the remaining leases cannot be "
-            "fetched through this server. pages.maxSize is not a page-size bound here -- the "
-            "appliance reports the item count of the returned page in it (21 items and "
-            "maxSize 21 on the tested appliance) -- and the value is preserved as returned. "
-            "Read-only."
-        ),
-    )
-    async def dhcp_lease_list_ipv4(
-        ctx: Context[AppContext],
-    ) -> models.KeysetPage[models.DhcpLeaseIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).keyset(_DHCP_LEASES_IPV4)
-        return _project(payload, models.KeysetPage[models.DhcpLeaseIpv4], _DHCP_LEASES_IPV4)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="dhcp_lease_list_ipv6",
-        title="List IPv6 DHCP leases",
-        description=(
-            "List the active IPv6 DHCP leases. This is live state, not configuration. The API "
-            "declares no page/pageSize parameters for this operation, so the call "
-            "takes no pagination input and returns one page with its pages metadata preserved. "
+            "List the active IPv4 or IPv6 DHCP leases, selected by the required `ip_family`. "
+            "This is live state, not configuration. The API declares no page/pageSize "
+            "parameters for this operation (it returns keyset metadata), so the call takes "
+            "no pagination input and returns one page with its pages metadata preserved. "
             "Only the first page is reachable: a non-null pages.nextKey means the list is "
             "incomplete and the remaining leases cannot be fetched through this server. "
-            "pages.maxSize is not a page-size bound here either (the appliance reports the "
-            "item count of the returned page in it, as on the IPv4 lease list). Read-only."
+            "pages.maxSize is not a page-size bound here -- the appliance reports the item "
+            "count of the returned page in it (21 items and maxSize 21 on the tested "
+            "appliance) -- and the value is preserved as returned. Read-only."
         ),
     )
-    async def dhcp_lease_list_ipv6(
-        ctx: Context[AppContext],
-    ) -> models.KeysetPage[models.DhcpLeaseIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).keyset(_DHCP_LEASES_IPV6)
-        return _project(payload, models.KeysetPage[models.DhcpLeaseIpv6], _DHCP_LEASES_IPV6)
+    async def dhcp_lease_list(
+        request: models.DhcpLeaseListInput, ctx: Context[AppContext]
+    ) -> models.KeysetPage[models.DhcpLeaseOutput]:
+        path = _DHCP_LEASES_IPV6 if request.ip_family == "ipv6" else _DHCP_LEASES_IPV4
+        payload = await NetworkAdapter.from_context(ctx).keyset(path)
+        return _project(payload, models.KeysetPage[models.DhcpLeaseOutput], path)
 
     # -- DHCP relays -------------------------------------------------------------------
 
@@ -883,87 +693,49 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="dhcp_relay_list_ipv4",
-        title="List IPv4 DHCP relays",
+        name="dhcp_relay_list",
+        title="List DHCP relays",
         description=(
-            "List the IPv4 DHCP relays with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call and pages is null. "
-            "The interface reference on a relay is the logical interface name (for example "
-            "'DMZ - Services'), not the hardware name ('Port3'): the appliance rejects the "
-            "hardware name with 500 interfaceDoesNotExist. Read-only: DHCP mutations "
-            "are excluded."
+            "List the IPv4 or IPv6 DHCP relays, selected by the required `ip_family`, with "
+            "optional name filters. The operation declares no pagination, so the whole "
+            "collection is returned in one call and pages is null. The interface reference "
+            "on a relay is the logical interface name (for example 'DMZ - Services'), not "
+            "the hardware name ('Port3'): the appliance rejects the hardware name with 500 "
+            "interfaceDoesNotExist. Read-only: DHCP mutations are excluded."
         ),
     )
-    async def dhcp_relay_list_ipv4(
-        request: models.FilterInput, ctx: Context[AppContext]
-    ) -> models.UnpaginatedList[models.DhcpRelayIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_RELAYS_IPV4, request)
-        return _project(payload, models.UnpaginatedList[models.DhcpRelayIpv4], _DHCP_RELAYS_IPV4)
+    async def dhcp_relay_list(
+        request: models.IpFamilyFilterInput, ctx: Context[AppContext]
+    ) -> models.UnpaginatedList[models.DhcpRelayOutput]:
+        path = _DHCP_RELAYS_IPV6 if request.ip_family == "ipv6" else _DHCP_RELAYS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).collection(path, request)
+        return _project(payload, models.UnpaginatedList[models.DhcpRelayOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="dhcp_relay_get_ipv4",
-        title="Get an IPv4 DHCP relay",
+        name="dhcp_relay_get",
+        title="Get a DHCP relay",
         description=(
-            "Read one IPv4 DHCP relay by UUID. The API declares format uuid for this path "
-            "parameter, so a relay name is rejected before any request is sent, even though "
-            "the operation's path is {idOrName} and its description says 'ID or name'. "
-            "The appliance may answer 401 for this sub-resource even for a real, listed relay: "
-            "on SFOS 23.0.0 GA-Build371 the collection returns 200 and the create 201 with the "
-            "same token, while GET and DELETE on the relay itself return 401 for both a name "
-            "and a UUID, and an unknown path returns 404. A 401 from this tool "
-            "therefore does not by itself mean the API key is invalid: confirm the relay with "
-            "dhcp_relay_list_ipv4 first, and treat the endpoint as possibly unusable on this "
-            "firmware. Read-only."
+            "Read one IPv4 or IPv6 DHCP relay by UUID, selected by the required `ip_family`. "
+            "The API declares format uuid for this path parameter, so a relay name is "
+            "rejected before any request is sent, even though the operation's path is "
+            "{idOrName} and its description says 'ID or name'. The appliance may answer 401 "
+            "for this sub-resource even for a real, listed relay: on SFOS 23.0.0 "
+            "GA-Build371 the collection returns 200 and the create 201 with the same token, "
+            "while GET and DELETE on the relay itself return 401 for both a name and a UUID, "
+            "and an unknown path returns 404. A 401 from this tool therefore does not by "
+            "itself mean the API key is invalid: confirm the relay with dhcp_relay_list "
+            "first, and treat the endpoint as possibly unusable on this firmware. Read-only."
         ),
     )
-    async def dhcp_relay_get_ipv4(
-        request: models.DhcpRelayRefInput, ctx: Context[AppContext]
-    ) -> models.DhcpRelayIpv4:
-        payload = await NetworkAdapter.from_context(ctx).object(_DHCP_RELAYS_IPV4, request.id)
-        return _project(payload, models.DhcpRelayIpv4, _DHCP_RELAYS_IPV4)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="dhcp_relay_list_ipv6",
-        title="List IPv6 DHCP relays",
-        description=(
-            "List the IPv6 DHCP relays with optional name filters. The operation declares no "
-            "pagination, so the whole collection is returned in one call and pages is null. "
-            "Read-only."
-        ),
-    )
-    async def dhcp_relay_list_ipv6(
-        request: models.FilterInput, ctx: Context[AppContext]
-    ) -> models.UnpaginatedList[models.DhcpRelayIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).collection(_DHCP_RELAYS_IPV6, request)
-        return _project(payload, models.UnpaginatedList[models.DhcpRelayIpv6], _DHCP_RELAYS_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="dhcp_relay_get_ipv6",
-        title="Get an IPv6 DHCP relay",
-        description=(
-            "Read one IPv6 DHCP relay by UUID. The API declares format uuid for this path "
-            "parameter, so a relay name is rejected before any request is sent. The appliance "
-            "may answer 401 for this sub-resource even for a real, listed relay: on SFOS "
-            "23.0.0 GA-Build371 the collection returns 200 with the same token while GET on "
-            "the relay itself returns 401, and an unknown path returns 404. A 401 "
-            "from this tool therefore does not by itself mean the API key is invalid: confirm "
-            "the relay with dhcp_relay_list_ipv6 first. Read-only."
-        ),
-    )
-    async def dhcp_relay_get_ipv6(
-        request: models.DhcpRelayRefInput, ctx: Context[AppContext]
-    ) -> models.DhcpRelayIpv6:
-        payload = await NetworkAdapter.from_context(ctx).object(_DHCP_RELAYS_IPV6, request.id)
-        return _project(payload, models.DhcpRelayIpv6, _DHCP_RELAYS_IPV6)
+    async def dhcp_relay_get(
+        request: models.IpFamilyDhcpRelayRefInput, ctx: Context[AppContext]
+    ) -> models.DhcpRelayOutput:
+        path = _DHCP_RELAYS_IPV6 if request.ip_family == "ipv6" else _DHCP_RELAYS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id)
+        return _project(payload, models.DhcpRelayOutput, path)
 
     # -- DNS ---------------------------------------------------------------------------
 
@@ -1058,70 +830,41 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="static_neighbor_list_ipv4",
-        title="List IPv4 static neighbors",
+        name="static_neighbor_list",
+        title="List static neighbors",
         description=(
-            "List the static IPv4 neighbor (ARP) entries one page at a time, with optional name "
-            "filters. The interface reference on an entry is the logical interface name (for "
-            "example 'DMZ - Services'), not the hardware name ('Port3'): the appliance rejects "
-            "the hardware name with 400 'Invalid interface.'. Read-only: neighbor "
-            "mutations are excluded, and the global neighbor settings are not exposed."
+            "List the static IPv4 or IPv6 neighbor (ARP) entries, selected by the required "
+            "`ip_family`, one page at a time, with optional name filters. The interface "
+            "reference on an entry is the logical interface name (for example 'DMZ - "
+            "Services'), not the hardware name ('Port3'): the appliance rejects the hardware "
+            "name with 400 'Invalid interface.'. Read-only: neighbor mutations are excluded, "
+            "and the global neighbor settings are not exposed."
         ),
     )
-    async def static_neighbor_list_ipv4(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.StaticNeighborIpv4]:
-        payload = await NetworkAdapter.from_context(ctx).page(_STATIC_NEIGHBORS_IPV4, request)
-        return _project(payload, ListPage[models.StaticNeighborIpv4], _STATIC_NEIGHBORS_IPV4)
+    async def static_neighbor_list(
+        request: models.IpFamilyFilteredPageInput, ctx: Context[AppContext]
+    ) -> ListPage[models.StaticNeighborOutput]:
+        path = _STATIC_NEIGHBORS_IPV6 if request.ip_family == "ipv6" else _STATIC_NEIGHBORS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).page(path, request)
+        return _project(payload, ListPage[models.StaticNeighborOutput], path)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="static_neighbor_get_ipv4",
-        title="Get an IPv4 static neighbor",
-        description="Read one static IPv4 neighbor entry by name or UUID. Read-only.",
-    )
-    async def static_neighbor_get_ipv4(
-        request: models.WideRefInput, ctx: Context[AppContext]
-    ) -> models.StaticNeighborIpv4:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _STATIC_NEIGHBORS_IPV4, request.id_or_name
-        )
-        return _project(payload, models.StaticNeighborIpv4, _STATIC_NEIGHBORS_IPV4)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="static_neighbor_list_ipv6",
-        title="List IPv6 static neighbors",
+        name="static_neighbor_get",
+        title="Get a static neighbor",
         description=(
-            "List the static IPv6 neighbor entries one page at a time, with optional name "
-            "filters. Read-only."
+            "Read one static IPv4 or IPv6 neighbor entry by name or UUID, selected by the "
+            "required `ip_family`. Read-only."
         ),
     )
-    async def static_neighbor_list_ipv6(
-        request: models.FilteredPageInput, ctx: Context[AppContext]
-    ) -> ListPage[models.StaticNeighborIpv6]:
-        payload = await NetworkAdapter.from_context(ctx).page(_STATIC_NEIGHBORS_IPV6, request)
-        return _project(payload, ListPage[models.StaticNeighborIpv6], _STATIC_NEIGHBORS_IPV6)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="static_neighbor_get_ipv6",
-        title="Get an IPv6 static neighbor",
-        description="Read one static IPv6 neighbor entry by name or UUID. Read-only.",
-    )
-    async def static_neighbor_get_ipv6(
-        request: models.WideRefInput, ctx: Context[AppContext]
-    ) -> models.StaticNeighborIpv6:
-        payload = await NetworkAdapter.from_context(ctx).object(
-            _STATIC_NEIGHBORS_IPV6, request.id_or_name
-        )
-        return _project(payload, models.StaticNeighborIpv6, _STATIC_NEIGHBORS_IPV6)
+    async def static_neighbor_get(
+        request: models.IpFamilyWideRefInput, ctx: Context[AppContext]
+    ) -> models.StaticNeighborOutput:
+        path = _STATIC_NEIGHBORS_IPV6 if request.ip_family == "ipv6" else _STATIC_NEIGHBORS_IPV4
+        payload = await NetworkAdapter.from_context(ctx).object(path, request.id_or_name)
+        return _project(payload, models.StaticNeighborOutput, path)
 
     # -- The other two read-only surfaces of the network domain ------------------------
 

@@ -1140,7 +1140,7 @@ async def test_request_wrapper_example_never_names_a_field_the_tool_rejects():
         tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
     ]
 
-    assert len(wrapped) == 144, "the sweep must cover every wrapped tool"
+    assert len(wrapped) == 106, "the sweep must cover every wrapped tool"
     for tool in wrapped:
         example = _wrapper_example(tool.description)
         accepted = {"request"} | _accepted_request_fields(tool.input_schema)
@@ -1226,7 +1226,7 @@ async def test_stdio_transport_works_with_the_official_client():
     # have broken it before the tool list arrived.
     names = {tool.name for tool in result.tools}
     assert names, "the server must advertise the phase-2 domain tools over stdio"
-    assert "firewall_rule_list_ipv4" in names
+    assert "firewall_rule_list" in names
     assert "network_status_dns_protection" in names
 
 
@@ -1441,7 +1441,7 @@ async def test_the_surface_resource_states_the_real_api_facts():
     text = (await server.read_resource("sophos://api/surface"))[0].content
 
     assert API_PATH_PREFIX in text
-    for fact in ("384", "700", "145", "152", "98", "54"):
+    for fact in ("384", "700", "145", "107", "112", "74", "38"):
         assert fact in text, f"the surface resource omits {fact}"
     for name in resources_module.COMPOSITE_TOOLS:
         assert f"`{name}`" in text, f"the surface resource omits the composite {name}"
@@ -1470,7 +1470,7 @@ async def test_the_conventions_resource_names_the_real_no_argument_tools():
     text = (await server.read_resource("sophos://conventions"))[0].content
     tools = {tool.name: tool for tool in await server.list_tools()}
 
-    assert len(resources_module.NO_ARGUMENT_TOOLS) == 8
+    assert len(resources_module.NO_ARGUMENT_TOOLS) == 6
     for name in resources_module.NO_ARGUMENT_TOOLS:
         assert f"`{name}`" in text
         assert "request" not in tools[name].input_schema.get("properties", {}), name

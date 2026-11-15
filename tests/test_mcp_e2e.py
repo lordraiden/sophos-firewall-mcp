@@ -52,9 +52,9 @@ KEY = "sfos_test_key_0123456789abcdef"
 BASE = f"https://{HOST}:4444/api/firewall-config/v1"
 
 #: The phase-2 exit-criteria surface (ADR-001 section 10, API-COVERAGE section 4).
-EXPECTED_TOOL_COUNT = 152
-EXPECTED_READ_ONLY_TOOL_COUNT = 98
-EXPECTED_MUTATION_COUNT = 54
+EXPECTED_TOOL_COUNT = 112
+EXPECTED_READ_ONLY_TOOL_COUNT = 74
+EXPECTED_MUTATION_COUNT = 38
 
 #: The protocol revision the SDK negotiates by default with a modern server.
 MODERN_PROTOCOL_VERSION = "2026-07-28"
@@ -232,9 +232,11 @@ async def test_a_read_tool_returns_structured_content_matching_its_schema():
         )
         async with Client(make_server()) as client:
             tools = (await client.list_tools()).tools
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
+            result = await client.call_tool(
+                "firewall_rule_list", {"request": {"ip_family": "ipv4"}}
+            )
 
-    tool = next(candidate for candidate in tools if candidate.name == "firewall_rule_list_ipv4")
+    tool = next(candidate for candidate in tools if candidate.name == "firewall_rule_list")
     schema = tool.output_schema
     assert schema is not None
     assert result.is_error is False
@@ -269,7 +271,9 @@ async def test_an_anticipated_failure_is_a_sanitized_tool_error():
             )
         )
         async with Client(make_server()) as client:
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
+            result = await client.call_tool(
+                "firewall_rule_list", {"request": {"ip_family": "ipv4"}}
+            )
 
     assert result.is_error is True
     message = result.content[0].text
@@ -288,7 +292,9 @@ async def test_a_malformed_payload_is_a_sanitized_tool_error():
             )
         )
         async with Client(make_server()) as client:
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
+            result = await client.call_tool(
+                "firewall_rule_list", {"request": {"ip_family": "ipv4"}}
+            )
 
     assert result.is_error is True
     message = result.content[0].text
@@ -303,7 +309,9 @@ async def test_an_invalid_argument_is_rejected_before_any_io():
     with respx.mock(assert_all_called=False) as router:
         route = router.get(f"{BASE}/firewall/rules/ipv4")
         async with Client(make_server()) as client:
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {"page": 0}})
+            result = await client.call_tool(
+                "firewall_rule_list", {"request": {"ip_family": "ipv4", "page": 0}}
+            )
 
     assert result.is_error is True
     assert route.call_count == 0

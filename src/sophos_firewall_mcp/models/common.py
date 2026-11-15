@@ -10,13 +10,14 @@ Nothing here performs I/O or knows about a specific domain: the modules are pure
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, Literal, TypeVar
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from pydantic.json_schema import GetJsonSchemaHandler, JsonSchemaValue
 from pydantic_core import CoreSchema
 
 __all__ = [
+    "IpFamily",
     "ListPage",
     "ObjectName",
     "ObjectNameOrId",
@@ -26,6 +27,21 @@ __all__ = [
     "validate_object_name",
     "validate_object_name_or_id",
 ]
+
+#: The IP family a merged tool addresses.
+#:
+#: The server publishes one tool per concept and selects the IPv4 or IPv6 API path from
+#: this value, instead of publishing a separate tool per family. It is the same type the
+#: audit composites use, so the whole surface has one convention for the family axis.
+#:
+#: The value is **required** on every merged tool. A default would silently target one
+#: family: for a read it would hide which family was read, and for a mutation (delete,
+#: update, move, enable/disable, clone) it would make a destructive target a guess. The
+#: server's safety policy is that a destructive target is never inferred (``enabled`` is
+#: required on ``firewall_rule_set_enabled`` and ``position`` on create for the same
+#: reason). The audit composites default to ``None`` because they are read-only and can
+#: span both families; a single-family CRUD tool cannot.
+IpFamily = Literal["ipv4", "ipv6"]
 
 #: Characters the documented ``sfos-object-name`` format forbids: comma, semicolon and
 #: non-printable characters. The YAML ``format`` is non-assertive (994 of 1,085 name

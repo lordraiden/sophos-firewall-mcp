@@ -6,19 +6,16 @@ Twelve tools map one-to-one to the twelve audited NAT-rule operations in
 ==========================================  =============================================
 tool                                        operationId
 ==========================================  =============================================
-``nat_rule_list_ipv4``                      ``getAllNatRulesIpv4``
-``nat_rule_get_ipv4``                       ``getNatRuleIpv4ByIdOrName``
-``nat_rule_create_ipv4``                    ``createNatRuleIpv4``
-``nat_rule_update_ipv4``                    ``updateNatRuleIpv4ByIdOrName``
-``nat_rule_delete_ipv4``                    ``deleteNatRuleIpv4ByIdOrName``
-``nat_rule_move_ipv4``                      ``moveNatRuleIpv4``
-``nat_rule_list_ipv6``                      ``getAllNatRulesIpv6``
-``nat_rule_get_ipv6``                       ``getNatRuleIpv6ByIdOrName``
-``nat_rule_create_ipv6``                    ``createNatRuleIpv6``
-``nat_rule_update_ipv6``                    ``updateNatRuleIpv6ByIdOrName``
-``nat_rule_delete_ipv6``                    ``deleteNatRuleIpv6ByIdOrName``
-``nat_rule_move_ipv6``                      ``moveNatRuleIpv6``
+``nat_rule_list``                           ``getAllNatRulesIpv4``/``Ipv6``
+``nat_rule_get``                            ``getNatRuleIpv4ByIdOrName``/``Ipv6``
+``nat_rule_create``                         ``createNatRuleIpv4``/``Ipv6``
+``nat_rule_update``                         ``updateNatRuleIpv4ByIdOrName``/``Ipv6``
+``nat_rule_delete``                         ``deleteNatRuleIpv4ByIdOrName``/``Ipv6``
+``nat_rule_move``                           ``moveNatRuleIpv4``/``Ipv6``
 ==========================================  =============================================
+
+One tool per concept: the required ``ip_family`` argument selects the IPv4 or IPv6 rule
+base, and the handler picks the path. The wire body is unchanged for each family.
 
 The two bulk-delete routes (``bulkDeleteNatRulesIpv4``/``bulkDeleteNatRulesIpv6``) are
 classified in ``docs/API-COVERAGE.md`` and deliberately **not** registered: they are not
@@ -51,6 +48,7 @@ from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.errors import SophosAPIError
 from sophos_firewall_mcp.models.common import ListPage, ObjectRef
 from sophos_firewall_mcp.models.nat import (
+    NatRuleCreateInput,
     NatRuleCreateIpv4Input,
     NatRuleCreateIpv6Input,
     NatRuleDeleteInput,
@@ -60,6 +58,7 @@ from sophos_firewall_mcp.models.nat import (
     NatRuleMoveInput,
     NatRuleMoveOutput,
     NatRuleOutput,
+    NatRuleUpdateInput,
     NatRuleUpdateIpv4Input,
     NatRuleUpdateIpv6Input,
     project_nat_rule,
@@ -173,7 +172,9 @@ class NatAdapter(DomainAdapter):
         always sent so the created state is explicit rather than implied. No follow-up
         mutation (enable, move) is performed.
         """
-        body = request.model_dump(by_alias=True, exclude_unset=True, exclude_none=True)
+        body = request.model_dump(
+            by_alias=True, exclude_unset=True, exclude_none=True, exclude={"ip_family"}
+        )
         body["enabled"] = request.enabled
         try:
             payload = await self.client.post(collection_path, json=body)
@@ -191,7 +192,9 @@ class NatAdapter(DomainAdapter):
         Only the fields the caller set are sent; omitted properties keep their persisted
         value and an explicit ``null`` removes a property (RFC 7396).
         """
-        body = request.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"})
+        body = request.model_dump(
+            by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
+        )
         try:
             payload = await self.client.patch(
                 _rule_path(collection_path, request.id_or_name), json=body
@@ -217,7 +220,9 @@ class NatAdapter(DomainAdapter):
 
         The operation returns an empty success object, so the applied request is echoed.
         """
-        body = request.model_dump(by_alias=True, exclude_unset=True, exclude_none=True)
+        body = request.model_dump(
+            by_alias=True, exclude_unset=True, exclude_none=True, exclude={"ip_family"}
+        )
         try:
             await self.client.post(move_path, json=body)
         except SophosAPIError as exc:
@@ -234,251 +239,137 @@ class NatAdapter(DomainAdapter):
 
 
 def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
-    """Register the twelve NAT-rule tools on ``server``.
+    """Register the six NAT-rule tools on ``server``.
 
     Args:
         server: The server built by :func:`sophos_firewall_mcp.server.create_server`.
-        read_only: When true, the six mutation tools are not registered at all (the
+        read_only: When true, the four mutation tools are not registered at all (the
             read-only filter lives in
             :func:`sophos_firewall_mcp.tools.register_tool`).
     """
 
-    # -- IPv4: reads ---------------------------------------------------------------
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="nat_rule_list_ipv4",
-        title="List IPv4 NAT rules",
+        name="nat_rule_list",
+        title="List NAT rules",
         description=(
-            "List one page of IPv4 NAT rules (operationId getAllNatRulesIpv4). Returns the "
-            "rules with their match and translation fields projected to object references, "
-            "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
-            "plus the page metadata. Use page/page_size to walk the rule base; one page per "
-            "call, and page_size defaults to 10. name_contains and name_not_equals are "
-            "mutually exclusive. Size: the tested appliance's 28-rule base is ~44 KB of JSON, "
-            "so keep page_size small. The MCP SDK returns the payload both as a text block "
-            "and as structuredContent; read one of them, not both."
+            "List one page of NAT rules (operationId getAllNatRulesIpv4 or "
+            "getAllNatRulesIpv6, selected by the required ip_family). Returns the rules with "
+            "their match and translation fields projected to object references, each with "
+            "its 1-based evaluation position and a derived kind (snat/dnat/unknown), plus "
+            "the page metadata. Use page/page_size to walk the rule base; one page per call, "
+            "and page_size defaults to 10. name_contains and name_not_equals are mutually "
+            "exclusive. Size: the tested appliance's 28-rule base is ~44 KB of JSON, so keep "
+            "page_size small. The MCP SDK returns the payload both as a text block and as "
+            "structuredContent; read one of them, not both."
         ),
     )
-    async def nat_rule_list_ipv4(
+    async def nat_rule_list(
         request: NatRuleListInput, ctx: Context[AppContext]
     ) -> ListPage[NatRuleOutput]:
-        return await NatAdapter.from_context(ctx).list_rules(IPV4_RULES_PATH, request)
+        path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
+        return await NatAdapter.from_context(ctx).list_rules(path, request)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="nat_rule_get_ipv4",
-        title="Get an IPv4 NAT rule",
+        name="nat_rule_get",
+        title="Get a NAT rule",
         description=(
-            "Read one IPv4 NAT rule by name or UUID (operationId "
-            "getNatRuleIpv4ByIdOrName). Returns the rule's match and translation fields "
-            "projected to object references, plus a derived kind (snat/dnat/unknown). "
-            "position is null: the get operation does not return the rule's evaluation "
-            "position; use nat_rule_list_ipv4 to obtain it."
+            "Read one NAT rule by name or UUID (operationId getNatRuleIpv4ByIdOrName or "
+            "getNatRuleIpv6ByIdOrName, selected by the required ip_family). Returns the "
+            "rule's match and translation fields projected to object references, plus a "
+            "derived kind (snat/dnat/unknown). position is null: the get operation does not "
+            "return the rule's evaluation position; use nat_rule_list to obtain it."
         ),
     )
-    async def nat_rule_get_ipv4(
-        request: NatRuleGetInput, ctx: Context[AppContext]
-    ) -> NatRuleOutput:
-        return await NatAdapter.from_context(ctx).get_rule(IPV4_RULES_PATH, request.id_or_name)
+    async def nat_rule_get(request: NatRuleGetInput, ctx: Context[AppContext]) -> NatRuleOutput:
+        path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
+        return await NatAdapter.from_context(ctx).get_rule(path, request.id_or_name)
 
-    # -- IPv4: mutations -----------------------------------------------------------
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.MUTATION,
-        name="nat_rule_create_ipv4",
-        title="Create an IPv4 NAT rule",
+        name="nat_rule_create",
+        title="Create a NAT rule",
         description=(
-            "Create an IPv4 NAT rule (operationId createNatRuleIpv4). Requires name, "
-            "original_services_or_groups, inbound_interfaces, outbound_interfaces, "
-            "original_source_networks and original_destination_networks; translation fields "
-            "are optional because the API defines no SNAT/DNAT discriminator. enabled "
-            "defaults to true and is always sent. The rule is not moved or enabled by a "
-            "follow-up call."
+            "Create a NAT rule (operationId createNatRuleIpv4 or createNatRuleIpv6, selected "
+            "by the required ip_family). Requires name, original_services_or_groups, "
+            "inbound_interfaces, outbound_interfaces, original_source_networks and "
+            "original_destination_networks; translation fields are optional because the API "
+            "defines no SNAT/DNAT discriminator. enabled defaults to true and is always "
+            "sent. The rule is not moved or enabled by a follow-up call."
         ),
         annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
-    async def nat_rule_create_ipv4(
-        request: NatRuleCreateIpv4Input, ctx: Context[AppContext]
+    async def nat_rule_create(
+        request: NatRuleCreateInput, ctx: Context[AppContext]
     ) -> NatRuleOutput:
-        return await NatAdapter.from_context(ctx).create_rule(IPV4_RULES_PATH, request)
+        path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
+        return await NatAdapter.from_context(ctx).create_rule(path, request)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.MUTATION,
-        name="nat_rule_update_ipv4",
-        title="Update an IPv4 NAT rule",
+        name="nat_rule_update",
+        title="Update a NAT rule",
         description=(
-            "Partially update an IPv4 NAT rule by name or UUID (operationId "
-            "updateNatRuleIpv4ByIdOrName). PATCH uses JSON Merge Patch: only the fields you "
-            "set are sent, omitted fields keep their stored value, and an explicit null "
-            "removes an optional property. Provide at least one field besides id_or_name."
+            "Partially update a NAT rule by name or UUID (operationId "
+            "updateNatRuleIpv4ByIdOrName or updateNatRuleIpv6ByIdOrName, selected by the "
+            "required ip_family). PATCH uses JSON Merge Patch: only the fields you set are "
+            "sent, omitted fields keep their stored value, and an explicit null removes an "
+            "optional property. Provide at least one field besides id_or_name."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
-    async def nat_rule_update_ipv4(
-        request: NatRuleUpdateIpv4Input, ctx: Context[AppContext]
+    async def nat_rule_update(
+        request: NatRuleUpdateInput, ctx: Context[AppContext]
     ) -> NatRuleOutput:
-        return await NatAdapter.from_context(ctx).update_rule(IPV4_RULES_PATH, request)
+        path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
+        return await NatAdapter.from_context(ctx).update_rule(path, request)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.MUTATION,
-        name="nat_rule_delete_ipv4",
-        title="Delete an IPv4 NAT rule",
+        name="nat_rule_delete",
+        title="Delete a NAT rule",
         description=(
-            "Delete one IPv4 NAT rule by name or UUID (operationId "
-            "deleteNatRuleIpv4ByIdOrName). Destructive and not reversible; the rule is "
-            "removed from the IPv4 rule base. Bulk delete is not exposed."
+            "Delete one NAT rule by name or UUID (operationId deleteNatRuleIpv4ByIdOrName or "
+            "deleteNatRuleIpv6ByIdOrName, selected by the required ip_family). Destructive "
+            "and not reversible; the rule is removed from that family's rule base. Bulk "
+            "delete is not exposed."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
-    async def nat_rule_delete_ipv4(
+    async def nat_rule_delete(
         request: NatRuleDeleteInput, ctx: Context[AppContext]
     ) -> NatRuleDeleteOutput:
-        return await NatAdapter.from_context(ctx).delete_rule(IPV4_RULES_PATH, request.id_or_name)
+        path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
+        return await NatAdapter.from_context(ctx).delete_rule(path, request.id_or_name)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.MUTATION,
-        name="nat_rule_move_ipv4",
-        title="Move an IPv4 NAT rule",
+        name="nat_rule_move",
+        title="Move a NAT rule",
         description=(
-            "Move an IPv4 NAT rule within the rule base (operationId moveNatRuleIpv4). The "
-            "rule is identified by name, not UUID. position is top, bottom, after or before; "
-            "after/before are anchored by reference_item naming the reference rule. Reordering can "
-            "change which rule matches first."
+            "Move a NAT rule within the rule base (operationId moveNatRuleIpv4 or "
+            "moveNatRuleIpv6, selected by the required ip_family). The rule is identified by "
+            "name, not UUID. position is top, bottom, after or before; after/before are "
+            "anchored by reference_item naming the reference rule. Reordering can change "
+            "which rule matches first."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
-    async def nat_rule_move_ipv4(
+    async def nat_rule_move(
         request: NatRuleMoveInput, ctx: Context[AppContext]
     ) -> NatRuleMoveOutput:
-        return await NatAdapter.from_context(ctx).move_rule(IPV4_MOVE_PATH, request)
-
-    # -- IPv6: reads ---------------------------------------------------------------
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="nat_rule_list_ipv6",
-        title="List IPv6 NAT rules",
-        description=(
-            "List one page of IPv6 NAT rules (operationId getAllNatRulesIpv6). Returns the "
-            "rules with their match and translation fields projected to object references, "
-            "each with its 1-based evaluation position and a derived kind (snat/dnat/unknown), "
-            "plus the page metadata. Use page/page_size to walk the rule base; one page per "
-            "call, and page_size defaults to 10. name_contains and name_not_equals are "
-            "mutually exclusive. Size: the tested appliance's 28-rule base is ~44 KB of JSON, "
-            "so keep page_size small. The MCP SDK returns the payload both as a text block "
-            "and as structuredContent; read one of them, not both."
-        ),
-    )
-    async def nat_rule_list_ipv6(
-        request: NatRuleListInput, ctx: Context[AppContext]
-    ) -> ListPage[NatRuleOutput]:
-        return await NatAdapter.from_context(ctx).list_rules(IPV6_RULES_PATH, request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="nat_rule_get_ipv6",
-        title="Get an IPv6 NAT rule",
-        description=(
-            "Read one IPv6 NAT rule by name or UUID (operationId "
-            "getNatRuleIpv6ByIdOrName). Returns the rule's match and translation fields "
-            "projected to object references, plus a derived kind (snat/dnat/unknown). "
-            "position is null: the get operation does not return the rule's evaluation "
-            "position; use nat_rule_list_ipv6 to obtain it."
-        ),
-    )
-    async def nat_rule_get_ipv6(
-        request: NatRuleGetInput, ctx: Context[AppContext]
-    ) -> NatRuleOutput:
-        return await NatAdapter.from_context(ctx).get_rule(IPV6_RULES_PATH, request.id_or_name)
-
-    # -- IPv6: mutations -----------------------------------------------------------
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="nat_rule_create_ipv6",
-        title="Create an IPv6 NAT rule",
-        description=(
-            "Create an IPv6 NAT rule (operationId createNatRuleIpv6). Requires name, "
-            "original_services_or_groups, inbound_interfaces, outbound_interfaces, "
-            "original_source_networks and original_destination_networks; translation fields "
-            "are optional because the API defines no SNAT/DNAT discriminator. enabled "
-            "defaults to true and is always sent. The rule is not moved or enabled by a "
-            "follow-up call."
-        ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
-    )
-    async def nat_rule_create_ipv6(
-        request: NatRuleCreateIpv6Input, ctx: Context[AppContext]
-    ) -> NatRuleOutput:
-        return await NatAdapter.from_context(ctx).create_rule(IPV6_RULES_PATH, request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="nat_rule_update_ipv6",
-        title="Update an IPv6 NAT rule",
-        description=(
-            "Partially update an IPv6 NAT rule by name or UUID (operationId "
-            "updateNatRuleIpv6ByIdOrName). PATCH uses JSON Merge Patch: only the fields you "
-            "set are sent, omitted fields keep their stored value, and an explicit null "
-            "removes an optional property. Provide at least one field besides id_or_name."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def nat_rule_update_ipv6(
-        request: NatRuleUpdateIpv6Input, ctx: Context[AppContext]
-    ) -> NatRuleOutput:
-        return await NatAdapter.from_context(ctx).update_rule(IPV6_RULES_PATH, request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="nat_rule_delete_ipv6",
-        title="Delete an IPv6 NAT rule",
-        description=(
-            "Delete one IPv6 NAT rule by name or UUID (operationId "
-            "deleteNatRuleIpv6ByIdOrName). Destructive and not reversible; the rule is "
-            "removed from the IPv6 rule base. Bulk delete is not exposed."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def nat_rule_delete_ipv6(
-        request: NatRuleDeleteInput, ctx: Context[AppContext]
-    ) -> NatRuleDeleteOutput:
-        return await NatAdapter.from_context(ctx).delete_rule(IPV6_RULES_PATH, request.id_or_name)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="nat_rule_move_ipv6",
-        title="Move an IPv6 NAT rule",
-        description=(
-            "Move an IPv6 NAT rule within the rule base (operationId moveNatRuleIpv6). The "
-            "rule is identified by name, not UUID. position is top, bottom, after or before; "
-            "after/before are anchored by reference_item naming the reference rule. Reordering can "
-            "change which rule matches first."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def nat_rule_move_ipv6(
-        request: NatRuleMoveInput, ctx: Context[AppContext]
-    ) -> NatRuleMoveOutput:
-        return await NatAdapter.from_context(ctx).move_rule(IPV6_MOVE_PATH, request)
+        path = IPV6_MOVE_PATH if request.ip_family == "ipv6" else IPV4_MOVE_PATH
+        return await NatAdapter.from_context(ctx).move_rule(path, request)
