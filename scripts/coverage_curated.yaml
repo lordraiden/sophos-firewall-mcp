@@ -406,6 +406,7 @@ tool_notes:
 composite_tools:
   - name: firewall_rule_set_enabled_ipv4
     domain: firewall_rules
+    kind: mutation
     operation_ids: ["updateFirewallRuleIpv4"]
     description: >-
       Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses
@@ -413,6 +414,7 @@ composite_tools:
 
   - name: firewall_rule_set_enabled_ipv6
     domain: firewall_rules
+    kind: mutation
     operation_ids: ["updateFirewallRuleIpv6"]
     description: >-
       Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses
@@ -420,6 +422,7 @@ composite_tools:
 
   - name: firewall_rule_clone_ipv4
     domain: firewall_rules
+    kind: mutation
     operation_ids: ["getFirewallRuleIpv4", "createFirewallRuleIpv4"]
     description: >-
       Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then
@@ -427,6 +430,7 @@ composite_tools:
 
   - name: firewall_rule_clone_ipv6
     domain: firewall_rules
+    kind: mutation
     operation_ids: ["getFirewallRuleIpv6", "createFirewallRuleIpv6"]
     description: >-
       Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then
@@ -434,6 +438,7 @@ composite_tools:
 
   - name: audit_firewall_rules
     domain: audit
+    kind: read
     operation_ids:
       - getAllFirewallRulesIpv4
       - getAllFirewallRulesIpv6
@@ -454,6 +459,7 @@ composite_tools:
 
   - name: explain_connectivity
     domain: audit
+    kind: read
     operation_ids:
       - listNetworkInterfaces
       - getAllZones
@@ -472,6 +478,7 @@ composite_tools:
 
   - name: find_object_usage
     domain: audit
+    kind: read
     operation_ids:
       - getAllFirewallRulesIpv4
       - getAllFirewallRulesIpv6

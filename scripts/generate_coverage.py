@@ -770,6 +770,8 @@ def load_curated(path: Path) -> Curated:
         for field in ("name", "domain", "description"):
             if not isinstance(tool.get(field), str) or not tool[field]:
                 raise SpecError(f"composite tool needs a string {field}")
+        if tool.get("kind") not in ("read", "mutation"):
+            raise SpecError(f"composite tool {tool['name']!r} needs kind 'read' or 'mutation'")
         if tool["domain"] not in DOMAIN_ORDER:
             raise SpecError(f"composite tool {tool['name']!r} has unknown domain")
         operation_ids = tool.get("operation_ids")
@@ -1015,14 +1017,15 @@ def _tool_counts(records: Sequence[Record], curated: Curated, domain: str) -> tu
     return operations, operations + composites
 
 
-def _composite_rows(curated: Curated, domain: str | None = None) -> list[tuple[str, str, str]]:
-    rows: list[tuple[str, str, str]] = []
+def _composite_rows(curated: Curated, domain: str | None = None) -> list[tuple[str, str, str, str]]:
+    rows: list[tuple[str, str, str, str]] = []
     for tool in curated.composite_tools:
         if domain is not None and tool["domain"] != domain:
             continue
         rows.append(
             (
                 _code(tool["name"]),
+                _code(tool["kind"]),
                 ", ".join(_code(item) for item in tool["operation_ids"]),
                 _cell(tool["description"]),
             )
@@ -1294,16 +1297,20 @@ def render_document(
     add("")
     add(
         "Composite tools add no new Sophos endpoint: they reuse the audited operations in "
-        "`tool_map` and reason over their results. They are read-only and state "
-        "`method: config-analysis` where they explain configuration."
+        "`tool_map` and reason over their results. Each tool declares its `kind`: the three "
+        "audit tools are `read`, while the four firewall composites are `mutation` because "
+        "they PATCH `enabled` or create a cloned rule. When `SOPHOS_READ_ONLY_MODE=true`, only "
+        "`read` tools may be registered; the mutation composites must not be registered in "
+        "that mode."
     )
     add("")
     add(
         markdown_table(
-            ("Tool", "Domain", "Underlying operationIds", "Description"),
+            ("Tool", "Kind", "Domain", "Underlying operationIds", "Description"),
             (
                 (
                     _code(tool["name"]),
+                    _code(tool["kind"]),
                     _code(tool["domain"]),
                     ", ".join(_code(item) for item in tool["operation_ids"]),
                     _cell(tool["description"]),
@@ -1519,7 +1526,16 @@ def render_document(
         else:
             add("- v1 tools: none")
         if composites:
-            add(f"- composite tools: {len(composites)}")
+            read_count = sum(
+                1
+                for tool in curated.composite_tools
+                if tool["domain"] == rule.key and tool["kind"] == "read"
+            )
+            mutation_count = len(composites) - read_count
+            add(
+                f"- composite tools: {len(composites)} "
+                f"({read_count} read, {mutation_count} mutation)"
+            )
         exclusions = block.get("exclusions") or []
         if exclusions:
             add("- exclusions: " + " ".join(_cell(item) for item in exclusions))
@@ -1532,7 +1548,7 @@ def render_document(
             add("")
             add(
                 markdown_table(
-                    ("Tool", "Underlying operationIds", "Description"),
+                    ("Tool", "Kind", "Underlying operationIds", "Description"),
                     composites,
                 )
             )

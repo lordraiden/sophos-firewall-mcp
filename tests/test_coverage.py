@@ -322,6 +322,15 @@ def test_scope_change_is_recorded(generator: Any, curated: Any) -> None:
         "createFirewallRuleIpv4",
     ]
     assert composite["audit_firewall_rules"]["domain"] == "audit"
+    assert {name: tool["kind"] for name, tool in composite.items()} == {
+        "firewall_rule_set_enabled_ipv4": "mutation",
+        "firewall_rule_set_enabled_ipv6": "mutation",
+        "firewall_rule_clone_ipv4": "mutation",
+        "firewall_rule_clone_ipv6": "mutation",
+        "audit_firewall_rules": "read",
+        "explain_connectivity": "read",
+        "find_object_usage": "read",
+    }
     for tool in composite.values():
         assert tool["description"].strip()
         assert set(tool["operation_ids"]) <= set(curated["tool_map"])
@@ -463,6 +472,12 @@ def test_document_records_the_scope_change(generated: str) -> None:
     ):
         assert f"`{tool}`" in generated
     assert "### 4.2 Composite tools" in generated
+    assert "| Tool | Kind | Domain | Underlying operationIds | Description |" in generated
+    assert "`firewall_rule_set_enabled_ipv4` | `mutation`" in generated
+    assert "`firewall_rule_clone_ipv4` | `mutation`" in generated
+    assert "`audit_firewall_rules` | `read`" in generated
+    assert "They are read-only" not in generated
+    assert "SOPHOS_READ_ONLY_MODE=true" in generated
     assert "### 5.10 Network (113 operations)" in generated
     assert "### 5.11 Audit (composite) (0 operations)" in generated
     assert "**Generated inventory**: none" in generated
@@ -567,7 +582,7 @@ def test_inventory_refuses_missing_or_duplicate_operations(generator: Any) -> No
 # ---------------------------------------------------------------------------
 # Live evidence protocol documentation
 # ---------------------------------------------------------------------------
-def test_live_evidence_protocol_is_documented() -> None:
+def test_live_evidence_protocol_is_documented(generator: Any) -> None:
     text = LIVE_README.read_text(encoding="utf-8")
     lowered = text.lower()
     for token in (
@@ -586,6 +601,28 @@ def test_live_evidence_protocol_is_documented() -> None:
         assert token in lowered, f"missing live-evidence token: {token}"
     assert "docs/live-evidence/<domain>.md" in text
     assert "never writes" in text.lower() or "no writes" in text.lower()
+
+    canonical_domains = (
+        "firewall_rules",
+        "nat_rules",
+        "addresses",
+        "services",
+        "auth_users",
+        "live_users",
+        "ipsec_vpn",
+        "ssl_vpn",
+        "network_status",
+        "network",
+        "audit",
+        "admin_system",
+        "other",
+    )
+    assert canonical_domains == generator.DOMAIN_ORDER
+    for key in canonical_domains:
+        assert f"`{key}`" in text, f"missing canonical domain key: {key}"
+    assert "`interfaces`" not in text
+    assert "not registered" not in lowered
+    assert "pyproject.toml" in text
 
 
 def test_live_evidence_links_exist() -> None:

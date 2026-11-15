@@ -125,17 +125,17 @@ Generated: 145 one-to-one tools (one per audited operation) plus 7 composite too
 
 ### 4.2 Composite tools
 
-Composite tools add no new Sophos endpoint: they reuse the audited operations in `tool_map` and reason over their results. They are read-only and state `method: config-analysis` where they explain configuration.
+Composite tools add no new Sophos endpoint: they reuse the audited operations in `tool_map` and reason over their results. Each tool declares its `kind`: the three audit tools are `read`, while the four firewall composites are `mutation` because they PATCH `enabled` or create a cloned rule. When `SOPHOS_READ_ONLY_MODE=true`, only `read` tools may be registered; the mutation composites must not be registered in that mode.
 
-| Tool | Domain | Underlying operationIds | Description |
-|---|---|---|---|
-| `firewall_rule_set_enabled_ipv4` | `firewall_rules` | `updateFirewallRuleIpv4` | Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv4` and adds no new endpoint. |
-| `firewall_rule_set_enabled_ipv6` | `firewall_rules` | `updateFirewallRuleIpv6` | Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv6` and adds no new endpoint. |
-| `firewall_rule_clone_ipv4` | `firewall_rules` | `getFirewallRuleIpv4`, `createFirewallRuleIpv4` | Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then create a copy with `createFirewallRuleIpv4`. |
-| `firewall_rule_clone_ipv6` | `firewall_rules` | `getFirewallRuleIpv6`, `createFirewallRuleIpv6` | Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then create a copy with `createFirewallRuleIpv6`. |
-| `audit_firewall_rules` | `audit` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpAddresses`, `getAllIpv6Addresses`, `getAllFqdns`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServices`, `getAllServiceGroups` | Read-only rule-base audit (any-any, disabled, shadowed/duplicate, no-logging, unused-object, nat-without-rule, unrestricted-service) with bounded findings and evidence; adds no new endpoint (#35). |
-| `explain_connectivity` | `audit` | `listNetworkInterfaces`, `getAllZones`, `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getGatewaysIpv4`, `getGatewaysIpv6`, `getUnicastRoutesIPv4`, `getUnicastRoutesIPv6` | Read-only explanation of which interface/zone, firewall rule, NAT rule and route apply to a flow; reports `method: config-analysis` and `not-verifiable` when evidence is missing; adds no new endpoint (#35). |
-| `find_object_usage` | `audit` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServiceGroups` | Read-only search for every rule, NAT entry and group that references an address, group or service; bounded scan with explicit truncation; adds no new endpoint (#35). |
+| Tool | Kind | Domain | Underlying operationIds | Description |
+|---|---|---|---|---|
+| `firewall_rule_set_enabled_ipv4` | `mutation` | `firewall_rules` | `updateFirewallRuleIpv4` | Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv4` and adds no new endpoint. |
+| `firewall_rule_set_enabled_ipv6` | `mutation` | `firewall_rules` | `updateFirewallRuleIpv6` | Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv6` and adds no new endpoint. |
+| `firewall_rule_clone_ipv4` | `mutation` | `firewall_rules` | `getFirewallRuleIpv4`, `createFirewallRuleIpv4` | Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then create a copy with `createFirewallRuleIpv4`. |
+| `firewall_rule_clone_ipv6` | `mutation` | `firewall_rules` | `getFirewallRuleIpv6`, `createFirewallRuleIpv6` | Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then create a copy with `createFirewallRuleIpv6`. |
+| `audit_firewall_rules` | `read` | `audit` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpAddresses`, `getAllIpv6Addresses`, `getAllFqdns`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServices`, `getAllServiceGroups` | Read-only rule-base audit (any-any, disabled, shadowed/duplicate, no-logging, unused-object, nat-without-rule, unrestricted-service) with bounded findings and evidence; adds no new endpoint (#35). |
+| `explain_connectivity` | `read` | `audit` | `listNetworkInterfaces`, `getAllZones`, `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getGatewaysIpv4`, `getGatewaysIpv6`, `getUnicastRoutesIPv4`, `getUnicastRoutesIPv6` | Read-only explanation of which interface/zone, firewall rule, NAT rule and route apply to a flow; reports `method: config-analysis` and `not-verifiable` when evidence is missing; adds no new endpoint (#35). |
+| `find_object_usage` | `read` | `audit` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServiceGroups` | Read-only search for every rule, NAT entry and group that references an address, group or service; bounded scan with explicit truncation; adds no new endpoint (#35). |
 
 ### 4.3 Exclusions
 
@@ -281,18 +281,18 @@ Live evidence: [`docs/live-evidence/api-smoke-2026-11-15.md`](live-evidence/api-
 
 - v1 scope: Individual CRUD and move for IPv4 and IPv6 rules, plus two composite tools per family: enable/disable (`firewall_rule_set_enabled_*`, a PATCH of `enabled`) and clone (`firewall_rule_clone_*`, a get followed by a create). `enabled` and `position` are explicit inputs; a created rule is never auto-enabled.
 - v1 tools: `firewall_rule_create_ipv4`, `firewall_rule_create_ipv6`, `firewall_rule_delete_ipv4`, `firewall_rule_delete_ipv6`, `firewall_rule_get_ipv4`, `firewall_rule_get_ipv6`, `firewall_rule_list_ipv4`, `firewall_rule_list_ipv6`, `firewall_rule_move_ipv4`, `firewall_rule_move_ipv6`, `firewall_rule_update_ipv4`, `firewall_rule_update_ipv6`
-- composite tools: 4
+- composite tools: 4 (0 read, 4 mutation)
 - exclusions: Bulk delete (`bulkDeleteFirewallRulesIpv4/Ipv6`): high blast radius and not required for individual CRUD (PLAN §4). WAF rule variant (`ruleType: waf`): create/update schemas are discriminated by `ruleType`; v1 tools accept only `ruleType: firewall` (PLAN §4; #27).
 - caveats: The contract has no firewall rule groups; do not infer them from other object groups. `move` changes rule ordering and is a separate operation (`moveFirewallRuleIpv4/Ipv6`). The Firewall AI Assistant default (disabled, placed last) is not evidence for the REST POST default; represent and return the applied state explicitly. `firewall_rule_set_enabled_*` and `firewall_rule_clone_*` are composite tools over the audited operations; they add no new endpoint.
 
 **Composite tools** (reuse audited operations; no new Sophos endpoint):
 
-| Tool | Underlying operationIds | Description |
-|---|---|---|
-| `firewall_rule_set_enabled_ipv4` | `updateFirewallRuleIpv4` | Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv4` and adds no new endpoint. |
-| `firewall_rule_set_enabled_ipv6` | `updateFirewallRuleIpv6` | Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv6` and adds no new endpoint. |
-| `firewall_rule_clone_ipv4` | `getFirewallRuleIpv4`, `createFirewallRuleIpv4` | Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then create a copy with `createFirewallRuleIpv4`. |
-| `firewall_rule_clone_ipv6` | `getFirewallRuleIpv6`, `createFirewallRuleIpv6` | Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then create a copy with `createFirewallRuleIpv6`. |
+| Tool | Kind | Underlying operationIds | Description |
+|---|---|---|---|
+| `firewall_rule_set_enabled_ipv4` | `mutation` | `updateFirewallRuleIpv4` | Enable or disable an IPv4 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv4` and adds no new endpoint. |
+| `firewall_rule_set_enabled_ipv6` | `mutation` | `updateFirewallRuleIpv6` | Enable or disable an IPv6 firewall rule by PATCHing `enabled`; reuses `updateFirewallRuleIpv6` and adds no new endpoint. |
+| `firewall_rule_clone_ipv4` | `mutation` | `getFirewallRuleIpv4`, `createFirewallRuleIpv4` | Clone an IPv4 rule: read the source with `getFirewallRuleIpv4`, then create a copy with `createFirewallRuleIpv4`. |
+| `firewall_rule_clone_ipv6` | `mutation` | `getFirewallRuleIpv6`, `createFirewallRuleIpv6` | Clone an IPv6 rule: read the source with `getFirewallRuleIpv6`, then create a copy with `createFirewallRuleIpv6`. |
 
 **Generated inventory** (from `firewall_config_openapi.yaml`):
 
@@ -715,17 +715,17 @@ Live evidence: [`docs/live-evidence/api-smoke-2026-11-15.md`](live-evidence/api-
 
 - v1 scope: Three composite, read-only analysis tools (#35): `audit_firewall_rules`, `explain_connectivity` and `find_object_usage`. They call the audited list/get operations through the shared REST client and reason over the results; they add no new Sophos operation.
 - v1 tools: none
-- composite tools: 3
+- composite tools: 3 (3 read, 0 mutation)
 - exclusions: No Sophos operation is mapped 1:1 to this domain; the tools are composite by design.
 - caveats: Composite tools are read-only and add no new endpoint; they must not invent data the API does not return. `explain_connectivity` is configuration analysis, not a packet test: it reports `method: config-analysis` and `not-verifiable` when the configuration is insufficient. Outputs are bounded and report truncation explicitly.
 
 **Composite tools** (reuse audited operations; no new Sophos endpoint):
 
-| Tool | Underlying operationIds | Description |
-|---|---|---|
-| `audit_firewall_rules` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpAddresses`, `getAllIpv6Addresses`, `getAllFqdns`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServices`, `getAllServiceGroups` | Read-only rule-base audit (any-any, disabled, shadowed/duplicate, no-logging, unused-object, nat-without-rule, unrestricted-service) with bounded findings and evidence; adds no new endpoint (#35). |
-| `explain_connectivity` | `listNetworkInterfaces`, `getAllZones`, `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getGatewaysIpv4`, `getGatewaysIpv6`, `getUnicastRoutesIPv4`, `getUnicastRoutesIPv6` | Read-only explanation of which interface/zone, firewall rule, NAT rule and route apply to a flow; reports `method: config-analysis` and `not-verifiable` when evidence is missing; adds no new endpoint (#35). |
-| `find_object_usage` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServiceGroups` | Read-only search for every rule, NAT entry and group that references an address, group or service; bounded scan with explicit truncation; adds no new endpoint (#35). |
+| Tool | Kind | Underlying operationIds | Description |
+|---|---|---|---|
+| `audit_firewall_rules` | `read` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpAddresses`, `getAllIpv6Addresses`, `getAllFqdns`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServices`, `getAllServiceGroups` | Read-only rule-base audit (any-any, disabled, shadowed/duplicate, no-logging, unused-object, nat-without-rule, unrestricted-service) with bounded findings and evidence; adds no new endpoint (#35). |
+| `explain_connectivity` | `read` | `listNetworkInterfaces`, `getAllZones`, `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getGatewaysIpv4`, `getGatewaysIpv6`, `getUnicastRoutesIPv4`, `getUnicastRoutesIPv6` | Read-only explanation of which interface/zone, firewall rule, NAT rule and route apply to a flow; reports `method: config-analysis` and `not-verifiable` when evidence is missing; adds no new endpoint (#35). |
+| `find_object_usage` | `read` | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getAllIpv4AddressGroups`, `getAllIpv6AddressGroups`, `getAllFqdnGroups`, `getAllServiceGroups` | Read-only search for every rule, NAT entry and group that references an address, group or service; bounded scan with explicit truncation; adds no new endpoint (#35). |
 
 **Generated inventory**: none — this domain has no Sophos operation and is provided entirely by composite tools.
 

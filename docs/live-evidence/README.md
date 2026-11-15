@@ -38,9 +38,9 @@ set:
 - `SOPHOS_PORT`
 - `SOPHOS_API_KEY` or `SOPHOS_API_KEY_FILE` (exactly one source)
 
-The marker is declared in the pytest configuration (owned by the Lead); if the
-marker is not registered yet, pytest emits a `PytestUnknownMarkWarning` but the
-selection still works.
+The marker is registered in `pyproject.toml` (`[tool.pytest.ini_options]`
+`markers`), so `pytest -m live` selects the live tests without an unknown-mark
+warning.
 
 Reference pattern for a live test module:
 
@@ -91,10 +91,10 @@ Rules for live tests:
 
 ## 3. Record format: `docs/live-evidence/<domain>.md`
 
-The file name uses the domain key from
-[`docs/API-COVERAGE.md`](../API-COVERAGE.md): `firewall_rules`, `nat_rules`,
-`addresses`, `services`, `live_users`, `auth_users`, `ipsec_vpn`, `ssl_vpn`,
-`interfaces`, `network_status`, `admin_system`, `other`.
+The file name uses the canonical domain key from
+[`docs/API-COVERAGE.md`](../API-COVERAGE.md) §3: `firewall_rules`, `nat_rules`,
+`addresses`, `services`, `auth_users`, `live_users`, `ipsec_vpn`, `ssl_vpn`,
+`network_status`, `network`, `audit`, `admin_system`, `other`.
 
 Every record starts with the mandatory environment table:
 
