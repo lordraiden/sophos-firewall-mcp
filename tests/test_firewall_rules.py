@@ -317,7 +317,7 @@ async def test_list_maps_401_to_a_sanitized_auth_tool_error(router: Any) -> None
 
     assert result.is_error is True
     text = result.content[0].text
-    assert "not allowed" in text
+    assert "authentication failed" in text
     assert "unauthenticated" in text
     assert KEY not in text
 

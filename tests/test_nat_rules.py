@@ -610,7 +610,7 @@ async def test_move_ipv6_sends_only_the_position_when_top(router: Any):
             {"id_or_name": "outbound-masq"},
             401,
             "authenticationFailed",
-            "not allowed",
+            "authentication failed",
         ),
         (
             "nat_rule_list_ipv4",
