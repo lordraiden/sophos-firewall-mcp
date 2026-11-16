@@ -630,3 +630,49 @@ def test_an_empty_tool_domains_tuple_is_rejected() -> None:
     assert "at least one domain" in message
     for name in TOOL_DOMAINS:
         assert name in message
+
+
+# -- Invocation-rate policy (issue #63) --------------------------------------
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _comment_block(source: str, assignment: str) -> str:
+    """Return the ``#:`` comment block immediately above *assignment*."""
+    lines = source.splitlines()
+    index = next(i for i, line in enumerate(lines) if line.startswith(assignment))
+    block: list[str] = []
+    cursor = index - 1
+    while cursor >= 0 and lines[cursor].startswith("#:"):
+        block.append(lines[cursor])
+        cursor -= 1
+    return "\n".join(reversed(block))
+
+
+def test_max_concurrency_is_documented_as_a_concurrency_bound() -> None:
+    """The semaphore must not be described as a rate limiter (issue #63)."""
+    source = (ROOT / "src" / "sophos_firewall_mcp" / "config.py").read_text(encoding="utf-8")
+    comment = _comment_block(source, "DEFAULT_MAX_CONCURRENCY = 4")
+
+    assert "concurrency" in comment.lower()
+    assert "in flight" in comment.lower()
+    assert "not an invocation-rate limit" in comment.lower()
+
+
+def test_the_rate_policy_decision_record_cites_the_requirement() -> None:
+    document = (ROOT / "docs" / "SECURITY-RATE-POLICY.md").read_text(encoding="utf-8")
+
+    assert "Rate limit tool invocations" in document
+    assert "2026-07-28/server/tools#security-considerations" in document
+    assert "does not implement a server-side invocation-rate limiter" in document
+    assert "accepted residual risk" in document
+    assert "discharge the MUST" in document
+    assert "Residual risk" in document
+
+
+def test_readme_documents_the_invocation_rate_policy() -> None:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "## Invocation rate and concurrency" in readme
+    assert "Rate limit tool invocations" in readme
+    assert "docs/SECURITY-RATE-POLICY.md" in readme

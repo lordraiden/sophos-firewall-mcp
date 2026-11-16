@@ -305,7 +305,7 @@ The server reads exactly these ten environment variables. There are no XML-era s
 | `SOPHOS_VERIFY_SSL` | no | `true` | TLS certificate verification. Set `false` only for a lab appliance with a self-signed certificate; prefer `SOPHOS_CA_BUNDLE`. |
 | `SOPHOS_CA_BUNDLE` | no | — | PEM CA bundle used to verify a private or self-signed appliance certificate. |
 | `SOPHOS_TIMEOUT` | no | `30` | Request timeout in seconds (connect, read, write and pool). |
-| `SOPHOS_MAX_CONCURRENCY` | no | `4` | Maximum concurrent HTTP requests to the appliance (1–64). |
+| `SOPHOS_MAX_CONCURRENCY` | no | `4` | Maximum concurrent HTTP requests to the appliance (1–64). A concurrency bound, not an invocation-rate limit; see [Invocation rate and concurrency](#invocation-rate-and-concurrency). |
 | `SOPHOS_READ_ONLY_MODE` | no | `false` | When `true`, mutation tools are not registered at all. The application default is `false`; the shipped `.env.example` and `docker-compose.yml` default to `true`. |
 | `SOPHOS_TOOL_DOMAINS` | no | unset (all six) | Comma-separated allowlist of the domains to publish: `firewall`, `nat`, `objects`, `users`, `network`, `audit`. Unset publishes the complete 112-tool surface. See [Domain selection](#domain-selection). |
 
@@ -576,6 +576,32 @@ administrator profile or a host-side approval policy.
   instructions.
 - **Writes are not retried.** A write that times out is reported as an ambiguous write instead of being
   repeated, because repeating it could duplicate a rule or a NAT entry.
+
+## Invocation rate and concurrency
+
+The server distinguishes two controls that are easy to conflate:
+
+| Control | What it bounds | Setting | Default | Ceiling |
+|---|---|---|---|---|
+| Concurrency | HTTP requests in flight at once | `SOPHOS_MAX_CONCURRENCY` | `4` | `64` |
+| Invocation rate | tool invocations per unit of time | none | — | — |
+
+`SOPHOS_MAX_CONCURRENCY` is a **concurrency** bound, not a rate limit. It caps how many requests
+overlap; it does not cap how many invocations a client may issue over time. A client can make an
+unbounded number of sequential calls, each of which waits for a slot and then completes.
+
+**Policy: no server-side invocation-rate limiter.** The MCP `2026-07-28` Tools specification lists
+"Rate limit tool invocations" among the server's Security Considerations
+([source](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations)).
+This server does not implement that limiter; the decision record
+([`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md)) records it as an **accepted residual
+risk** for the local STDIO, one-client-per-process deployment, not as a discharge of the MUST. The
+exposure is bounded by the STDIO transport (one local client), the concurrency semaphore, and the
+appliance's own rate limits; the residual risk — a runaway model loop issuing many sequential calls —
+is delegated to the client/host (timeouts, loop detection, user confirmation), whose guidance is a
+SHOULD, not a MUST. A deployment that exposes the server over HTTP or shares one process across
+clients must add a tool-invocation limiter at the tool dispatch layer; the decision record explains
+why the HTTP client layer is the wrong place for it.
 
 ## Known limitations and accepted regressions
 

@@ -56,12 +56,14 @@ DEFAULT_PORT = 4444
 #: Default read/write/connect timeout in seconds.
 DEFAULT_TIMEOUT = 30.0
 
-#: Default number of requests the shared client keeps in flight at once.
+#: Default number of HTTP requests the shared client keeps in flight at once.
 #:
-#: The MCP specification lists "rate limit tool invocations" among the things a server MUST do, and
-#: a model that fans out can otherwise open one connection per tool call. Four is enough to keep a
-#: composite tool parallel without turning a runaway loop into a burst against the appliance, which
-#: rate-limits on its own side.
+#: This is a **concurrency** bound, not an invocation-rate limit: it caps how many requests overlap,
+#: not how many a client may issue over time. The MCP 2026-07-28 Tools specification lists "Rate
+#: limit tool invocations" among the server's Security Considerations; this server's explicit policy
+#: for that requirement is recorded in ``docs/SECURITY-RATE-POLICY.md`` and the README. Four is
+#: enough to keep a composite tool parallel without turning a runaway loop into a burst against the
+#: appliance, which rate-limits on its own side.
 DEFAULT_MAX_CONCURRENCY = 4
 
 #: Upper bound for ``SOPHOS_MAX_CONCURRENCY``.
