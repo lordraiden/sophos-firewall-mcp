@@ -303,7 +303,7 @@ The server reads exactly these ten environment variables. There are no XML-era s
 | `SOPHOS_CA_BUNDLE` | no | — | PEM CA bundle used to verify a private or self-signed appliance certificate. |
 | `SOPHOS_TIMEOUT` | no | `30` | Request timeout in seconds (connect, read, write and pool). |
 | `SOPHOS_MAX_CONCURRENCY` | no | `4` | Maximum concurrent HTTP requests to the appliance (1–64). |
-| `SOPHOS_READ_ONLY_MODE` | no | `false` | When `true`, mutation tools are not registered at all. |
+| `SOPHOS_READ_ONLY_MODE` | no | `false` | When `true`, mutation tools are not registered at all. The application default is `false`; the shipped `.env.example` and `docker-compose.yml` default to `true`. |
 | `SOPHOS_TOOL_DOMAINS` | no | unset (all six) | Comma-separated allowlist of the domains to publish: `firewall`, `nat`, `objects`, `users`, `network`, `audit`. Unset publishes the complete 112-tool surface. See [Domain selection](#domain-selection). |
 
 Exactly one of `SOPHOS_API_KEY` / `SOPHOS_API_KEY_FILE` must be set; setting both is a startup error. The
@@ -312,6 +312,12 @@ variables (`HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`) are deliberately **not** us
 cannot travel through an inherited proxy; route traffic at the host level.
 
 A commented template is in [`.env.example`](.env.example).
+
+The application default for `SOPHOS_READ_ONLY_MODE` is `false`, but the shipped `.env.example` and
+`docker-compose.yml` set it to `true`: a copy-and-run deployment publishes the 74 read-only tools and
+no mutations. Exposing the 38 mutation tools requires an explicit `SOPHOS_READ_ONLY_MODE=false`.
+Neither the Compose default nor the MCP tool annotations are an authorization boundary — the Sophos
+administrator profile behind the API key is what actually authorizes a request.
 
 ## Install and run
 
@@ -354,6 +360,7 @@ Desktop's `claude_desktop_config.json`, or the equivalent in Cursor / Antigravit
         "-e", "SOPHOS_PORT",
         "-e", "SOPHOS_API_KEY",
         "-e", "SOPHOS_VERIFY_SSL",
+        "-e", "SOPHOS_MAX_CONCURRENCY",
         "-e", "SOPHOS_READ_ONLY_MODE",
         "ghcr.io/lordraiden/sophos-firewall-mcp:0.7.1"
       ],
@@ -362,7 +369,8 @@ Desktop's `claude_desktop_config.json`, or the equivalent in Cursor / Antigravit
         "SOPHOS_PORT": "4444",
         "SOPHOS_API_KEY": "your_api_key_here",
         "SOPHOS_VERIFY_SSL": "true",
-        "SOPHOS_READ_ONLY_MODE": "false"
+        "SOPHOS_MAX_CONCURRENCY": "4",
+        "SOPHOS_READ_ONLY_MODE": "true"
       }
     }
   }
@@ -448,7 +456,33 @@ docker run -i --rm \
 ```
 
 `docker-compose.yml` in this repository is a REST-only reference: it passes the same variables, keeps
-`stdin_open: true` and does not enable a TTY.
+`stdin_open: true`, does not enable a TTY, and defaults `SOPHOS_READ_ONLY_MODE` to `true`.
+
+Compose is a way to describe the process, not to run a daemon. The MCP client owns the lifecycle, so
+the supported invocation is one container per session:
+
+```bash
+docker compose run --rm -T sophos-firewall-mcp
+```
+
+`-T` disables the pseudo-TTY that `docker compose run` allocates by default (a TTY corrupts the
+JSON-RPC stream) and `--rm` removes the container when the session ends. Point the MCP client at that
+command, for example:
+
+```json
+{
+  "mcpServers": {
+    "sophos-firewall": {
+      "command": "docker",
+      "args": ["compose", "-f", "/path/to/docker-compose.yml", "run", "--rm", "-T", "sophos-firewall-mcp"]
+    }
+  }
+}
+```
+
+`docker compose up` is **not** the supported invocation: it does not attach the client's stdin/stdout
+to the container. The service therefore has no `restart` policy — restarting would only re-spawn a
+server whose stdin has already closed, with no client attached.
 
 ## Read-only mode
 
@@ -456,6 +490,11 @@ Set `SOPHOS_READ_ONLY_MODE=true` to register only the 74 read-only tools. Mutati
 registered at all, so a client cannot discover or call them. This is defence in depth, not the primary
 control: the API key's administrator profile is what actually authorizes a request. Use a read-only
 administrator profile for any deployment that only needs inspection.
+
+The application default is `false`, but the shipped `.env.example` and `docker-compose.yml` set it to
+`true`, so a copy-and-run deployment starts read-only. Exposing mutation tools requires an explicit
+`SOPHOS_READ_ONLY_MODE=false`; MCP tool annotations and Compose defaults are advisory metadata, not an
+authorization boundary.
 
 Read-only mode composes with [domain selection](#domain-selection) and the two settings stay
 independent: the selection decides which capabilities exist, and read-only mode then removes the
