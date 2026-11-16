@@ -159,8 +159,9 @@ The server is stateless: rolling back changes no appliance configuration and no 
 3. No client change is required. 0.7.0 accepts `position` when it is sent, so a 0.7.1 caller that
    always sends it keeps working; a caller that omits it gets the 0.7.0 behaviour back — the create
    fails with a generic `400` from the appliance instead of a clear argument error.
-4. The tool names, the arguments, the wire body and the output payload are identical in both releases;
-   only the descriptions, the annotations and the `serverInfo` description differ.
+4. The tool names, the wire body and the output payload are identical in both releases; the only
+   argument change is the new required `position` on `nat_rule_create`, and the descriptions, the
+   annotations and the `serverInfo` description also differ.
 
 ## 3. Publication checklist
 

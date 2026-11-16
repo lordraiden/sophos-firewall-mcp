@@ -233,7 +233,7 @@ A tool that exists for both IP families publishes one required `ip_family` argum
 `ipv6`) instead of two tools. 40 tools take it. It is **required, not defaulted**: a default would
 silently target one family, and for a mutation (delete, update, move, enable/disable, clone) that
 would make a destructive target a guess. The audit composites are the one exception: they are
-read-only and can span both families, so their `ip_family` is optional and omitting it means both.
+read-only and can span all families, so their `ip_family` is optional and omitting it means all of them (`find_object_usage` also accepts `fqdn`).
 The wire body is unchanged for each family; the adapter strips `ip_family` and selects the IPv4 or
 IPv6 path. The 80 tool names this replaces, and the `ip_family` value that reproduces each one, are
 in the [migration table](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md).
@@ -242,7 +242,7 @@ Every required `ip_family` publishes the same description in `inputSchema` — *
 collection: 'ipv4' or 'ipv6'. Required: the two collections are separate, so the family is never
 inferred."* — on the 32 tools that require it and on the union variants, so the argument reads the
 same everywhere. The three audit composites keep their own optional description, where omitting the
-field means "both families".
+field means "all families" (`find_object_usage` also accepts `fqdn`).
 
 ### Read one of `content` / `structuredContent`, not both
 
@@ -254,10 +254,9 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **112 tools in a single response**: **622,787 bytes** at 0.7.0, plus about
-2.9 KB of descriptions added in 0.7.1 (the shared `ip_family` text, the IPsec notes and the
-`address_create` sentence, less the dropped `annotations.title`) — roughly **156k tokens** at ~4
-bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO,
+`tools/list` returns all **112 tools in a single response**: **625,824 bytes** on the legacy wire
+line and **626,255 bytes** on the modern one (0.7.1; 0.7.0 measured 622,787 and 623,383 with the
+same harness, so the descriptions added about 3 KB) — roughly **156k tokens** at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO,
 including the trailing newline; the envelope is identical across the protocol versions the server
 negotiates. There is no pagination cursor, so a client
 that injects the whole catalog into the prompt either truncates it — and then cannot call the tools

@@ -236,11 +236,12 @@ IP_FAMILY_DESCRIPTION = (
 #: question unconditionally would be false on the protocol era the server advertises, and
 #: a model that reads it may tell the user it will ask and then delete without asking.
 CONFIRMATION_NOTE = (
-    "The call asks the client to confirm first, naming the object, when the transport can "
-    "carry a server-initiated request (the legacy handshake path); a declined or cancelled "
-    "confirmation aborts the call and nothing is deleted. On the 2026-07-28 path the server "
-    "cannot send that question, so the confirmation is skipped and the client's own "
-    "confirmation UI is the only gate."
+    "The call asks the client to confirm first, naming the object, when the client declares "
+    "elicitation support and the transport can carry a server-initiated request (the legacy "
+    "handshake path); a declined or cancelled confirmation aborts the call and nothing is "
+    "deleted. On the 2026-07-28 path, or for a client that declares no elicitation support, "
+    "the server cannot send that question, so the confirmation is skipped and the client's "
+    "own confirmation UI is the only gate."
 )
 
 #: Model-facing rule for the pydantic error types an argument model can raise. The
@@ -649,6 +650,10 @@ class _SanitizedArgumentError(ValidationError):
 #     not the pydantic argument model;
 #   * MCPServer has no public get_tool();
 #   * Tool.from_function()/func_metadata() accept no argument-model override.
+#
+# The server identity is the same kind of seam: MCPServer.description is read-only and the
+# registered tool count is only known after registration, so server.py assigns
+# MCPServer._lowlevel_server.description (private, pinned to mcp 2.3.0).
 # The only route is the private attribute below, so it is confined to one accessor.
 #
 # Exact private surface this module depends on (mcp 2.3.0):

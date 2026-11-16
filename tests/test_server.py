@@ -433,6 +433,18 @@ def test_the_published_description_substitutes_the_real_tool_count():
     assert server_module._published_description("No count here.", 112) == "No count here."
 
 
+async def test_the_read_only_description_publishes_the_read_only_count():
+    """M3: the read-only surface publishes its own count, not the full one."""
+    server = create_server(make_settings(read_only_mode=True))
+
+    async with Client(server) as client:
+        info = client.server_info
+
+    assert info.description is not None
+    assert "74 typed tools" in info.description
+    assert "112 typed tools" not in info.description
+
+
 async def test_tools_list_advertises_a_cache_hint():
     """H1/L7: the static catalog is cacheable, so ``ttlMs`` must not be zero."""
     server = create_server(make_settings())
