@@ -12,12 +12,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from sophos_firewall_mcp import config as config_module
 from sophos_firewall_mcp.config import (
     API_PATH_PREFIX,
     DEFAULT_MAX_CONCURRENCY,
     DEFAULT_PORT,
     DEFAULT_TIMEOUT,
+    DOMAIN_DEPENDENCIES,
     MAX_CONCURRENCY_LIMIT,
+    TOOL_DOMAINS,
     ConfigurationError,
     Settings,
 )
@@ -120,6 +123,7 @@ def test_settings_expose_only_the_documented_fields() -> None:
         "timeout",
         "read_only_mode",
         "max_concurrency",
+        "tool_domains",
     }
 
 
@@ -498,3 +502,131 @@ def test_direct_construction_strips_api_key_whitespace() -> None:
 def test_unknown_fields_are_rejected() -> None:
     with pytest.raises(ValidationError):
         Settings(host="fw.example.com", api_key=KEY, username="admin")  # type: ignore[call-arg]
+
+
+# -- Tool domain selection (SOPHOS_TOOL_DOMAINS) ------------------------------
+#
+# The setting narrows the published tool surface to the domains a deployment needs. It is a
+# closed allowlist: an unknown identifier, an empty entry, a blank value or a repeated
+# identifier fails startup instead of quietly publishing a different surface, because a typo
+# that drops a domain is only noticed when a client cannot find a tool.
+
+
+def test_tool_domains_default_to_none() -> None:
+    """Unset means the complete default surface, not an empty selection."""
+    assert Settings.from_env(env()).tool_domains is None
+
+
+def test_tool_domains_are_normalised_to_the_canonical_order() -> None:
+    """Registration order is deterministic and independent of how the operator wrote it."""
+    settings = Settings.from_env(env(SOPHOS_TOOL_DOMAINS="audit,firewall"))
+
+    assert settings.tool_domains == ("firewall", "audit")
+
+
+def test_tool_domains_tolerate_surrounding_whitespace() -> None:
+    settings = Settings.from_env(env(SOPHOS_TOOL_DOMAINS=" firewall , nat "))
+
+    assert settings.tool_domains == ("firewall", "nat")
+
+
+def test_every_documented_domain_is_accepted() -> None:
+    settings = Settings.from_env(env(SOPHOS_TOOL_DOMAINS=",".join(TOOL_DOMAINS)))
+
+    assert settings.tool_domains == TOOL_DOMAINS
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "\t", "\n"])
+def test_a_blank_tool_domains_value_is_rejected(raw: str) -> None:
+    """A blank value is a mistake to report, not an absent setting to default."""
+    with pytest.raises(ConfigurationError) as excinfo:
+        Settings.from_env(env(SOPHOS_TOOL_DOMAINS=raw))
+
+    message = str(excinfo.value)
+    assert "SOPHOS_TOOL_DOMAINS" in message
+    assert "empty" in message
+    for name in TOOL_DOMAINS:
+        assert name in message
+
+
+@pytest.mark.parametrize(
+    "raw", [",", "firewall,", ",firewall", "firewall,,nat", "firewall, ,nat", " , "]
+)
+def test_an_empty_tool_domains_entry_is_rejected(raw: str) -> None:
+    with pytest.raises(ConfigurationError) as excinfo:
+        Settings.from_env(env(SOPHOS_TOOL_DOMAINS=raw))
+
+    assert "empty entry" in str(excinfo.value)
+
+
+@pytest.mark.parametrize(
+    "raw", ["firewal", "FIREWALL", "firewall,network,audit2", "firewall;nat", "firewall nat"]
+)
+def test_an_unknown_tool_domain_is_rejected(raw: str) -> None:
+    """No silent typo tolerance: the message names the accepted identifiers."""
+    with pytest.raises(ConfigurationError) as excinfo:
+        Settings.from_env(env(SOPHOS_TOOL_DOMAINS=raw))
+
+    message = str(excinfo.value)
+    assert "unknown domain" in message
+    for name in TOOL_DOMAINS:
+        assert name in message
+
+
+def test_a_repeated_tool_domain_is_rejected() -> None:
+    with pytest.raises(ConfigurationError) as excinfo:
+        Settings.from_env(env(SOPHOS_TOOL_DOMAINS="firewall,firewall"))
+
+    assert "more than once" in str(excinfo.value)
+
+
+def test_tool_domains_are_validated_on_direct_construction() -> None:
+    """``Settings(...)`` is public, so it applies the same rules as ``from_env``."""
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(host="fw.example.com", api_key=KEY, tool_domains=("nope",))
+
+    assert "unknown domain" in str(excinfo.value)
+
+
+def test_the_domain_dependency_model_is_empty() -> None:
+    """No domain needs another domain's *registered tools*.
+
+    The audit composites are the only cross-domain tools and they call the other domains'
+    adapter classes directly (``tools/audit.py`` imports and instantiates them from the
+    request context), so ``audit`` is a valid selection on its own. The dependency map is
+    kept so a future domain that does need another domain's registration is declared and
+    enforced instead of failing on its first call.
+    """
+    assert DOMAIN_DEPENDENCIES == {}
+    assert Settings.from_env(env(SOPHOS_TOOL_DOMAINS="audit")).tool_domains == ("audit",)
+
+
+def test_a_declared_domain_dependency_is_enforced(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The mechanism is live even though no domain declares a dependency today."""
+    monkeypatch.setattr(config_module, "DOMAIN_DEPENDENCIES", {"audit": frozenset({"firewall"})})
+
+    with pytest.raises(ConfigurationError) as excinfo:
+        Settings.from_env(env(SOPHOS_TOOL_DOMAINS="audit"))
+
+    message = str(excinfo.value)
+    assert "audit requires firewall" in message
+    assert "SOPHOS_TOOL_DOMAINS" in message
+    assert Settings.from_env(env(SOPHOS_TOOL_DOMAINS="firewall,audit")).tool_domains == (
+        "firewall",
+        "audit",
+    )
+
+
+def test_an_empty_tool_domains_tuple_is_rejected() -> None:
+    """Direct construction must reject an empty selection, like the blank env value.
+
+    ``Settings(tool_domains=())`` would otherwise build a server with no tools at all, which
+    is never what an operator means and is indistinguishable from a misconfiguration.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(host="fw.example.com", api_key=KEY, tool_domains=())
+
+    message = str(excinfo.value)
+    assert "at least one domain" in message
+    for name in TOOL_DOMAINS:
+        assert name in message

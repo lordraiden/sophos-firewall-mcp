@@ -41,9 +41,10 @@ mcp 2.3.0 exposes no public equivalent. Verified against the installed 2.3.0 dis
 
 The tool-registry access is confined to one seam in
 `src/sophos_firewall_mcp/tools/__init__.py`: `_tool_manager()`, `_registered_tool()`,
-`registered_tool_count()` and `_flatten_arguments()`. The server-identity access is
-confined to `create_server` in `src/sophos_firewall_mcp/server.py`. `tests/test_sdk_compat.py`
-parses both modules and fails if any private attribute is touched outside its seam.
+`registered_tool_count()`, `registered_tool_names()`, `registered_read_only_tool_names()`
+and `_flatten_arguments()`. The server-identity access is confined to `create_server` in
+`src/sophos_firewall_mcp/server.py`. `tests/test_sdk_compat.py` parses both modules and
+fails if any private attribute is touched outside its seam.
 
 ## What the compatibility test proves
 

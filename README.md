@@ -53,6 +53,7 @@ Bearer API key.
 - [MCP client configuration](#mcp-client-configuration)
 - [Container usage](#container-usage)
 - [Read-only mode](#read-only-mode)
+- [Domain selection](#domain-selection)
 - [Security model](#security-model)
 - [Known limitations and accepted regressions](#known-limitations-and-accepted-regressions)
 - [Development](#development)
@@ -145,6 +146,9 @@ one key across automations.
 112 tools, 11 domains: **74 read-only and 38 mutations**, of which **7 take no arguments** and 105
 take arguments. The Access column shows whether a domain exposes mutation tools; with
 `SOPHOS_READ_ONLY_MODE=true` the server registers **74 tools and 0 mutations**.
+
+This is the complete catalog. A deployment that needs only some of it sets `SOPHOS_TOOL_DOMAINS` to
+publish just those domains — see [Domain selection](#domain-selection).
 
 The server publishes its identity in `serverInfo`: `name`, `title`, `version`, `websiteUrl` and a
 `description` that names the number of tools it actually registered — 112 here, 74 in read-only mode —
@@ -270,10 +274,14 @@ The catalog is static for the process lifetime, so:
   context window.
 - **Use read-only mode** (`SOPHOS_READ_ONLY_MODE=true`) to publish 74 tools instead of 112 when the
   deployment only inspects.
+- **Use domain selection** (`SOPHOS_TOOL_DOMAINS`) to publish only the domains the deployment needs:
+  `SOPHOS_TOOL_DOMAINS=firewall,nat` publishes 14 tools, and adding `SOPHOS_READ_ONLY_MODE=true`
+  publishes 4. See [Domain selection](#domain-selection).
 - The server publishes **4 resources** (`sophos://api/surface`, `sophos://coverage`,
-  `sophos://read-only-policy`, `sophos://conventions`) and **3 prompts** (`audit_firewall`,
+  `sophos://read-only-policy`, `sophos://conventions`) and up to **3 prompts** (`audit_firewall`,
   `explain_flow`, `find_unused_objects`), so a client can read the contract and the conventions
-  without loading the tool catalog.
+  without loading the tool catalog. A prompt is registered only when every tool its workflow names is
+  registered, so a filtered instance publishes only the workflows it can run.
 
 The payload is dominated by the output schemas. 0.7.0 removed **185,133 bytes** from the catalog
 (807,920 → 622,787, −22.9%) and 40 tools: the IPv4/IPv6 collapse behind `ip_family` removed 152,886
@@ -283,7 +291,7 @@ bytes (807,920 → 655,034), and publishing flat arguments removed a further 32,
 
 ## Configuration
 
-The server reads exactly these nine environment variables. There are no XML-era settings.
+The server reads exactly these ten environment variables. There are no XML-era settings.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -296,6 +304,7 @@ The server reads exactly these nine environment variables. There are no XML-era 
 | `SOPHOS_TIMEOUT` | no | `30` | Request timeout in seconds (connect, read, write and pool). |
 | `SOPHOS_MAX_CONCURRENCY` | no | `4` | Maximum concurrent HTTP requests to the appliance (1–64). |
 | `SOPHOS_READ_ONLY_MODE` | no | `false` | When `true`, mutation tools are not registered at all. |
+| `SOPHOS_TOOL_DOMAINS` | no | unset (all six) | Comma-separated allowlist of the domains to publish: `firewall`, `nat`, `objects`, `users`, `network`, `audit`. Unset publishes the complete 112-tool surface. See [Domain selection](#domain-selection). |
 
 Exactly one of `SOPHOS_API_KEY` / `SOPHOS_API_KEY_FILE` must be set; setting both is a startup error. The
 key is held as a `SecretStr` and never appears in logs, errors, `repr` or tool output. Environment proxy
@@ -447,6 +456,58 @@ Set `SOPHOS_READ_ONLY_MODE=true` to register only the 74 read-only tools. Mutati
 registered at all, so a client cannot discover or call them. This is defence in depth, not the primary
 control: the API key's administrator profile is what actually authorizes a request. Use a read-only
 administrator profile for any deployment that only needs inspection.
+
+Read-only mode composes with [domain selection](#domain-selection) and the two settings stay
+independent: the selection decides which capabilities exist, and read-only mode then removes the
+mutation tools *within* the selected domains.
+
+## Domain selection
+
+`SOPHOS_TOOL_DOMAINS` narrows the published tool surface to the domains a deployment needs, so a
+client is not handed 112 tool definitions when it uses six. It is a comma-separated allowlist of the
+six stable domain identifiers:
+
+| Identifier | Tools | Read-only | Mutations | What it publishes |
+|---|---:|---:|---:|---|
+| `firewall` | 8 | 2 | 6 | Firewall rules, including `firewall_rule_set_enabled` and `firewall_rule_clone`. |
+| `nat` | 6 | 2 | 4 | NAT rules. |
+| `objects` | 37 | 16 | 21 | Addresses, address groups, FQDN addresses and groups, MAC addresses, country groups, services and service groups. |
+| `users` | 8 | 4 | 4 | General users, network users and live sessions. |
+| `network` | 50 | 47 | 3 | Interfaces, zones, gateways, routes, SD-WAN, DHCP, DNS, neighbors, IPsec VPN, SSL VPN and network status. |
+| `audit` | 3 | 3 | 0 | The three composite tools. |
+
+Unset (the default) registers all six domains in the order above: exactly the 112 tools, with the same
+names and the same order as before the setting existed. A selection is normalised to that order, so
+`SOPHOS_TOOL_DOMAINS=audit,firewall` and `SOPHOS_TOOL_DOMAINS=firewall,audit` publish the same catalog
+in the same order.
+
+```env
+# Only the domains this deployment needs, and only their read-only tools.
+SOPHOS_TOOL_DOMAINS=firewall,nat,objects,network,audit
+SOPHOS_READ_ONLY_MODE=true
+```
+
+**Validation is strict.** An unknown identifier, an empty entry (`firewall,`), a blank value, a
+repeated identifier or a selection whose dependencies are missing fails startup with status `2` and
+one actionable line on `stderr`. Nothing is silently dropped, because a typo that quietly narrows the
+surface is only noticed when a client cannot find a tool.
+
+**Dependencies.** No domain depends on another domain being registered. The audit composites are the
+only cross-domain tools, and they call the other domains' adapter classes directly rather than their
+registered tools, so `SOPHOS_TOOL_DOMAINS=audit` publishes all three composites and works on its own.
+The dependency model is declared in `sophos_firewall_mcp.config.DOMAIN_DEPENDENCIES` (currently
+empty) and enforced at startup, so a future domain that does need another domain's registration is
+rejected instead of failing on its first call.
+
+**The published context follows the selection.** `sophos://api/surface`, `sophos://coverage`,
+`sophos://read-only-policy`, `sophos://conventions` and the server `instructions` describe the tools
+this process actually registered and name the domains it did not enable. A prompt is registered only
+when every tool its workflow names is registered, so a filtered instance never tells a model to call a
+tool it does not have. The full catalog totals stay visible in the resources, explicitly labelled as
+the catalog, so two deployments can be compared.
+
+This is a context-budget control, not an authorization boundary: it does not replace the Sophos
+administrator profile or a host-side approval policy.
 
 ## Security model
 

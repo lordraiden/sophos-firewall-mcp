@@ -12,7 +12,11 @@ Security rules enforced here:
 * ``SOPHOS_HOST`` is a bare hostname or IP address -- no scheme, user information, port, path,
   query or fragment -- so the base URL cannot be pointed at another origin;
 * the base URL is HTTPS by construction;
-* no legacy XML-era setting is read: the only recognised variables are the nine listed above.
+* ``SOPHOS_TOOL_DOMAINS`` is a closed allowlist: an unknown identifier, an empty entry, a
+  repeated identifier or a selection whose dependencies are missing is rejected instead of
+  being silently dropped, because a typo that quietly narrows the surface publishes a server
+  the operator did not ask for;
+* no legacy XML-era setting is read: the only recognised variables are the ten listed above.
 """
 
 from __future__ import annotations
@@ -21,6 +25,7 @@ import ipaddress
 import math
 import os
 import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -34,7 +39,13 @@ from pydantic import (
     model_validator,
 )
 
-__all__ = ["ConfigurationError", "Settings"]
+__all__ = [
+    "DOMAIN_DEPENDENCIES",
+    "TOOL_DOMAINS",
+    "ConfigurationError",
+    "Settings",
+    "validate_tool_domains",
+]
 
 #: Fixed API root of the Sophos Firewall Configuration REST API.
 API_PATH_PREFIX = "/api/firewall-config/v1"
@@ -59,6 +70,25 @@ DEFAULT_MAX_CONCURRENCY = 4
 #: misconfiguration switch the protection off, so the ceiling is enforced here rather than trusted.
 MAX_CONCURRENCY_LIMIT = 64
 
+#: Stable domain identifiers for ``SOPHOS_TOOL_DOMAINS``, in canonical registration order.
+#:
+#: One identifier per domain family of the registration architecture, so each one maps to exactly
+#: one ``register_<domain>_tools`` function: selecting a domain selects the tools that function
+#: registers and nothing else. The order is the order the complete default surface registers in,
+#: which is why a selection is normalised to it instead of keeping the operator's order.
+TOOL_DOMAINS: tuple[str, ...] = ("firewall", "nat", "objects", "users", "network", "audit")
+
+#: Domains whose tools need another domain's *registered tools*, not merely its adapters.
+#:
+#: Empty, and deliberately so. The audit composites are the only cross-domain tools, and they do
+#: not depend on another domain being registered: ``tools/audit.py`` imports the adapter classes
+#: (``FirewallRuleAdapter``, ``NatAdapter``, ``ObjectsAdapter``, ``ServicesAdapter``,
+#: ``NetworkAdapter``) and instantiates them from the request context, so an adapter is a class
+#: rather than a registered tool and ``audit`` works with any selection. The mapping is kept so a
+#: future domain that does need another domain's registration is declared here and rejected at
+#: startup by :func:`validate_tool_domains` instead of failing on its first call.
+DOMAIN_DEPENDENCIES: Mapping[str, frozenset[str]] = {}
+
 _HOST_LABEL = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
 _HOSTNAME_PATTERN = re.compile(rf"^{_HOST_LABEL}(?:\.{_HOST_LABEL})*$")
 
@@ -71,6 +101,7 @@ _ENV_CA_BUNDLE = "SOPHOS_CA_BUNDLE"
 _ENV_TIMEOUT = "SOPHOS_TIMEOUT"
 _ENV_READ_ONLY_MODE = "SOPHOS_READ_ONLY_MODE"
 _ENV_MAX_CONCURRENCY = "SOPHOS_MAX_CONCURRENCY"
+_ENV_TOOL_DOMAINS = "SOPHOS_TOOL_DOMAINS"
 
 
 class ConfigurationError(ValueError):
@@ -119,6 +150,87 @@ def _summarize(exc: ValidationError) -> str:
         location = ".".join(str(part) for part in error.get("loc", ())) or "configuration"
         details.append(f"{location}: {error.get('msg', 'invalid value')}")
     return "invalid configuration: " + "; ".join(details)
+
+
+def validate_tool_domains(domains: Iterable[str]) -> tuple[str, ...]:
+    """Validate a domain selection and return it in canonical registration order.
+
+    The rules are strict on purpose: an unknown identifier, a repeated identifier or a missing
+    dependency is an error, never a silently ignored entry. A typo that quietly drops a domain
+    publishes a surface the operator did not ask for, and the operator only finds out when a
+    client cannot find a tool.
+
+    Args:
+        domains: Domain identifiers, in any order.
+
+    Returns:
+        The same identifiers, in :data:`TOOL_DOMAINS` order, so registration order is
+        deterministic and independent of how the operator wrote the list.
+
+    Raises:
+        ConfigurationError: An identifier is unknown, an identifier is repeated, or a selected
+            domain needs another domain that is not selected.
+    """
+    selected = list(domains)
+    if not selected:
+        raise ConfigurationError(
+            f"{_ENV_TOOL_DOMAINS} must name at least one domain; accepted domains are "
+            f"{', '.join(TOOL_DOMAINS)}"
+        )
+    unknown = [name for name in selected if name not in TOOL_DOMAINS]
+    if unknown:
+        raise ConfigurationError(
+            f"{_ENV_TOOL_DOMAINS} contains unknown domain(s): {', '.join(unknown)}; "
+            f"accepted domains are {', '.join(TOOL_DOMAINS)}"
+        )
+    repeated = [name for name in TOOL_DOMAINS if selected.count(name) > 1]
+    if repeated:
+        raise ConfigurationError(
+            f"{_ENV_TOOL_DOMAINS} lists domain(s) more than once: {', '.join(repeated)}; "
+            "list each domain once"
+        )
+
+    chosen = frozenset(selected)
+    missing = {
+        name: sorted(DOMAIN_DEPENDENCIES[name] - chosen)
+        for name in TOOL_DOMAINS
+        if name in chosen and DOMAIN_DEPENDENCIES.get(name, frozenset()) - chosen
+    }
+    if missing:
+        details = "; ".join(
+            f"{name} requires {', '.join(absent)}" for name, absent in missing.items()
+        )
+        raise ConfigurationError(
+            f"{_ENV_TOOL_DOMAINS} selects a domain whose dependencies are missing: {details}. "
+            "Add the missing domains or drop the domain that needs them; for example "
+            f"{','.join(TOOL_DOMAINS)}"
+        )
+    return tuple(name for name in TOOL_DOMAINS if name in chosen)
+
+
+def _parse_tool_domains(raw: str) -> tuple[str, ...]:
+    """Parse the comma-separated ``SOPHOS_TOOL_DOMAINS`` value.
+
+    A blank value is an error rather than "unset": an operator who wrote the variable meant to
+    select something, and registering every domain instead would hide the mistake. Surrounding
+    whitespace around an entry is tolerated, exactly as it is for every other optional setting;
+    an entry that is *only* whitespace is an empty entry and is rejected.
+    """
+    if raw.strip() == "":
+        raise ConfigurationError(
+            f"{_ENV_TOOL_DOMAINS} is set but empty; list at least one domain "
+            f"({', '.join(TOOL_DOMAINS)}) or remove the setting to register every domain"
+        )
+    names: list[str] = []
+    for position, entry in enumerate(raw.split(","), start=1):
+        name = entry.strip()
+        if name == "":
+            raise ConfigurationError(
+                f"{_ENV_TOOL_DOMAINS} has an empty entry at position {position}; use a "
+                f"comma-separated list such as {','.join(TOOL_DOMAINS)}"
+            )
+        names.append(name)
+    return validate_tool_domains(names)
 
 
 def _validate_host(value: str) -> str:
@@ -188,6 +300,7 @@ class Settings(BaseModel):
     timeout: float = Field(default=DEFAULT_TIMEOUT)
     read_only_mode: bool = False
     max_concurrency: int = Field(default=DEFAULT_MAX_CONCURRENCY)
+    tool_domains: tuple[str, ...] | None = None
 
     @field_validator("host")
     @classmethod
@@ -244,6 +357,18 @@ class Settings(BaseModel):
             raise ValueError(f"CA bundle does not exist or is not a file: {value}")
         return value
 
+    @field_validator("tool_domains")
+    @classmethod
+    def _check_tool_domains(cls, value: tuple[str, ...] | None) -> tuple[str, ...] | None:
+        """Apply the domain rules to a selection built directly, not only through ``from_env``.
+
+        ``Settings(...)`` is a public constructor, so an unknown identifier, a repeated one or a
+        missing dependency is rejected there too instead of reaching the server factory.
+        """
+        if value is None:
+            return None
+        return validate_tool_domains(value)
+
     @model_validator(mode="after")
     def _check_tls_combination(self) -> "Settings":
         if self.ca_bundle is not None and not self.verify_ssl:
@@ -282,8 +407,8 @@ class Settings(BaseModel):
 
         Raises:
             ConfigurationError: A required value is missing, the two key sources are both set, the
-                secret file cannot be read, or a value is invalid. The message never contains the
-                API key.
+                secret file cannot be read, a value is invalid, or ``SOPHOS_TOOL_DOMAINS`` names an
+                unknown, repeated or empty domain. The message never contains the API key.
         """
         source: Mapping[str, str] = os.environ if env is None else env
 
@@ -333,6 +458,12 @@ class Settings(BaseModel):
         max_concurrency = _optional(source, _ENV_MAX_CONCURRENCY)
         if max_concurrency is not None:
             values["max_concurrency"] = max_concurrency
+        # Read with ``_raw``, not ``_optional``: for this setting a blank value is a mistake to
+        # report, not an absent setting to default. ``None`` here means "unset", which keeps the
+        # complete default surface.
+        raw_domains = _raw(source, _ENV_TOOL_DOMAINS)
+        if raw_domains is not None:
+            values["tool_domains"] = _parse_tool_domains(raw_domains)
 
         try:
             return cls(**values)

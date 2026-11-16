@@ -76,6 +76,28 @@ PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
 #: Set by the slow synthetic handler so the cancellation test knows the handler is running.
 _SLOW_STARTED: asyncio.Event | None = None
 
+#: The exact server instructions of the complete default surface, pinned as a literal.
+#:
+#: ``INSTRUCTIONS`` is assembled from a base string plus a prompt clause, so comparing the
+#: published value to the constant compares the constant to itself and cannot detect a
+#: wording change. The literal is the published contract: changing it is a deliberate
+#: decision, not a refactor side effect.
+EXPECTED_INSTRUCTIONS = (
+    "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
+    "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
+    "rules, address and service objects, users and live sessions. Read-only tools never "
+    "modify the appliance. When the server runs in read-only mode, mutation tools are "
+    "not registered at all. Every tool that takes arguments takes them flat: the fields "
+    "its `inputSchema` lists are the fields the call sends, with no wrapper object. A tool "
+    "whose request is a union of shapes publishes a root `oneOf` instead, and its "
+    "discriminator (`ip_family` or `type`) selects the variant; `mac_address_create` "
+    "publishes `anyOf` because the API declares no discriminator. Every "
+    "successful result carries the same payload twice, as `content` text and as "
+    "`structuredContent`; read one of them, not both. Read `sophos://conventions` before "
+    "the first call; the prompts `audit_firewall`, `explain_flow` and "
+    "`find_unused_objects` carry the three analysis workflows."
+)
+
 
 # -- Synthetic domain models (module level so the SDK can resolve the annotations) -----
 
@@ -277,7 +299,7 @@ def test_create_server_builds_the_stdio_server():
     server = create_server(make_settings())
 
     assert server.name == SERVER_NAME
-    assert server.instructions == INSTRUCTIONS
+    assert server.instructions == EXPECTED_INSTRUCTIONS
     # subscriptions=False unregisters subscriptions/listen: the catalog is static.
     #
     # This reaches into `_lowlevel_server` deliberately: the SDK exposes no public way to
@@ -1770,3 +1792,259 @@ async def test_resources_and_prompts_are_served_over_the_wire_with_cache_hints()
     assert read.ttl_ms == server_module._CATALOG_TTL_MS
     assert read.contents[0].text
     assert rendered.messages[0].content.text
+
+
+# -- Domain selection (SOPHOS_TOOL_DOMAINS) --------------------------------------------
+#
+# ``SOPHOS_TOOL_DOMAINS`` narrows the tool surface to the domains a deployment needs. The
+# exact per-domain tool names and counts are pinned in ``tests/test_tool_surface.py``; these
+# tests cover the wiring: the factory honours the setting, an explicit registrar list still
+# overrides it, an invalid selection fails startup, and the resources, prompts and
+# instructions describe the surface this process actually registered.
+
+
+def domain_settings(*domains: str, read_only: bool = False) -> Settings:
+    """Settings that select exactly *domains*."""
+    return make_settings(read_only_mode=read_only, tool_domains=domains)
+
+
+async def domain_tool_names(domain: str, *, read_only: bool = False) -> list[str]:
+    """The tools one domain registers, through its real registrar."""
+    server = create_server(
+        make_settings(read_only_mode=read_only),
+        domains=[server_module.DOMAIN_REGISTRARS[domain]],
+    )
+    return [tool.name for tool in await server.list_tools()]
+
+
+async def test_create_server_honours_the_domain_selection():
+    """A selection publishes the union of its domains, in canonical order."""
+    server = create_server(domain_settings("firewall", "nat", "audit"))
+
+    names = [tool.name for tool in await server.list_tools()]
+    expected: list[str] = []
+    for domain in ("firewall", "nat", "audit"):
+        expected.extend(await domain_tool_names(domain))
+
+    assert names == expected
+    assert len(names) == 17
+
+
+async def test_a_selection_publishes_nothing_from_an_excluded_domain():
+    server = create_server(domain_settings("firewall", "nat"))
+
+    names = {tool.name for tool in await server.list_tools()}
+    excluded = set(await domain_tool_names("objects")) | set(await domain_tool_names("network"))
+
+    assert not names & excluded
+    assert len(names) == 14
+
+
+async def test_create_server_from_env_honours_the_domain_selection():
+    server = create_server_from_env(
+        {
+            "SOPHOS_HOST": "192.0.2.10",
+            "SOPHOS_API_KEY": "test-api-key",
+            "SOPHOS_TOOL_DOMAINS": "nat,firewall",
+        }
+    )
+
+    names = [tool.name for tool in await server.list_tools()]
+
+    assert names == await domain_tool_names("firewall") + await domain_tool_names("nat")
+
+
+async def test_an_explicit_domains_iterable_overrides_the_setting():
+    """The registrar seam wins over the setting, which is what the domain tests rely on."""
+    server = create_server(
+        domain_settings("firewall"),
+        domains=[server_module.DOMAIN_REGISTRARS["nat"]],
+    )
+
+    assert [tool.name for tool in await server.list_tools()] == await domain_tool_names("nat")
+
+
+def test_an_invalid_domain_selection_fails_startup():
+    with pytest.raises(ConfigurationError) as excinfo:
+        create_server_from_env(
+            {
+                "SOPHOS_HOST": "192.0.2.10",
+                "SOPHOS_API_KEY": "test-api-key",
+                "SOPHOS_TOOL_DOMAINS": "firewall,firewal",
+            }
+        )
+
+    message = str(excinfo.value)
+    assert "SOPHOS_TOOL_DOMAINS" in message
+    assert "firewal" in message
+
+
+def test_main_reports_an_invalid_domain_selection_on_stderr(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        server_module.main(
+            {
+                "SOPHOS_HOST": "192.0.2.10",
+                "SOPHOS_API_KEY": "test-api-key",
+                "SOPHOS_TOOL_DOMAINS": "firewall,",
+            }
+        )
+
+    assert excinfo.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "SOPHOS_TOOL_DOMAINS" in captured.err
+
+
+async def test_the_surface_resource_describes_the_registered_surface():
+    server = create_server(domain_settings("firewall", "nat"))
+    text = (await server.read_resource("sophos://api/surface"))[0].content
+
+    assert "| Domains enabled in this process | firewall and nat (2 of 6) |" in text
+    assert "| Tools registered in this process | 14 (4 read-only, 10 mutations) |" in text
+    # The catalog facts stay, because they describe the API rather than this process.
+    assert "| Operations exposed as tools | 145 |" in text
+    # Only the composites of the enabled domains are listed: the two firewall ones are
+    # registered, the three audit ones are not.
+    assert "2 composite tools compose audited operations" in text
+    assert "`firewall_rule_clone`" in text
+    assert "`firewall_rule_set_enabled`" in text
+    for name in ("audit_firewall_rules", "explain_connectivity", "find_object_usage"):
+        assert f"`{name}`" not in text
+
+
+async def test_the_coverage_resource_marks_the_domains_this_process_did_not_enable():
+    server = create_server(domain_settings("firewall", "nat"))
+    text = (await server.read_resource("sophos://coverage"))[0].content
+
+    assert "This process enables 2 of the 6 domains (firewall and nat)" in text
+    assert "14 of the 112 catalog tools (4 read-only, 10 mutations)" in text
+    assert "The objects, users, network and audit domains are not enabled" in text
+    assert "| Addresses and address groups | 48 | 27 (not enabled) | read + write |" in text
+    assert "| Firewall rules | 14 | 8 | read + write |" in text
+
+
+async def test_the_read_only_policy_states_the_counts_of_this_process():
+    writable = create_server(domain_settings("firewall", "nat"))
+    writable_text = (await writable.read_resource("sophos://read-only-policy"))[0].content
+
+    assert "all 14 tools are registered" in writable_text
+    assert "including the 10 mutations" in writable_text
+    assert "This process enables 2 of the 6 domains (firewall and nat)" in writable_text
+
+    read_only = create_server(domain_settings("firewall", "nat", read_only=True))
+    read_only_text = (await read_only.read_resource("sophos://read-only-policy"))[0].content
+
+    assert "the mutation tools of the enabled domains are" in read_only_text
+    assert "not registered at all" in read_only_text
+    assert len(await read_only.list_tools()) == 4
+
+
+async def test_the_conventions_resource_lists_only_registered_no_argument_tools():
+    server = create_server(domain_settings("users"))
+    text = (await server.read_resource("sophos://conventions"))[0].content
+
+    assert "`live_user_list`" in text
+    assert "`dns_settings_get`" not in text
+    assert "8 of the 8 tools take arguments" not in text
+    assert "7 of the 8 tools take arguments" in text
+    # One no-argument tool: the sentence has to agree with it.
+    assert "The other 1 takes an empty `arguments` object" in text
+
+
+@pytest.mark.parametrize(
+    ("domains", "expected"),
+    [
+        (("firewall", "nat", "objects", "users", "network", "audit"), PROMPT_NAMES),
+        (("firewall", "nat", "objects", "network", "audit"), PROMPT_NAMES),
+        (("firewall", "nat", "objects", "network"), ()),
+        (("firewall", "nat"), ()),
+        (("audit",), ("find_unused_objects",)),
+        (("objects", "audit"), ("find_unused_objects",)),
+        (("firewall", "nat", "objects", "audit"), ("audit_firewall", "find_unused_objects")),
+    ],
+)
+async def test_a_prompt_is_registered_only_when_its_tools_are(
+    domains: tuple[str, ...], expected: tuple[str, ...]
+) -> None:
+    """A prompt names concrete tools, so it is absent when one of them is absent."""
+    server = create_server(domain_settings(*domains))
+
+    assert tuple(prompt.name for prompt in await server.list_prompts()) == expected
+
+
+async def test_the_instructions_name_the_enabled_domains_and_prompts():
+    server = create_server(domain_settings("firewall", "nat"))
+    instructions = server.instructions
+
+    assert instructions is not None
+    assert "This process enables 2 of the 6 domains (firewall and nat)" in instructions
+    assert "14 of the 112 catalog tools (4 read-only, 10 mutations)" in instructions
+    for name in PROMPT_NAMES:
+        assert name not in instructions
+
+
+async def test_the_complete_surface_keeps_the_unchanged_instructions():
+    """The full surface publishes the previous instructions verbatim, not a paraphrase."""
+    server = create_server(make_settings())
+
+    assert INSTRUCTIONS == EXPECTED_INSTRUCTIONS
+    assert server.instructions == EXPECTED_INSTRUCTIONS
+    assert "the prompts `audit_firewall`, `explain_flow` and `find_unused_objects`" in (
+        EXPECTED_INSTRUCTIONS
+    )
+    assert "carry the three analysis workflows." in EXPECTED_INSTRUCTIONS
+
+
+@pytest.mark.parametrize(
+    "domains",
+    [
+        ("firewall",),
+        ("users",),
+        ("audit",),
+        ("firewall", "nat"),
+        ("firewall", "nat", "objects", "network", "audit"),
+    ],
+)
+async def test_a_filtered_instance_never_names_an_unregistered_tool(
+    domains: tuple[str, ...],
+) -> None:
+    """Every tool-shaped name in the published text is a tool this process registered."""
+    server = create_server(domain_settings(*domains))
+    names = {tool.name for tool in await server.list_tools()}
+    prefixes = tuple(
+        prefix for domain in resources_module.COVERAGE_DOMAINS for prefix in domain.tool_prefixes
+    )
+
+    texts = list((await read_all_resources(server)).values())
+    for name, arguments in PROMPT_ARGUMENTS.items():
+        if name in {prompt.name for prompt in await server.list_prompts()}:
+            result = await server.get_prompt(name, arguments)
+            texts.append(result.messages[0].content.text)
+
+    for text in texts:
+        for token in re.findall(r"`([a-z][a-z0-9_]*)`", text):
+            if token.startswith(prefixes):
+                assert token in names, f"{token} looks like a tool but is not registered"
+
+
+@pytest.mark.parametrize(
+    "domains",
+    [
+        ("firewall",),
+        ("users",),
+        ("audit",),
+        ("firewall", "nat"),
+        ("firewall", "nat", "objects", "network", "audit"),
+    ],
+)
+async def test_a_filtered_instance_stays_within_the_resource_budget(
+    domains: tuple[str, ...],
+) -> None:
+    """The passive context stays bounded for every selection, not only the default one."""
+    server = create_server(domain_settings(*domains))
+
+    contents = await read_all_resources(server)
+
+    for uri, text in contents.items():
+        assert len(text) <= MAX_RESOURCE_CHARS, f"{uri} is {len(text)} characters"
+    assert sum(len(text) for text in contents.values()) <= MAX_RESOURCE_TOTAL_CHARS

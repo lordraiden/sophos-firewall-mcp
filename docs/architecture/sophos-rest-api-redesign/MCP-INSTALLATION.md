@@ -263,6 +263,12 @@ panel is the management surface; the second is what to paste if the CLI is unava
 the schema default (`@deepseek-ai/dsh-mcp-client`, `cwd: z.string().default("")`), so omitting it is
 equivalent.
 
+To narrow the published tool surface, add `SOPHOS_TOOL_DOMAINS` to the same `env` map — for example
+`SOPHOS_TOOL_DOMAINS: firewall,nat,objects,network,audit` publishes 104 tools instead of 112, and
+combining it with `SOPHOS_READ_ONLY_MODE: 'true'` publishes the 70 read-only tools of those five
+domains. Leaving it unset keeps the complete surface. The accepted identifiers, the validation rules
+and the per-domain counts are in the README's "Domain selection" section.
+
 ### 5.3 CLI command
 
 `dsh-panel mcp add` supports exactly this, non-interactively (`README.en.md:174-205`,

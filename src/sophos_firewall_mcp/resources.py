@@ -7,25 +7,27 @@ context a model needs *before* it calls them -- the REST API surface, the covera
 the read-only policy and the calling conventions -- is published here once instead of
 being repeated in 112 tool descriptions.
 
-Every resource is a constant for the process lifetime. The read-only mode is resolved
-before registration and nothing else in the content depends on request state, which is why
-:mod:`sophos_firewall_mcp.server` gives ``resources/list`` and ``resources/read`` the same
-long cache hint as ``tools/list``.
+Every resource is a constant for the process lifetime, but not a constant of the codebase:
+each document is built from the :class:`SurfaceSummary` the server factory reads back from
+the live tool registry, so a process that enables only some domains describes the tools it
+actually publishes. The catalog totals stay in the documents as the *full supported
+catalog*, explicitly distinguished from the subset this process enabled, because an
+operator comparing two deployments needs both numbers.
 
 The coverage matrix is a summary of ``docs/API-COVERAGE.md``, which is generated from the
 checked-in OpenAPI document. That document is not shipped in the wheel, so the summary is
 embedded here and ``tests/test_server.py`` compares it against the document: a
 regeneration that changes a count fails the test instead of leaving a stale resource.
 
-Nothing here touches the network, the appliance or the tool registry: a resource is a
-string built from module-level constants.
+Nothing here touches the network or the appliance: a resource is a string built from
+module-level constants and the surface summary.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, NamedTuple
 
-from sophos_firewall_mcp.config import API_PATH_PREFIX
+from sophos_firewall_mcp.config import API_PATH_PREFIX, TOOL_DOMAINS
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the mcp import out of this module
     from mcp.server.mcpserver import MCPServer
@@ -48,6 +50,7 @@ __all__ = [
     "TOOL_MAP_COUNT",
     "TOTAL_TOOL_COUNT",
     "CoverageDomain",
+    "SurfaceSummary",
     "register_resources",
 ]
 
@@ -119,6 +122,84 @@ NO_ARGUMENT_TOOLS: tuple[str, ...] = (
 ARGUMENT_TOOL_COUNT = TOTAL_TOOL_COUNT - len(NO_ARGUMENT_TOOLS)
 
 
+def _join(names: tuple[str, ...]) -> str:
+    """Join names as ``a, b and c``; ``none`` for an empty selection."""
+    if not names:
+        return "none"
+    if len(names) == 1:
+        return names[0]
+    return f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+class SurfaceSummary(NamedTuple):
+    """The tool surface this process actually registered.
+
+    The resources and the server instructions describe *this*, not the catalog: a filtered
+    instance must never claim a tool it did not register. The server factory builds it from
+    the live tool registry after every selected domain has registered, so the counts and the
+    names cannot drift from ``tools/list``.
+
+    Attributes:
+        domains: The domain identifiers this process enabled, in canonical order. Empty when
+            the server was built from an explicit registrar list that names no known domain
+            (the synthetic registrars the tests use).
+        tool_names: Every registered tool name, in registration order.
+        read_only_tool_names: The registered names whose annotation is ``readOnlyHint=true``.
+    """
+
+    domains: tuple[str, ...]
+    tool_names: tuple[str, ...]
+    read_only_tool_names: tuple[str, ...]
+
+    @property
+    def tool_count(self) -> int:
+        """Tools registered in this process."""
+        return len(self.tool_names)
+
+    @property
+    def read_only_tool_count(self) -> int:
+        """Registered tools that only read from the appliance."""
+        return len(self.read_only_tool_names)
+
+    @property
+    def mutation_tool_count(self) -> int:
+        """Registered tools that mutate the appliance; zero in read-only mode."""
+        return self.tool_count - self.read_only_tool_count
+
+    @property
+    def is_full(self) -> bool:
+        """Whether every domain is enabled, so the surface is the complete catalog."""
+        return self.domains == TOOL_DOMAINS
+
+    @property
+    def disabled_domains(self) -> tuple[str, ...]:
+        """The domains this process does not enable, in canonical order."""
+        return tuple(name for name in TOOL_DOMAINS if name not in self.domains)
+
+    def enabled_summary(self) -> str:
+        """One sentence naming the enabled domains and the counts they publish.
+
+        It never claims the complete catalog unless every domain is enabled, and it names the
+        excluded domains explicitly so a reader knows their tools are absent rather than
+        merely undocumented.
+        """
+        if self.is_full:
+            return (
+                f"All {len(TOOL_DOMAINS)} domains are enabled ({_join(TOOL_DOMAINS)}): "
+                f"{self.tool_count} tools ({self.read_only_tool_count} read-only, "
+                f"{self.mutation_tool_count} mutations)."
+            )
+        disabled = self.disabled_domains
+        return (
+            f"This process enables {len(self.domains)} of the {len(TOOL_DOMAINS)} domains "
+            f"({_join(self.domains)}): {self.tool_count} of the {TOTAL_TOOL_COUNT} catalog "
+            f"tools ({self.read_only_tool_count} read-only, {self.mutation_tool_count} "
+            f"mutations). The {_join(disabled)} "
+            f"{'domain is' if len(disabled) == 1 else 'domains are'} not enabled, so those "
+            "tools are not registered."
+        )
+
+
 def _method_count(method: str) -> int:
     """Operations the document declares for one HTTP method."""
     return dict(API_OPERATIONS_BY_METHOD)[method]
@@ -135,6 +216,9 @@ class CoverageDomain(NamedTuple):
         access: The access the domain exposes, as published in the README table.
         tool_prefixes: Name prefixes that identify the domain's tools. The prefixes
             partition the published surface: every tool matches exactly one domain.
+        domain: The ``SOPHOS_TOOL_DOMAINS`` identifier this row belongs to, or ``None`` for
+            a row that publishes no tool at all (the excluded families). The coverage
+            resource marks the rows of a domain this process did not enable.
     """
 
     title: str
@@ -142,6 +226,7 @@ class CoverageDomain(NamedTuple):
     tools: int
     access: str
     tool_prefixes: tuple[str, ...]
+    domain: str | None = None
 
 
 #: The coverage matrix, in the canonical domain order of the generated document.
@@ -149,26 +234,28 @@ class CoverageDomain(NamedTuple):
 #: ``api_operations`` sums to :data:`API_OPERATIONS` and ``tools`` to
 #: :data:`TOTAL_TOOL_COUNT`; both are asserted in ``tests/test_server.py``.
 COVERAGE_DOMAINS: tuple[CoverageDomain, ...] = (
-    CoverageDomain("Firewall rules", 14, 8, "read + write", ("firewall_rule_",)),
-    CoverageDomain("NAT rules", 14, 6, "read + write", ("nat_rule_",)),
+    CoverageDomain("Firewall rules", 14, 8, "read + write", ("firewall_rule_",), "firewall"),
+    CoverageDomain("NAT rules", 14, 6, "read + write", ("nat_rule_",), "nat"),
     CoverageDomain(
         "Addresses and address groups",
         48,
         27,
         "read + write",
         ("address_", "mac_address_", "country_group_"),
+        "objects",
     ),
-    CoverageDomain("Services and service groups", 12, 10, "read + write", ("service_",)),
+    CoverageDomain("Services and service groups", 12, 10, "read + write", ("service_",), "objects"),
     CoverageDomain(
         "Authentication users, administrators and groups",
         23,
         6,
         "read + write",
         ("network_user_", "user_"),
+        "users",
     ),
-    CoverageDomain("Live users", 2, 2, "read + write", ("live_user_",)),
-    CoverageDomain("IPsec VPN", 30, 11, "read-only", ("ipsec_",)),
-    CoverageDomain("SSL VPN", 26, 9, "read-only", ("sslvpn_",)),
+    CoverageDomain("Live users", 2, 2, "read + write", ("live_user_",), "users"),
+    CoverageDomain("IPsec VPN", 30, 11, "read-only", ("ipsec_",), "network"),
+    CoverageDomain("SSL VPN", 26, 9, "read-only", ("sslvpn_",), "network"),
     CoverageDomain(
         "Network",
         113,
@@ -186,18 +273,43 @@ COVERAGE_DOMAINS: tuple[CoverageDomain, ...] = (
             "dns_",
             "static_neighbor_",
         ),
+        "network",
     ),
-    CoverageDomain("Network status", 2, 2, "read-only", ("network_status_",)),
-    CoverageDomain("Audit (composite)", 0, 3, "read-only", ("audit_", "explain_", "find_")),
+    CoverageDomain("Network status", 2, 2, "read-only", ("network_status_",), "network"),
+    CoverageDomain(
+        "Audit (composite)", 0, 3, "read-only", ("audit_", "explain_", "find_"), "audit"
+    ),
     CoverageDomain("Administration and system", 31, 0, "excluded", ()),
     CoverageDomain("Other catalog", 385, 0, "excluded", ()),
 )
 
 
-def _surface_document() -> str:
+def _surface_document(surface: SurfaceSummary) -> str:
     """The REST API surface and the tool mapping, as Markdown."""
     methods = ", ".join(f"{method} {count}" for method, count in API_OPERATIONS_BY_METHOD)
-    composites = "\n".join(f"- `{name}`" for name in COMPOSITE_TOOLS)
+    composites = tuple(name for name in COMPOSITE_TOOLS if name in surface.tool_names)
+    if composites:
+        composite_block = (
+            f"{len(composites)} composite tools compose audited operations and add no endpoint:\n\n"
+            + "\n".join(f"- `{name}`" for name in composites)
+        )
+    else:
+        composite_block = "No composite tool is registered in this process."
+    naming_examples = tuple(
+        name
+        for name in ("firewall_rule_list", "nat_rule_get", "address_create_fqdn")
+        if name in surface.tool_names
+    )
+    naming = (
+        ": for example " + ", ".join(f"`{name}`" for name in naming_examples)
+        if naming_examples
+        else ""
+    )
+    domains_cell = (
+        f"{_join(TOOL_DOMAINS)} (all {len(TOOL_DOMAINS)})"
+        if surface.is_full
+        else f"{_join(surface.domains)} ({len(surface.domains)} of {len(TOOL_DOMAINS)})"
+    )
     return f"""# Sophos Firewall Configuration REST API
 
 This server administers one Sophos Firewall (SFOS 23) appliance through its Configuration
@@ -206,15 +318,10 @@ endpoint of its own.
 
 ## Connection
 
-| Fact | Value |
-|---|---|
-| Base URL | `https://<host>:<port>{API_PATH_PREFIX}` |
-| Default port | 4444 (the Web Admin Console port) |
-| Authentication | HTTP bearer, one API key created in the Web Admin Console |
-| Transport | HTTPS only; MCP over STDIO, diagnostics on stderr |
-
-The base URL is fixed by configuration. No tool argument can name a host, a path, a URL or
-a header.
+Base URL `https://<host>:<port>{API_PATH_PREFIX}`, default port 4444 (the Web Admin Console
+port), HTTP bearer with one API key, HTTPS only, MCP over STDIO with diagnostics on stderr.
+The base URL is fixed by configuration: no tool argument can name a host, a path, a URL or a
+header.
 
 ## Inventory
 
@@ -226,15 +333,17 @@ a header.
 | Operations exposed as tools | {TOOL_MAP_COUNT} |
 | One-to-one tools over those operations | {ONE_TO_ONE_TOOL_COUNT} |
 | Composite tools over those operations | {COMPOSITE_TOOL_COUNT} |
-| Tools published | {TOTAL_TOOL_COUNT} ({READ_ONLY_TOOL_COUNT} read-only, {MUTATION_TOOL_COUNT} mutations) |
+| Domains enabled in this process | {domains_cell} |
+| Tools registered in this process | {surface.tool_count} ({surface.read_only_tool_count} read-only, {surface.mutation_tool_count} mutations) |
+
+The last two rows describe this process; the rest describe the catalog it supports.
 
 ## Pagination
 
-{API_PAGINATED_GET_OPERATIONS} GET operations declare `page`, `pageSize` and `pageTotal`. A tool publishes them
-as `page`, `page_size` and `page_total`. `page` is 1-based and defaults to 1,
-`page_total` defaults to false, and the tool's `page_size` defaults to 10 (the API's own
-default is 50). One call returns one page plus the appliance's page metadata; the server
-never walks a collection for you.
+{API_PAGINATED_GET_OPERATIONS} GET operations declare `page`, `pageSize` and `pageTotal`; a tool publishes them as
+`page`, `page_size` and `page_total`. `page` is 1-based, `page_size` defaults to 10 (the
+API's own default is 50) and `page_total` defaults to false. One call returns one page plus
+the appliance's page metadata; the server never walks a collection for you.
 
 ## Errors
 
@@ -250,32 +359,34 @@ property.
 
 ## Tool mapping
 
-One tool per concept, named `<resource>_<verb>`: for example `firewall_rule_list`,
-`nat_rule_get`, `address_create_fqdn`. The IPv4 and IPv6 families share one tool and the
+One tool per concept, named `<resource>_<verb>`{naming}. The IPv4 and IPv6 families share one tool and the
 required `ip_family` argument (`ipv4` or `ipv6`) selects the collection, so the family is
 never inferred. The wire body is unchanged for each family.
 
-Five composite tools compose audited operations and add no endpoint:
-
-{composites}
+{composite_block}
 
 Read `sophos://coverage` for the per-domain matrix, `sophos://conventions` for the calling
 conventions and `sophos://read-only-policy` for what the server does and does not do.
 """
 
 
-def _coverage_document() -> str:
+def _coverage_document(surface: SurfaceSummary) -> str:
     """The per-domain coverage matrix, as Markdown."""
     rows = "\n".join(
-        f"| {domain.title} | {domain.api_operations} | {domain.tools} | {domain.access} |"
+        f"| {domain.title} | {domain.api_operations} | {_tools_cell(domain, surface)} "
+        f"| {domain.access} |"
         for domain in COVERAGE_DOMAINS
     )
     api_total = sum(domain.api_operations for domain in COVERAGE_DOMAINS)
     tool_total = sum(domain.tools for domain in COVERAGE_DOMAINS)
     return f"""# Coverage matrix
 
-{api_total} operations across {API_PATHS} paths, published as {tool_total} tools: {ONE_TO_ONE_TOOL_COUNT} tools map one-to-one
+The full supported catalog: {api_total} operations across {API_PATHS} paths, published as {tool_total} tools: {ONE_TO_ONE_TOOL_COUNT} tools map one-to-one
 to an audited operation (the IPv4/IPv6 pairs share one tool each) and {COMPOSITE_TOOL_COUNT} are composites over those same operations.
+
+## Enabled in this process
+
+{surface.enabled_summary()}
 
 | Domain | API operations | Tools | Access |
 |---|---:|---:|---|
@@ -295,29 +406,81 @@ OpenAPI document and is not shipped in the wheel, which is why this summary is e
 """
 
 
-def _read_only_document(*, read_only: bool) -> str:
+def _tools_cell(domain: CoverageDomain, surface: SurfaceSummary) -> str:
+    """The Tools cell of one coverage row, marked when the row's domain is not enabled."""
+    if domain.domain is None or domain.domain in surface.domains:
+        return str(domain.tools)
+    return f"{domain.tools} (not enabled)"
+
+
+def _read_only_document(surface: SurfaceSummary, *, read_only: bool) -> str:
     """What the server does and does not do, as Markdown."""
     mode = "enabled" if read_only else "disabled"
     if read_only:
+        # The registry holds no mutation in this mode, so its count is zero and cannot say
+        # what read-only mode removed. The catalog constant is correct when every domain is
+        # enabled; a filtered instance names the domains instead of inventing a number.
+        removed = (
+            f"the {MUTATION_TOOL_COUNT} mutation tools are"
+            if surface.is_full
+            else "the mutation tools of the enabled domains are"
+        )
         mutation_sentence = (
-            f"Read-only mode is **{mode}** in this process: the {MUTATION_TOOL_COUNT} mutation tools are\n"
-            "not registered at all. They are absent from `tools/list`, not hidden behind a\n"
-            "runtime check, so a call cannot reach them."
+            f"Read-only mode is **{mode}** in this process: {removed}\nnot registered at all. "
+            "They are absent from `tools/list`, not hidden behind a\nruntime check, so a call "
+            "cannot reach them."
         )
     else:
         mutation_sentence = (
-            f"Read-only mode is **{mode}** in this process: all {TOTAL_TOOL_COUNT} tools are registered,\n"
-            f"including the {MUTATION_TOOL_COUNT} mutations. Set `SOPHOS_READ_ONLY_MODE=true` to publish\n"
-            f"only the {READ_ONLY_TOOL_COUNT} read-only tools."
+            f"Read-only mode is **{mode}** in this process: all {surface.tool_count} tools are "
+            "registered,\nincluding the "
+            f"{surface.mutation_tool_count} mutations. Set `SOPHOS_READ_ONLY_MODE=true` to "
+            f"publish\nonly the {surface.read_only_tool_count} read-only tools."
+        )
+    if surface.is_full:
+        domains_sentence = f"All {len(TOOL_DOMAINS)} domains are enabled ({_join(TOOL_DOMAINS)})."
+    else:
+        disabled = surface.disabled_domains
+        domains_sentence = (
+            f"This process enables {len(surface.domains)} of the {len(TOOL_DOMAINS)} domains "
+            f"({_join(surface.domains)}); the {_join(disabled)} "
+            f"{'domain is' if len(disabled) == 1 else 'domains are'} not registered."
+        )
+    vlan_tools = tuple(
+        name
+        for name in (
+            "network_interface_create_vlan",
+            "network_interface_update_vlan",
+            "network_interface_delete_vlan",
+        )
+        if name in surface.tool_names
+    )
+    if vlan_tools:
+        vlan_sentence = (
+            "- No interface write other than a VLAN: "
+            + ", ".join(f"`{name}`" for name in vlan_tools)
+            + " read the interface\n  first and refuse any type other than `vlan`.\n"
+        )
+    else:
+        vlan_sentence = ""
+    if "explain_connectivity" in surface.tool_names:
+        packet_sentence = (
+            "- No packet test. The API exposes no ping, traceroute, packet capture or live flow\n"
+            "  simulation, so `explain_connectivity` analyses configuration and says so.\n"
+        )
+    else:
+        packet_sentence = (
+            "- No packet test. The API exposes no ping, traceroute, packet capture or live flow\n"
+            "  simulation.\n"
         )
     return f"""# Read-only policy
 
 ## What this server does
 
 - Administers exactly one Sophos Firewall appliance through its Configuration REST API.
-- Publishes narrow, typed tools: list, get, create, update, move and delete for firewall
-  and NAT rules, address and service objects, users and live sessions, plus read-only
-  network, VPN and status tools.
+- Publishes narrow, typed tools for the enabled domains: list, get, create, update, move and
+  delete for firewall and NAT rules, address and service objects, users and live sessions,
+  plus read-only network, VPN and status tools.
 - Annotates every tool: a read-only tool carries `readOnlyHint=true`; a mutation carries
   `readOnlyHint=false` plus `destructiveHint` and `idempotentHint` where they apply.
 - Reads one page per call and returns the appliance's page metadata instead of walking a
@@ -327,19 +490,16 @@ def _read_only_document(*, read_only: bool) -> str:
 
 - No shell, no file access and no arbitrary HTTP. A tool argument can never name a host, a
   path, a URL or a header; the base URL comes from configuration only.
-- No packet test. The API exposes no ping, traceroute, packet capture or live flow
-  simulation, so `explain_connectivity` analyses configuration and says so.
-- No bulk delete, no administrator CRUD, no user-group CRUD, no network-user login or
+{packet_sentence}- No bulk delete, no administrator CRUD, no user-group CRUD, no network-user login or
   logout, no VPN mutation, no WAF rule and no IPS change.
-- No interface write other than a VLAN: `network_interface_create_vlan`,
-  `network_interface_update_vlan` and `network_interface_delete_vlan` read the interface
-  first and refuse any type other than `vlan`.
-- No secret exposure. The API key is a `SecretStr`; it is placed in the `Authorization`
+{vlan_sentence}- No secret exposure. The API key is a `SecretStr`; it is placed in the `Authorization`
   header only, and is never logged, echoed in tool output or included in an error message.
 
 ## Read-only mode
 
 {mutation_sentence}
+
+{domains_sentence}
 
 The mode is resolved from `SOPHOS_READ_ONLY_MODE` before any tool is registered, so the
 tool set is fixed for the process lifetime. It is defense in depth on top of a Sophos
@@ -348,9 +508,75 @@ profile is what actually authorizes a request.
 """
 
 
-def _conventions_document() -> str:
+def _conventions_document(surface: SurfaceSummary) -> str:
     """The calling conventions, as Markdown."""
-    no_argument = "\n".join(f"- `{name}`" for name in NO_ARGUMENT_TOOLS)
+    no_argument = tuple(name for name in NO_ARGUMENT_TOOLS if name in surface.tool_names)
+    if no_argument:
+        no_argument_block = "\n".join(f"- `{name}`" for name in no_argument)
+        other = len(no_argument)
+        if other == 1:
+            argument_sentence = (
+                f"{surface.tool_count - 1} of the {surface.tool_count} tools take arguments. "
+                "The other 1 takes an empty `arguments` object because it declares no "
+                "parameters:"
+            )
+        else:
+            argument_sentence = (
+                f"{surface.tool_count - other} of the {surface.tool_count} tools take "
+                f"arguments. The other {other} take an empty `arguments` object because they "
+                "declare no parameters:"
+            )
+    else:
+        no_argument_block = ""
+        argument_sentence = f"All {surface.tool_count} tools take arguments."
+    example_tool = next(
+        (
+            name
+            for name in ("firewall_rule_list", "nat_rule_list", "address_list")
+            if name in surface.tool_names
+        ),
+        None,
+    )
+    if example_tool is None:
+        example_block = ""
+    else:
+        example_block = (
+            "\n```json\n"
+            f'{{"name": "{example_tool}",\n'
+            ' "arguments": {"ip_family": "ipv4", "page": 1, "page_size": 10, '
+            '"page_total": true}}\n'
+            "```\n"
+        )
+    union_tools = tuple(
+        name
+        for name in ("address_create", "firewall_rule_create", "nat_rule_create")
+        if name in surface.tool_names
+    )
+    any_of = "mac_address_create" in surface.tool_names
+    if union_tools:
+        union_sentence = (
+            "A tool whose request is a union of shapes ("
+            + ", ".join(f"`{name}`" for name in union_tools)
+            + " and the other create/update tools that exist for both IP families) publishes a "
+            "root `oneOf` instead of one flat object, because each variant has its own required "
+            "fields"
+        )
+        if any_of:
+            union_sentence += (
+                "; `mac_address_create` publishes `anyOf` because the API declares no "
+                "discriminator for it"
+            )
+        union_sentence += (
+            ". Send the variant's own fields at the top level and let its discriminator "
+            "(`ip_family` or `type`) select it.\n"
+        )
+    elif any_of:
+        union_sentence = (
+            "`mac_address_create` publishes a root `anyOf` because the API declares no "
+            "discriminator for it; send the variant's own fields at the top level.\n"
+        )
+    else:
+        union_sentence = ""
     return f"""# Calling conventions
 
 ## Flat arguments
@@ -358,24 +584,12 @@ def _conventions_document() -> str:
 Every tool that takes arguments publishes those arguments at the top level of `arguments`,
 exactly as the MCP specification's own examples do. There is no wrapper object to unwrap:
 the fields the tool's `inputSchema` lists are the fields the call sends.
+{example_block}
+{argument_sentence}
 
-```json
-{{"name": "firewall_rule_list",
- "arguments": {{"ip_family": "ipv4", "page": 1, "page_size": 10, "page_total": true}}}}
-```
+{no_argument_block}
 
-{ARGUMENT_TOOL_COUNT} of the {TOTAL_TOOL_COUNT} tools take arguments. The other {len(NO_ARGUMENT_TOOLS)} take an empty `arguments` object
-because they declare no parameters:
-
-{no_argument}
-
-A tool whose request is a union of shapes (`address_create`, `firewall_rule_create`,
-`nat_rule_create` and the other create/update tools that exist for both IP families)
-publishes a root `oneOf` instead of one flat object, because each variant has its own
-required fields; `mac_address_create` publishes `anyOf` because the API declares no
-discriminator for it. Send the variant's own fields at the top level and let its
-discriminator (`ip_family` or `type`) select it.
-
+{union_sentence}
 The rejection is actionable and names the accepted arguments, so a model can self-correct
 on the next call:
 
@@ -432,7 +646,9 @@ that failed. A 401 means the API key is the problem, not the administrator profi
 """
 
 
-def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> None:
+def register_resources(
+    server: MCPServer[AppContext], *, read_only: bool, surface: SurfaceSummary
+) -> None:
     """Register the server's resources on ``server``.
 
     Args:
@@ -440,6 +656,8 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
             so every resource is a constant for the process lifetime.
         read_only: The resolved read-only mode. It is only used by
             ``sophos://read-only-policy``, which states the mode this process runs in.
+        surface: The tool surface this process registered. Every document is built from it,
+            so a filtered instance describes the tools it publishes instead of the catalog.
     """
 
     @server.resource(
@@ -454,7 +672,7 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
     )
     def api_surface() -> str:
         """The REST API surface and the tool mapping."""
-        return _surface_document()
+        return _surface_document(surface)
 
     @server.resource(
         "sophos://coverage",
@@ -468,7 +686,7 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
     )
     def coverage() -> str:
         """The per-domain coverage matrix."""
-        return _coverage_document()
+        return _coverage_document(surface)
 
     @server.resource(
         "sophos://read-only-policy",
@@ -482,7 +700,7 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
     )
     def read_only_policy() -> str:
         """The read-only policy and the mode this process runs in."""
-        return _read_only_document(read_only=read_only)
+        return _read_only_document(surface, read_only=read_only)
 
     @server.resource(
         "sophos://conventions",
@@ -496,4 +714,4 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
     )
     def conventions() -> str:
         """The calling conventions."""
-        return _conventions_document()
+        return _conventions_document(surface)

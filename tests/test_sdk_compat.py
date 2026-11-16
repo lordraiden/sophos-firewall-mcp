@@ -43,6 +43,9 @@ from sophos_firewall_mcp.tools import (
     ToolKind,
     _registered_tool,
     register_tool,
+    registered_read_only_tool_names,
+    registered_tool_count,
+    registered_tool_names,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,10 +66,17 @@ TOOLS_SEAM_ATTRIBUTES = ("_tool_manager", "fn_metadata", "parameters")
 #: The private attribute the server factory in ``server.py`` may touch.
 SERVER_SEAM_ATTRIBUTES = ("_lowlevel_server",)
 
-#: The functions allowed to touch the tool-registry surface: the accessor, its two callers
-#: and the one function that mutates the registered tool.
+#: The functions allowed to touch the tool-registry surface: the accessor, its callers and
+#: the one function that mutates the registered tool.
 SEAM_FUNCTIONS = frozenset(
-    {"_tool_manager", "_registered_tool", "registered_tool_count", "_flatten_arguments"}
+    {
+        "_tool_manager",
+        "_registered_tool",
+        "registered_tool_count",
+        "registered_tool_names",
+        "registered_read_only_tool_names",
+        "_flatten_arguments",
+    }
 )
 
 #: The one function allowed to touch the server-identity surface.
@@ -482,3 +492,20 @@ def test_the_seam_diagnostic_names_the_moved_attribute(monkeypatch) -> None:
     assert "MCPServer._tool_manager" in message, message
     assert f"mcp {SUPPORTED_MCP_SDK_VERSION}" in message, message
     assert "docs/SDK-COMPATIBILITY.md" in message, message
+
+
+def test_the_registry_accessors_report_the_registered_tools() -> None:
+    """The accessors the server factory uses read the registry, not a cached copy.
+
+    They are the only route the rest of the package has to the registered tool names, so
+    they must agree with the count and with the read-only annotation the SDK holds.
+    """
+    server = make_server()
+
+    names = registered_tool_names(server)
+    read_only = registered_read_only_tool_names(server)
+
+    assert names == (FLAT_TOOL, UNION_TOOL, NO_ARGUMENT_TOOL)
+    assert registered_tool_count(server) == len(names)
+    # Every synthetic tool is registered as a read-only tool.
+    assert read_only == names

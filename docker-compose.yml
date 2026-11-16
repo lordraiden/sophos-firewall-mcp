@@ -10,6 +10,16 @@
 #
 # TLS is verified by default. Only a lab appliance with a self-signed certificate needs
 # SOPHOS_VERIFY_SSL=false; prefer SOPHOS_CA_BUNDLE with the appliance CA instead.
+#
+# SOPHOS_TOOL_DOMAINS narrows the published tool surface to the domains this deployment needs
+# (firewall, nat, objects, users, network, audit). It is deliberately NOT listed in the
+# environment map below: unset already means "the complete surface", and a hard-coded default
+# would be a second copy of the domain list that silently narrows the surface when a domain is
+# added. To publish a subset, add the line yourself (or use a compose override file):
+#
+#   SOPHOS_TOOL_DOMAINS: firewall,nat,objects,network,audit
+#
+# An empty value is a startup error, not "unset", so do not pass an empty string.
 
 services:
   sophos-firewall-mcp:
