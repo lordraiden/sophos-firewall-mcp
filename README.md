@@ -64,7 +64,8 @@ Bearer API key.
 
 ## What it does
 
-- **112 typed tools across 11 domains**, covering 145 audited operations of the checked-in OpenAPI
+- **112 typed tools across 11 domains** (the complete catalog; `SOPHOS_TOOL_DOMAINS` publishes a
+  subset), covering 145 audited operations of the checked-in OpenAPI
   contract (`firewall_config_openapi.yaml`, 700 operations) plus 5 composite tools that add no new
   endpoint. The IPv4 and IPv6 families share one tool each, selected by a required `ip_family`
   argument. Every tool maps to a documented `operationId`; the mapping is in
@@ -151,8 +152,10 @@ This is the complete catalog. A deployment that needs only some of it sets `SOPH
 publish just those domains — see [Domain selection](#domain-selection).
 
 The server publishes its identity in `serverInfo`: `name`, `title`, `version`, `websiteUrl` and a
-`description` that names the number of tools it actually registered — 112 here, 74 in read-only mode —
-so the identity cannot drift from `tools/list`.
+`description` taken verbatim from the installed package metadata. The description names the product
+and the API, never a tool count, so it stays true for the complete surface, a read-only deployment
+and a domain-filtered one; the counts live in `tools/list` and in the resources, where they can be
+computed per instance.
 
 | Domain | Tools | Access | Coverage |
 |---|---:|---|---|

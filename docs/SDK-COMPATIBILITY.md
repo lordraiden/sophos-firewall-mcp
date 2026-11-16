@@ -8,16 +8,16 @@
 ## Why the dependency is pinned
 
 The server publishes **flat tool arguments** and a **closed, sanitized argument model** for
-every one of its 112 tools, and it substitutes the registered tool count into
-`serverInfo.description`. The MCP SDK does not offer either behaviour publicly, so the
-package reaches into four attributes that are not public API:
+every one of its tools, and it sets `serverInfo.instructions` after registration. The MCP SDK
+does not offer either behaviour publicly, so the package reaches into four attributes that are
+not public API:
 
 | Private surface | Used for | Read by |
 |---|---|---|
 | `MCPServer._tool_manager` | the only route to the registered `Tool` objects | `_tool_manager()` |
 | `Tool.fn_metadata.arg_model` | the model a call is validated against | `Tool.run` → `FuncMetadata.validate_arguments` |
 | `Tool.parameters` | the published `inputSchema` | `MCPServer.list_tools` |
-| `MCPServer._lowlevel_server` | `serverInfo.description` substitution after registration | `create_server` (`server.py`) |
+| `MCPServer._lowlevel_server` | `serverInfo.instructions` after registration (the description is passed to the constructor) | `create_server` (`server.py`) |
 
 A different SDK release may rename, move or remove any of them. The failure would not be a
 clean import error: registration would still succeed, but every tool would silently fall

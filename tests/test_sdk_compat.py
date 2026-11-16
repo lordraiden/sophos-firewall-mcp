@@ -314,10 +314,10 @@ def test_the_private_seam_attributes_still_exist() -> None:
     assert lowlevel is not None, (
         f"MCPServer._lowlevel_server is missing in mcp {installed}: the private SDK seam "
         f"moved (verified against {SUPPORTED_MCP_SDK_VERSION}). server.py assigns its "
-        f"description to publish the tool count in serverInfo."
+        f"instructions after registration."
     )
-    assert hasattr(lowlevel, "description"), (
-        f"MCPServer._lowlevel_server.description is missing in mcp {installed}: the "
+    assert hasattr(lowlevel, "instructions"), (
+        f"MCPServer._lowlevel_server.instructions is missing in mcp {installed}: the "
         f"private SDK seam moved (verified against {SUPPORTED_MCP_SDK_VERSION}). "
         f"create_server assigns it after every domain has registered."
     )

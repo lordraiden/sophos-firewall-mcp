@@ -65,14 +65,15 @@ Identity
 --------
 ``serverInfo`` is built from the installed distribution metadata (``version``,
 ``description``, ``website_url``) plus :data:`SERVER_TITLE`, so a client can report which
-release produced a behaviour without the version being duplicated in code.
+release produced a behaviour without the version being duplicated in code. The description
+is published verbatim: it names the product and the API, never a tool count, so it stays
+true for the complete surface, a read-only deployment and a domain-filtered one alike.
 """
 
 from __future__ import annotations
 
 import importlib.metadata
 import logging
-import re
 import sys
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
@@ -103,7 +104,6 @@ from sophos_firewall_mcp.resources import (  # noqa: E402
 from sophos_firewall_mcp.tools import (  # noqa: E402
     DomainRegistrar,
     registered_read_only_tool_names,
-    registered_tool_count,
     registered_tool_names,
 )
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
@@ -342,27 +342,6 @@ def _package_identity() -> _PackageIdentity:
     return _PackageIdentity(version=version, description=description, website_url=website_url)
 
 
-#: The phrase in the distribution summary that states how many tools the server publishes.
-#: The number is replaced with the count the server actually registered, so a stale
-#: installed summary can never publish a number that contradicts ``tools/list``.
-_TOOL_COUNT_PATTERN = re.compile(r"\b\d+ typed tools\b")
-
-
-def _published_description(summary: str | None, tool_count: int) -> str | None:
-    """The ``serverInfo.description``: the distribution summary with the real tool count.
-
-    The summary is the single source of truth for the prose, but the count it carries is
-    only correct for the release that wrote it: an editable install that was not refreshed
-    after a tool was added keeps publishing the old number (0.7.0 shipped "152 typed
-    tools" against 112 registered tools). Substituting the count the server actually
-    registered keeps the published description consistent with ``tools/list`` without
-    duplicating the prose in code.
-    """
-    if summary is None:
-        return None
-    return _TOOL_COUNT_PATTERN.sub(f"{tool_count} typed tools", summary)
-
-
 #: The prefixes of the ``ValueError`` messages the SDK raises for a ``prompts/get`` the
 #: caller can fix. ``MCPServer.get_prompt`` wraps every failure in ``ValueError`` and the
 #: runner maps that to ``-32603`` (internal error), but the spec puts an unknown prompt
@@ -480,16 +459,10 @@ def create_server(
     # whose workflow names a tool this surface does not have is not registered at all.
     register_resources(server, read_only=read_only, surface=surface)
     register_prompts(server, available_tools=surface.tool_names)
-    # ``serverInfo`` is built from the low-level server's description, and the tool count is
-    # only known once every domain has registered, so the count is substituted here. The
-    # description is a plain attribute on the low-level server (``MCPServer.description``
-    # exposes it read-only) and the SDK caches the identity dump lazily, on the first
-    # request, so setting it before the server starts is enough.
-    server._lowlevel_server.description = _published_description(
-        identity.description, registered_tool_count(server)
-    )
-    # Same seam, same reason: the instructions name the prompts and the enabled domains, and
-    # neither is known until registration has run.
+    # ``serverInfo.description`` is the installed package description, passed to the
+    # constructor above and published verbatim: it carries no tool count, so it cannot
+    # contradict ``tools/list`` for the full surface, a read-only deployment or a filtered
+    # one. Only the instructions depend on what registration produced.
     server._lowlevel_server.instructions = instructions_for(surface, prompt_names)
     return server
 

@@ -422,8 +422,8 @@ async def test_server_info_description_matches_the_declared_summary():
     The description is read from the installed distribution metadata, which lags behind
     ``pyproject.toml`` in a checkout that was never reinstalled: 0.7.0 published "152 typed
     tools" against 112 registered tools, and the drift test only checked the version. The
-    server substitutes the count it actually registered, so the published description must
-    equal the declared summary exactly.
+    server publishes the installed summary verbatim, so the published description must equal
+    the declared one exactly.
     """
     try:
         importlib.metadata.version("sophos-firewall-mcp-server")
@@ -438,33 +438,65 @@ async def test_server_info_description_matches_the_declared_summary():
     assert info.description == declared_project_description()
 
 
-def test_the_published_description_substitutes_the_real_tool_count():
-    """M3: a stale installed summary cannot publish a count that contradicts ``tools/list``."""
-    stale = (
-        "MCP server for the Sophos Firewall 23 (SFOS 23.0) Configuration REST API: 152 "
-        "typed tools for firewall, NAT, objects, users, network and audit over STDIO"
+def test_the_installed_metadata_matches_the_declared_project_metadata():
+    """A stale editable install fails here, naming the field that drifted.
+
+    The server publishes what is *installed*, so comparing the installed metadata to
+    ``pyproject.toml`` is the only check that catches a checkout whose editable install was
+    never refreshed after a version or description change. The published-identity tests
+    above catch the same drift through ``serverInfo``; this one names the metadata field, so
+    the failure says "reinstall" instead of "the server is wrong".
+    """
+    try:
+        metadata = importlib.metadata.metadata("sophos-firewall-mcp-server")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
+        pytest.skip("the distribution is not installed; the fallback is covered separately")
+
+    assert metadata["Version"] == declared_project_version(), (
+        "the installed distribution version is stale: run `uv sync --locked` (or reinstall "
+        "the package) so the editable install matches pyproject.toml"
+    )
+    assert metadata["Summary"] == declared_project_description(), (
+        "the installed distribution summary is stale: run `uv sync --locked` (or reinstall "
+        "the package) so the editable install matches pyproject.toml"
     )
 
-    published = server_module._published_description(stale, 112)
 
-    assert published is not None
-    assert "112 typed tools" in published
-    assert "152" not in published
-    assert server_module._published_description(None, 112) is None
-    # A summary without a count is published unchanged rather than rewritten.
-    assert server_module._published_description("No count here.", 112) == "No count here."
+def test_the_canonical_description_does_not_embed_a_tool_count():
+    """The description must stay true for a filtered instance, so it carries no count.
+
+    ``SOPHOS_TOOL_DOMAINS`` and ``SOPHOS_READ_ONLY_MODE`` change how many tools a process
+    registers, so any number in the description is false for some valid configuration.
+    """
+    description = declared_project_description()
+
+    assert re.search(r"\b\d+\s+typed tools\b", description) is None, description
+    assert re.search(r"\b\d+\s+tools\b", description) is None, description
 
 
-async def test_the_read_only_description_publishes_the_read_only_count():
-    """M3: the read-only surface publishes its own count, not the full one."""
-    server = create_server(make_settings(read_only_mode=True))
+async def test_a_filtered_instance_publishes_the_canonical_description():
+    """A filtered server advertises the package identity, not a per-instance tool count."""
+    server = create_server(make_settings(tool_domains=("firewall", "nat")))
 
     async with Client(server) as client:
         info = client.server_info
 
-    assert info.description is not None
-    assert "74 typed tools" in info.description
-    assert "112 typed tools" not in info.description
+    assert info.description == declared_project_description()
+    assert re.search(r"\b\d+\s+tools\b", info.description or "") is None
+
+
+async def test_the_read_only_description_is_the_canonical_description():
+    """Read-only mode changes the tool set, not the advertised identity."""
+    writable = create_server(make_settings())
+    read_only = create_server(make_settings(read_only_mode=True))
+
+    async with Client(writable) as writable_client:
+        writable_info = writable_client.server_info
+    async with Client(read_only) as read_only_client:
+        read_only_info = read_only_client.server_info
+
+    assert writable_info.description == read_only_info.description
+    assert read_only_info.description == declared_project_description()
 
 
 async def test_tools_list_advertises_a_cache_hint():
