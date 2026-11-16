@@ -584,9 +584,7 @@ class NatRuleDeleteInput(BaseModel):
 # -- Inputs: create --------------------------------------------------------------------
 
 
-def _require_anchor(
-    position: NatRulePosition | None, reference_item: NatRuleNameRef | None
-) -> None:
+def _require_anchor(position: NatRulePosition, reference_item: NatRuleNameRef | None) -> None:
     """Reject ``after``/``before`` without an anchor; ``top``/``bottom`` need none."""
     if position in ("after", "before") and reference_item is None:
         raise ValueError(
@@ -602,6 +600,11 @@ class _NatRuleCreateBase(BaseModel):
     ``outboundInterfaces`` and (in the family-specific half) the two original-network
     selections. ``enabled`` defaults to ``true`` in the API; the tool always sends the
     resolved value so the created state is explicit.
+
+    ``position`` is required even though the contract does not list it: the appliance
+    rejects a create without it with ``400 invalidRequest`` ("Invalid position."), for
+    both families. It is therefore a required input, like ``firewall_rule_create``, and
+    the adapter always sends it.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -613,8 +616,8 @@ class _NatRuleCreateBase(BaseModel):
     enabled: bool = Field(
         default=True, description="Turn the NAT rule on or off (API default: true)."
     )
-    position: NatRulePosition | None = Field(
-        default=None, description="Where to insert the rule in the rule base."
+    position: NatRulePosition = Field(
+        description="Where to insert the rule in the rule base (required by the appliance)."
     )
     reference_item: NatRuleNameRef | None = Field(
         default=None,

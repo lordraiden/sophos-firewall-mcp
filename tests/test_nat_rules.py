@@ -133,10 +133,12 @@ IPV6_RULE: dict[str, Any] = {
     ],
 }
 
-#: Minimal valid create body for IPv4 (the six contract-required fields).
+#: Minimal valid create body for IPv4 (the six contract-required fields plus ``position``,
+#: which the appliance requires even though the contract does not list it).
 MINIMAL_CREATE: dict[str, Any] = {
     "ip_family": "ipv4",
     "name": "outbound-masq",
+    "position": "bottom",
     "original_services_or_groups": {"any": True},
     "inbound_interfaces": {"any": True},
     "outbound_interfaces": {"any": True},
@@ -285,6 +287,28 @@ async def test_input_schema_is_closed_and_excludes_the_context_parameter():
             if "additionalProperties" in schema["$defs"][definition]:
                 assert schema["$defs"][definition]["additionalProperties"] is False
         assert name.startswith("nat_rule_")
+
+
+async def test_create_input_schema_requires_position_for_both_families():
+    """The published schema marks ``position`` required, matching the appliance.
+
+    The contract does not list ``position`` as required, but the appliance rejects a
+    create without it, so the tool must not publish it as optional.
+    """
+    tools = await tools_by_name()
+    schema = tools["nat_rule_create"].input_schema
+
+    for definition in ("NatRuleCreateIpv4Input", "NatRuleCreateIpv6Input"):
+        target = schema["$defs"][definition]
+        assert "position" in target["required"], definition
+        assert target["properties"]["position"]["enum"] == [
+            "top",
+            "bottom",
+            "after",
+            "before",
+        ]
+
+    assert "position" in tools["nat_rule_create"].description
 
 
 async def test_list_output_schema_is_a_bounded_page():
@@ -452,6 +476,7 @@ async def test_create_ipv6_sends_the_family_specific_body(router: Any):
         "nat_rule_create",
         {
             "name": "outbound-masq-v6",
+            "position": "bottom",
             "original_services_or_groups": {"services": [{"name": "https"}]},
             "inbound_interfaces": {"any": True},
             "outbound_interfaces": {"any": True},
@@ -465,10 +490,41 @@ async def test_create_ipv6_sends_the_family_specific_body(router: Any):
 
     assert result.is_error is False
     body = json.loads(route.calls.last.request.content)
+    assert body["position"] == "bottom"
     assert body["originalSourceNetworks"] == {"ipv6Addresses": [{"name": "lan-subnet-v6"}]}
     assert body["translatedSource"] == {"ipv6Address": {"name": "port2-egress-v6"}}
     assert body["translatedDestination"] == {"ipv6Address": {"name": "dmz-ipv6-host"}}
     assert "ipv4Address" not in json.dumps(body)
+
+
+async def test_create_ipv6_sends_the_position_the_appliance_requires(router: Any):
+    """Regression: a create without ``position`` is rejected by the appliance.
+
+    Live evidence (phase 9, SFOS 23.0.0 GA-Build371): ``POST /nat/rules/ipv6`` without
+    ``position`` answers ``400 invalidRequest`` / ``"Invalid position."`` for every
+    translation and match variant. The adapter must always send the resolved position.
+    """
+    route = router.post(IPV6_URL).mock(return_value=httpx.Response(201, json=IPV6_RULE))
+
+    result = await call_tool(
+        "nat_rule_create",
+        {
+            "name": "outbound-masq-v6",
+            "position": "top",
+            "original_services_or_groups": {"any": True},
+            "inbound_interfaces": {"any": True},
+            "outbound_interfaces": {"any": True},
+            "original_source_networks": {"any": True},
+            "original_destination_networks": {"any": True},
+            "translated_source": {"masq": True},
+        },
+        family="ipv6",
+    )
+
+    assert result.is_error is False
+    body = json.loads(route.calls.last.request.content)
+    assert body["position"] == "top"
+    assert body["translatedSource"] == {"masq": True}
 
 
 # -- Update (PATCH, JSON Merge Patch) --------------------------------------------------
@@ -705,11 +761,12 @@ async def test_list_rejects_a_malformed_rule_payload(router: Any):
 # -- Model contract: create ------------------------------------------------------------
 
 
-def test_create_ipv4_requires_the_six_contract_fields():
+def test_create_ipv4_requires_the_contract_fields_and_position():
     assert NatRuleCreateIpv4Input.model_validate(MINIMAL_CREATE).enabled is True
 
     for field in (
         "name",
+        "position",
         "original_services_or_groups",
         "inbound_interfaces",
         "outbound_interfaces",
@@ -719,6 +776,23 @@ def test_create_ipv4_requires_the_six_contract_fields():
         body = {key: value for key, value in MINIMAL_CREATE.items() if key != field}
         with pytest.raises(ValidationError):
             NatRuleCreateIpv4Input.model_validate(body)
+
+
+def test_create_requires_a_position_for_both_families():
+    """The appliance answers 400 "Invalid position." when position is omitted.
+
+    The contract does not list ``position`` as required, but the appliance rejects a
+    create without it for IPv4 and IPv6 alike, so the model requires it and the adapter
+    always sends it.
+    """
+    for model, family in (
+        (NatRuleCreateIpv4Input, "ipv4"),
+        (NatRuleCreateIpv6Input, "ipv6"),
+    ):
+        body = {key: value for key, value in MINIMAL_CREATE.items() if key != "position"}
+        body["ip_family"] = family
+        with pytest.raises(ValidationError):
+            model.model_validate(body)
 
 
 def test_create_has_no_snat_dnat_discriminator():
@@ -734,6 +808,7 @@ def test_create_serializes_the_camel_case_wire_names():
 
     assert body == {
         "name": "outbound-masq",
+        "position": "bottom",
         "originalServicesOrGroups": {"any": True},
         "inboundInterfaces": {"any": True},
         "outboundInterfaces": {"any": True},

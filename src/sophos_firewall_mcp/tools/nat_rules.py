@@ -304,11 +304,14 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="Create a NAT rule",
         description=(
             "Create a NAT rule (operationId createNatRuleIpv4 or createNatRuleIpv6, selected "
-            "by the required ip_family). Requires name, original_services_or_groups, "
-            "inbound_interfaces, outbound_interfaces, original_source_networks and "
-            "original_destination_networks; translation fields are optional because the API "
-            "defines no SNAT/DNAT discriminator. enabled defaults to true and is always "
-            "sent. The rule is not moved or enabled by a follow-up call."
+            "by the required ip_family). Requires name, position, "
+            "original_services_or_groups, inbound_interfaces, outbound_interfaces, "
+            "original_source_networks and original_destination_networks; position is "
+            "after|before|bottom|top and after/before need reference_item. The appliance "
+            "rejects a create without position (400 invalidRequest), so it is required. "
+            "Translation fields are optional because the API defines no SNAT/DNAT "
+            "discriminator. enabled defaults to true and is always sent. The rule is not "
+            "moved or enabled by a follow-up call."
         ),
         annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
