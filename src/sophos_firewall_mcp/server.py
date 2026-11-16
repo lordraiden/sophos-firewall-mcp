@@ -16,13 +16,36 @@ once, instead of repeating them in 112 tool descriptions; the prompts carry the 
 analysis workflows (audit the rule base, explain a flow, find unused objects). All three
 catalogs are static for the process lifetime.
 
+Domain selection
+----------------
+``SOPHOS_TOOL_DOMAINS`` narrows the tool surface to the domains a deployment needs, so a
+client is not handed 112 tool definitions when it uses six. The setting is a comma-separated
+allowlist of the stable identifiers in
+:data:`~sophos_firewall_mcp.config.TOOL_DOMAINS`; each identifier maps to exactly one
+``register_<domain>_tools`` function in :data:`DOMAIN_REGISTRARS`, so no handler is
+duplicated or reimplemented. Unset means :data:`DEFAULT_DOMAINS`, the complete surface, in
+the same order as before the setting existed.
+
+The two filters compose and stay independent: the domain selection decides which
+capabilities exist, and ``SOPHOS_READ_ONLY_MODE`` then removes the mutation tools *within*
+the selected domains. A domain selection is validated by
+:func:`~sophos_firewall_mcp.config.validate_tool_domains` before any tool registers, so an
+unknown, repeated or empty entry fails startup instead of quietly publishing a different
+surface. The audit composites are the only cross-domain tools and they carry no
+registration-time dependency: they call the other domains' adapter classes directly, so
+``audit`` works with any selection.
+
+The surface is read back from the registry after registration (:func:`_registered_surface`)
+and drives the resources, the prompts and the instructions, so a filtered instance
+describes the tools it publishes and never claims an excluded one is registered.
+
 Lifecycle
 ---------
 ``create_server(settings)`` validates nothing about the environment -- it receives
 settings that :func:`create_server_from_env` already validated -- and builds the server:
-the read-only mode is resolved from those settings *before* any domain registers a tool,
-because the SDK does not re-read the tool registry and the tool set must be fixed for the
-process lifetime. The lifespan then creates exactly one
+the read-only mode and the domain selection are resolved from those settings *before* any
+domain registers a tool, because the SDK does not re-read the tool registry and the tool
+set must be fixed for the process lifetime. The lifespan then creates exactly one
 :class:`~sophos_firewall_mcp.client.SophosRestClient`, yields the
 :class:`~sophos_firewall_mcp.context.AppContext` every handler receives, and closes the
 client in ``finally`` on both normal and exceptional shutdown.
@@ -70,10 +93,13 @@ from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp.types import INVALID_PARAMS  # noqa: E402
 
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
-from sophos_firewall_mcp.config import ConfigurationError, Settings  # noqa: E402
+from sophos_firewall_mcp.config import ConfigurationError, Settings, TOOL_DOMAINS  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
-from sophos_firewall_mcp.prompts import register_prompts  # noqa: E402
-from sophos_firewall_mcp.resources import register_resources  # noqa: E402
+from sophos_firewall_mcp.prompts import available_prompts, register_prompts  # noqa: E402
+from sophos_firewall_mcp.resources import (  # noqa: E402
+    SurfaceSummary,
+    register_resources,
+)
 from sophos_firewall_mcp.tools import DomainRegistrar, registered_tool_count  # noqa: E402
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
@@ -84,12 +110,15 @@ from sophos_firewall_mcp.tools.users_auth import register_users_tools  # noqa: E
 
 __all__ = [
     "DEFAULT_DOMAINS",
+    "DOMAIN_REGISTRARS",
     "INSTRUCTIONS",
     "SERVER_NAME",
     "SERVER_TITLE",
     "create_server",
     "create_server_from_env",
+    "instructions_for",
     "main",
+    "selected_domains",
 ]
 
 logger = logging.getLogger(__name__)
@@ -141,7 +170,11 @@ _CATALOG_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
 #: result carries the same payload twice (``content`` text and ``structuredContent``), so a
 #: client reads one of them. It is a property of this server's calling convention, not of
 #: any one domain.
-INSTRUCTIONS = (
+#:
+#: The prompt sentence is appended by :func:`instructions_for` rather than baked in, because
+#: a process that enables only some domains does not register every prompt and must not
+#: name one it did not register.
+_INSTRUCTIONS_BASE = (
     "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
     "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
     "rules, address and service objects, users and live sessions. Read-only tools never "
@@ -153,23 +186,112 @@ INSTRUCTIONS = (
     "publishes `anyOf` because the API declares no discriminator. Every "
     "successful result carries the same payload twice, as `content` text and as "
     "`structuredContent`; read one of them, not both. Read `sophos://conventions` before "
-    "the first call; the prompts `audit_firewall`, `explain_flow` and "
-    "`find_unused_objects` carry the three analysis workflows."
+    "the first call"
 )
 
-#: Domain registration functions, in registration order.
+
+def _prompt_sentence(prompt_names: tuple[str, ...]) -> str:
+    """The instructions clause that names the registered prompts."""
+    if not prompt_names:
+        return "."
+    listed = ", ".join(f"`{name}`" for name in prompt_names)
+    return f"; the prompts {listed} carry the analysis workflows."
+
+
+#: The instructions of the complete default surface: every prompt is registered there.
+INSTRUCTIONS = _INSTRUCTIONS_BASE + _prompt_sentence(
+    ("audit_firewall", "explain_flow", "find_unused_objects")
+)
+
+#: Stable domain identifier -> the registration function that publishes it.
+#:
+#: The identifiers are the six domain families of the registration architecture, and each one
+#: maps to exactly one ``register_<domain>_tools`` function: selecting a domain selects the
+#: tools that function registers, with no handler duplicated or reimplemented here. ``network``
+#: also registers the VPN and status tools and ``objects`` also registers the service tools,
+#: because those are the entry points the domains already use.
+DOMAIN_REGISTRARS: Mapping[str, DomainRegistrar] = {
+    "firewall": register_firewall_tools,
+    "nat": register_nat_tools,
+    "objects": register_objects_tools,
+    "users": register_users_tools,
+    "network": register_network_tools,
+    "audit": register_audit_tools,
+}
+
+#: Domain registration functions, in registration order (the complete default surface).
 #:
 #: Phase 2 (#27-#31, #35): the six domain families from ADR-001 §10. ``network`` also
 #: registers the VPN and status tools, so it is a single entry point. ``audit`` is last
 #: because it composes the other domains' adapters.
-DEFAULT_DOMAINS: tuple[DomainRegistrar, ...] = (
-    register_firewall_tools,
-    register_nat_tools,
-    register_objects_tools,
-    register_users_tools,
-    register_network_tools,
-    register_audit_tools,
+DEFAULT_DOMAINS: tuple[DomainRegistrar, ...] = tuple(
+    DOMAIN_REGISTRARS[name] for name in TOOL_DOMAINS
 )
+
+
+def selected_domains(settings: Settings) -> tuple[str, ...]:
+    """The domain identifiers this process registers, in canonical order.
+
+    ``SOPHOS_TOOL_DOMAINS`` unset means the complete default surface, so an existing
+    installation keeps publishing exactly the same tools in exactly the same order.
+    """
+    if settings.tool_domains is None:
+        return TOOL_DOMAINS
+    return settings.tool_domains
+
+
+def _enabled_domains(registrars: Iterable[DomainRegistrar]) -> tuple[str, ...]:
+    """The known domain identifiers among *registrars*, in canonical order.
+
+    An explicit ``domains`` iterable is the seam the domain tests use to build a one-domain
+    server, and it may carry a registrar that is not one of the six domains (a synthetic
+    one). Such a registrar is not a domain, so it is not named here; the resources then
+    describe the tools that were actually registered instead of claiming a domain that was
+    not selected.
+    """
+    selected = tuple(registrars)
+    return tuple(
+        name
+        for name in TOOL_DOMAINS
+        if any(registrar is DOMAIN_REGISTRARS[name] for registrar in selected)
+    )
+
+
+def _registered_surface(server: MCPServer[AppContext], domains: tuple[str, ...]) -> SurfaceSummary:
+    """The tool surface this process actually registered.
+
+    The registry is the ground truth: the resources and the instructions describe what is in
+    it, so a filtered instance cannot claim a tool it did not register. The private
+    ``_tool_manager`` seam is the one :func:`registered_tool_count` already uses; calling that
+    guarded accessor first means a moved seam fails with its actionable message instead of an
+    ``AttributeError`` here.
+    """
+    registered_tool_count(server)
+    tools = server._tool_manager.list_tools()
+    return SurfaceSummary(
+        domains=domains,
+        tool_names=tuple(tool.name for tool in tools),
+        read_only_tool_names=tuple(
+            tool.name for tool in tools if tool.annotations and tool.annotations.read_only_hint
+        ),
+    )
+
+
+def instructions_for(surface: SurfaceSummary, prompt_names: tuple[str, ...]) -> str:
+    """The server instructions for the surface this process registered.
+
+    The complete default surface keeps :data:`INSTRUCTIONS` verbatim. A filtered instance
+    appends one sentence naming the domains it publishes and the tools it does not, so the
+    model is told that the excluded tools are absent instead of discovering it from a failed
+    call.
+    """
+    if surface.is_full and prompt_names == (
+        "audit_firewall",
+        "explain_flow",
+        "find_unused_objects",
+    ):
+        return INSTRUCTIONS
+    return _INSTRUCTIONS_BASE + _prompt_sentence(prompt_names) + " " + surface.enabled_summary()
 
 
 class _PackageIdentity(NamedTuple):
@@ -263,19 +385,23 @@ async def _prompt_error_middleware(
 def create_server(
     settings: Settings,
     *,
-    domains: Iterable[DomainRegistrar] = DEFAULT_DOMAINS,
+    domains: Iterable[DomainRegistrar] | None = None,
 ) -> MCPServer[AppContext]:
     """Build the MCP server for already-validated settings.
 
     Configuration is validated once, before this function is called (see
-    :func:`create_server_from_env`), because the read-only mode decides the tool set and
-    the SDK does not re-read the registry after construction.
+    :func:`create_server_from_env`), because the read-only mode and the domain selection
+    decide the tool set and the SDK does not re-read the registry after construction.
 
     Args:
         settings: Validated connection settings. The API key inside is a ``SecretStr``
             and is only ever placed in the ``Authorization`` header by the client.
         domains: Registration functions called once each, before the server starts. Each
-            receives the server and the resolved ``read_only`` flag.
+            receives the server and the resolved ``read_only`` flag. ``None`` -- the normal
+            path -- selects the domains named by ``settings.tool_domains``, which is the
+            complete default surface when the setting is unset. An explicit iterable
+            overrides the setting; it is the seam the domain tests use to build a
+            one-domain server.
 
     Returns:
         A server whose lifespan creates one shared REST client and yields the
@@ -287,6 +413,12 @@ def create_server(
     if not isinstance(settings, Settings):
         raise TypeError("settings must be a Settings instance")
     read_only = settings.read_only_mode
+    if domains is None:
+        enabled = selected_domains(settings)
+        registrars: tuple[DomainRegistrar, ...] = tuple(DOMAIN_REGISTRARS[name] for name in enabled)
+    else:
+        registrars = tuple(domains)
+        enabled = _enabled_domains(registrars)
 
     @asynccontextmanager
     async def lifespan(_: MCPServer[AppContext]) -> AsyncIterator[AppContext]:
@@ -298,10 +430,11 @@ def create_server(
         first tool call. The client is closed in ``finally`` on every shutdown path.
         """
         logger.info(
-            "starting %s: appliance %s, read-only=%s",
+            "starting %s: appliance %s, read-only=%s, domains=%s",
             SERVER_NAME,
             settings.authority,
             read_only,
+            ",".join(enabled) or "custom",
         )
         client = SophosRestClient(settings)
         try:
@@ -324,13 +457,19 @@ def create_server(
         cache_hints=_CATALOG_CACHE_HINTS,
         middleware=[_prompt_error_middleware],
     )
-    for register in domains:
+    for register in registrars:
         register(server, read_only=read_only)
+    # The surface is read back from the registry, not assumed from the selection: the
+    # resources, the prompts and the instructions then describe the tools this process
+    # actually publishes, so a filtered instance cannot claim one it did not register.
+    surface = _registered_surface(server, enabled)
+    prompt_names = available_prompts(surface.tool_names)
     # Resources and prompts are not domain tools: they publish the passive context and the
     # analysis templates, are static for the process lifetime, and are registered in both
-    # modes (a read-only deployment is exactly where an audit prompt is useful).
-    register_resources(server, read_only=read_only)
-    register_prompts(server)
+    # modes (a read-only deployment is exactly where an audit prompt is useful). A prompt
+    # whose workflow names a tool this surface does not have is not registered at all.
+    register_resources(server, read_only=read_only, surface=surface)
+    register_prompts(server, available_tools=surface.tool_names)
     # ``serverInfo`` is built from the low-level server's description, and the tool count is
     # only known once every domain has registered, so the count is substituted here. The
     # description is a plain attribute on the low-level server (``MCPServer.description``
@@ -339,24 +478,29 @@ def create_server(
     server._lowlevel_server.description = _published_description(
         identity.description, registered_tool_count(server)
     )
+    # Same seam, same reason: the instructions name the prompts and the enabled domains, and
+    # neither is known until registration has run.
+    server._lowlevel_server.instructions = instructions_for(surface, prompt_names)
     return server
 
 
 def create_server_from_env(
     env: Mapping[str, str] | None = None,
     *,
-    domains: Iterable[DomainRegistrar] = DEFAULT_DOMAINS,
+    domains: Iterable[DomainRegistrar] | None = None,
 ) -> MCPServer[AppContext]:
     """Validate the environment and build the server.
 
     Args:
         env: Environment mapping to read. Defaults to :data:`os.environ`; passing an
             explicit mapping never touches the process environment.
-        domains: Registration functions, as for :func:`create_server`.
+        domains: Registration functions, as for :func:`create_server`. ``None`` selects the
+            domains named by ``SOPHOS_TOOL_DOMAINS``.
 
     Raises:
-        ConfigurationError: A required setting is missing or invalid. The message names
-            the setting and never contains the API key.
+        ConfigurationError: A required setting is missing or invalid, including an unknown,
+            repeated or empty ``SOPHOS_TOOL_DOMAINS`` entry. The message names the setting
+            and never contains the API key.
     """
     return create_server(Settings.from_env(env), domains=domains)
 

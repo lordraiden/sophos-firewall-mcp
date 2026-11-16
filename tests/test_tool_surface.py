@@ -29,15 +29,16 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 import yaml
 from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
 from mcp.types import ToolAnnotations
 
-from sophos_firewall_mcp.config import Settings
+from sophos_firewall_mcp.config import TOOL_DOMAINS, Settings
 from sophos_firewall_mcp.context import AppContext
-from sophos_firewall_mcp.server import INSTRUCTIONS, create_server
+from sophos_firewall_mcp.server import DOMAIN_REGISTRARS, INSTRUCTIONS, create_server
 from sophos_firewall_mcp.tools import (
     IP_FAMILY_DESCRIPTION,
     OPEN_WORLD_TOOLS,
@@ -717,3 +718,270 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
         raise AssertionError(
             f"{len(offenders)} internal marker(s) reached the published surface:\n{report}"
         )
+
+
+# -- Domain selection (SOPHOS_TOOL_DOMAINS) --------------------------------------------
+#
+# ``SOPHOS_TOOL_DOMAINS`` narrows the published surface to the domains a deployment needs.
+# The exact tools of every domain are pinned here, because the partition is the
+# specification: a tool that moves between domains, or a new tool, has to be recorded
+# deliberately instead of silently changing what a restricted deployment publishes.
+
+#: The exact tools each domain registers, in registration order.
+DOMAIN_TOOL_NAMES: dict[str, tuple[str, ...]] = {
+    "firewall": (
+        "firewall_rule_list",
+        "firewall_rule_get",
+        "firewall_rule_create",
+        "firewall_rule_update",
+        "firewall_rule_delete",
+        "firewall_rule_move",
+        "firewall_rule_set_enabled",
+        "firewall_rule_clone",
+    ),
+    "nat": (
+        "nat_rule_list",
+        "nat_rule_get",
+        "nat_rule_create",
+        "nat_rule_update",
+        "nat_rule_delete",
+        "nat_rule_move",
+    ),
+    "objects": (
+        "address_list",
+        "address_get",
+        "address_create",
+        "address_update",
+        "address_delete",
+        "address_list_fqdn",
+        "address_get_fqdn",
+        "address_create_fqdn",
+        "address_update_fqdn",
+        "address_delete_fqdn",
+        "address_group_list",
+        "address_group_get",
+        "address_group_create",
+        "address_group_update",
+        "address_group_delete",
+        "address_group_list_fqdn",
+        "address_group_get_fqdn",
+        "address_group_create_fqdn",
+        "address_group_update_fqdn",
+        "address_group_delete_fqdn",
+        "mac_address_list",
+        "mac_address_get",
+        "mac_address_create",
+        "mac_address_update",
+        "mac_address_delete",
+        "country_group_list",
+        "country_group_get",
+        "service_list",
+        "service_get",
+        "service_create",
+        "service_update",
+        "service_delete",
+        "service_group_list",
+        "service_group_get",
+        "service_group_create",
+        "service_group_update",
+        "service_group_delete",
+    ),
+    "users": (
+        "user_list",
+        "network_user_list",
+        "network_user_get",
+        "network_user_create",
+        "network_user_update",
+        "network_user_delete",
+        "live_user_list",
+        "live_user_disconnect",
+    ),
+    "network": (
+        "network_interface_list",
+        "network_interface_get",
+        "network_interface_create_vlan",
+        "network_interface_update_vlan",
+        "network_interface_delete_vlan",
+        "zone_list",
+        "zone_get",
+        "gateway_list",
+        "wan_gateway_list",
+        "wan_gateway_get",
+        "custom_gateway_list",
+        "custom_gateway_get",
+        "unicast_route_list",
+        "unicast_route_get",
+        "sdwan_route_list",
+        "sdwan_route_get",
+        "dhcp_server_list",
+        "dhcp_server_get",
+        "dhcp_lease_list",
+        "dhcp_relay_list",
+        "dhcp_relay_get",
+        "dns_settings_get",
+        "dns_host_entry_list",
+        "dns_host_entry_get",
+        "dns_request_route_list",
+        "dns_request_route_get",
+        "static_neighbor_list",
+        "static_neighbor_get",
+        "ipsec_profile_list",
+        "ipsec_profile_get",
+        "ipsec_failover_group_list",
+        "ipsec_failover_group_get",
+        "ipsec_connection_list_ipv4",
+        "ipsec_policy_based_connection_list_ipv4",
+        "ipsec_policy_based_connection_get_ipv4",
+        "ipsec_route_based_connection_list_ipv4",
+        "ipsec_route_based_connection_get_ipv4",
+        "ipsec_live_connection_list_ipv4",
+        "ipsec_remote_access_settings_get",
+        "sslvpn_remote_access_policy_list",
+        "sslvpn_remote_access_policy_get",
+        "sslvpn_bookmark_group_list",
+        "sslvpn_bookmark_group_get",
+        "sslvpn_bookmark_list",
+        "sslvpn_bookmark_get",
+        "sslvpn_clientless_policy_list",
+        "sslvpn_clientless_policy_get",
+        "sslvpn_global_settings_get",
+        "network_status_dns_protection",
+        "network_status_cellular_wan",
+    ),
+    "audit": ("audit_firewall_rules", "explain_connectivity", "find_object_usage"),
+}
+
+#: How many of each domain's tools are read-only; the rest are mutations.
+DOMAIN_READ_ONLY_COUNTS: dict[str, int] = {
+    "firewall": 2,
+    "nat": 2,
+    "objects": 16,
+    "users": 4,
+    "network": 47,
+    "audit": 3,
+}
+
+#: The domain selections the tests exercise, including the two the issue suggests.
+DOMAIN_SELECTIONS: tuple[tuple[str, ...], ...] = (
+    ("firewall",),
+    ("nat",),
+    ("objects",),
+    ("users",),
+    ("network",),
+    ("audit",),
+    ("firewall", "nat"),
+    ("firewall", "nat", "objects", "network", "audit"),
+    ("firewall", "nat", "objects", "users", "network", "audit"),
+)
+
+
+def make_domain_server(
+    domains: tuple[str, ...], *, read_only: bool = False
+) -> MCPServer[AppContext]:
+    """The real server with exactly *domains* registered, through the real registrars."""
+    return create_server(
+        make_settings(read_only=read_only),
+        domains=[DOMAIN_REGISTRARS[name] for name in domains],
+    )
+
+
+def expected_names(domains: tuple[str, ...]) -> list[str]:
+    """The exact tool names *domains* publish, in canonical registration order."""
+    return [
+        name for domain in TOOL_DOMAINS if domain in domains for name in DOMAIN_TOOL_NAMES[domain]
+    ]
+
+
+def test_the_domain_partition_covers_the_complete_surface() -> None:
+    """The six domains partition the 112 tools: no gap, no overlap, no stray name."""
+    assert tuple(DOMAIN_TOOL_NAMES) == TOOL_DOMAINS
+    assert tuple(DOMAIN_READ_ONLY_COUNTS) == TOOL_DOMAINS
+    every = [name for domain in TOOL_DOMAINS for name in DOMAIN_TOOL_NAMES[domain]]
+    assert len(every) == len(set(every)) == EXPECTED_TOOL_COUNT
+    assert sum(DOMAIN_READ_ONLY_COUNTS.values()) == EXPECTED_READ_ONLY_TOOL_COUNT
+    assert EXPECTED_TOOL_COUNT - sum(DOMAIN_READ_ONLY_COUNTS.values()) == EXPECTED_MUTATION_COUNT
+
+
+async def test_the_unset_setting_publishes_the_complete_surface_in_the_same_order() -> None:
+    """Backward compatibility: no setting means exactly the 112 tools, in the same order."""
+    server = create_server(make_settings())
+    names = [tool.name for tool in await server.list_tools()]
+
+    assert names == expected_names(TOOL_DOMAINS)
+    assert len(names) == EXPECTED_TOOL_COUNT
+
+
+@pytest.mark.parametrize("domains", DOMAIN_SELECTIONS)
+async def test_a_selected_domain_set_publishes_exactly_its_tools(
+    domains: tuple[str, ...],
+) -> None:
+    """A selection publishes the union of its domains and nothing from the others."""
+    server = make_domain_server(domains)
+    names = [tool.name for tool in await server.list_tools()]
+
+    assert names == expected_names(domains)
+    assert len(names) == sum(len(DOMAIN_TOOL_NAMES[domain]) for domain in domains)
+    excluded = set(DOMAIN_TOOL_NAMES[name] for name in TOOL_DOMAINS if name not in domains)
+    assert not set(names) & {tool for group in excluded for tool in group}
+
+
+@pytest.mark.parametrize("domains", DOMAIN_SELECTIONS)
+async def test_read_only_mode_removes_the_mutations_of_the_selected_domains(
+    domains: tuple[str, ...],
+) -> None:
+    """The two filters compose: selection chooses the domains, read-only drops mutations."""
+    writable = {tool.name: tool for tool in await make_domain_server(domains).list_tools()}
+    read_only = {
+        tool.name: tool for tool in await make_domain_server(domains, read_only=True).list_tools()
+    }
+
+    mutations = mutation_names(writable)
+    expected_read_only = sum(DOMAIN_READ_ONLY_COUNTS[domain] for domain in domains)
+
+    assert len(read_only) == expected_read_only
+    assert set(read_only) == set(writable) - mutations
+    assert mutation_names(read_only) == set()
+    assert len(mutations) == len(writable) - expected_read_only
+
+
+async def test_the_registration_order_does_not_depend_on_the_operator_order() -> None:
+    """A selection is normalised, so two spellings publish the same catalog in one order."""
+    forward = create_server(
+        Settings(
+            host=HOST,
+            api_key=KEY,
+            verify_ssl=False,
+            timeout=5.0,
+            tool_domains=("firewall", "nat", "audit"),
+        )
+    )
+    reversed_server = create_server(
+        Settings(
+            host=HOST,
+            api_key=KEY,
+            verify_ssl=False,
+            timeout=5.0,
+            tool_domains=("audit", "nat", "firewall"),
+        )
+    )
+
+    assert [tool.name for tool in await forward.list_tools()] == [
+        tool.name for tool in await reversed_server.list_tools()
+    ]
+
+
+async def test_audit_registers_without_any_other_domain() -> None:
+    """The audit composites call adapter classes, not registered tools.
+
+    ``tools/audit.py`` imports ``FirewallRuleAdapter``, ``NatAdapter``, ``ObjectsAdapter``,
+    ``ServicesAdapter`` and ``NetworkAdapter`` and instantiates them from the request
+    context, so ``audit`` alone publishes all three composites with complete schemas. This
+    is why the domain dependency model is empty.
+    """
+    server = make_domain_server(("audit",))
+    tools = list(await server.list_tools())
+
+    assert [tool.name for tool in tools] == list(DOMAIN_TOOL_NAMES["audit"])
+    for tool in tools:
+        assert tool.input_schema, tool.name
+        assert tool.output_schema is not None, tool.name

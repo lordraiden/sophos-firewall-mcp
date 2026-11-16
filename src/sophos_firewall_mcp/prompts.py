@@ -11,13 +11,21 @@ The prompts are read-only by construction: they only name read-only tools, and t
 and unused-object prompts say explicitly that nothing may be changed. They are registered
 in both modes, because a read-only deployment is exactly where an audit is useful.
 
+A prompt is a workflow over concrete tools, so it is registered only when every tool it
+names is registered: :data:`PROMPT_TOOLS` declares that set and
+:func:`available_prompts` applies it. A process that enables only some domains therefore
+publishes only the workflows it can actually run, instead of a template that tells the
+model to call a tool the server does not have.
+
 Nothing here touches the network or the tool registry: a prompt is a string built from its
-arguments.
+arguments, and the registration decision is made from the tool names the server factory
+passes in.
 """
 
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Annotated
 
 from pydantic import Field
@@ -27,7 +35,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the mcp import out of
 
     from sophos_firewall_mcp.context import AppContext
 
-__all__ = ["register_prompts"]
+__all__ = ["PROMPT_NAMES", "PROMPT_TOOLS", "available_prompts", "register_prompts"]
 
 #: The seven audit checks, in the order the audit tool documents them.
 AUDIT_CHECKS: tuple[str, ...] = (
@@ -47,6 +55,42 @@ OBJECT_TYPES: tuple[str, ...] = ("address", "address-group", "service", "service
 #: audit scan is left unfiltered for them: an FQDN object can be referenced by both rule
 #: families, and the unused-object check must see both.
 AUDIT_IP_FAMILIES: tuple[str, ...] = ("ipv4", "ipv6")
+
+#: The tools each prompt names, and therefore needs registered.
+#:
+#: A prompt is a rendered instruction that tells the model to call these tools by name. If
+#: one of them is absent the template is broken, so the prompt is not registered at all.
+PROMPT_TOOLS: dict[str, tuple[str, ...]] = {
+    "audit_firewall": (
+        "audit_firewall_rules",
+        "firewall_rule_get",
+        "nat_rule_get",
+        "find_object_usage",
+    ),
+    "explain_flow": (
+        "explain_connectivity",
+        "firewall_rule_list",
+        "zone_list",
+        "network_interface_list",
+    ),
+    "find_unused_objects": ("audit_firewall_rules", "find_object_usage"),
+}
+
+#: The prompts, in registration order.
+PROMPT_NAMES: tuple[str, ...] = tuple(PROMPT_TOOLS)
+
+
+def available_prompts(available_tools: Iterable[str]) -> tuple[str, ...]:
+    """The prompts whose tools are all registered, in registration order.
+
+    Args:
+        available_tools: The tool names the server registered.
+
+    Returns:
+        The prompt names that can be rendered against this surface.
+    """
+    names = frozenset(available_tools)
+    return tuple(name for name in PROMPT_NAMES if set(PROMPT_TOOLS[name]) <= names)
 
 
 def _request(payload: dict[str, object]) -> str:
@@ -217,125 +261,138 @@ def _unused_message(object_type: str | None, ip_family: str | None) -> str:
    referenced."""
 
 
-def register_prompts(server: MCPServer[AppContext]) -> None:
-    """Register the server's prompts on ``server``.
+def register_prompts(server: MCPServer[AppContext], *, available_tools: Iterable[str]) -> None:
+    """Register the prompts this surface can run on ``server``.
 
     Args:
         server: The server being built. Registration happens before the lifespan starts,
             so the prompt list is fixed for the process lifetime.
+        available_tools: The tool names the server registered. A prompt whose workflow names
+            a tool outside this set is not registered, because rendering it would instruct
+            the model to call a tool that does not exist.
     """
+    enabled = frozenset(available_prompts(available_tools))
 
-    @server.prompt(
-        name="audit_firewall",
-        title="Audit the firewall rule base",
-        description=(
-            "Run the seven read-only rule-base checks, triage the findings by severity and "
-            "confirm the high-severity ones with the read tools."
-        ),
-    )
-    def audit_firewall(
-        ip_family: Annotated[
-            str | None,
-            Field(description="Audit only this IP family: 'ipv4' or 'ipv6'. Omit for both."),
-        ] = None,
-        checks: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Comma-separated subset of the seven checks: "
-                    f"{', '.join(AUDIT_CHECKS)}. Omit for all seven."
-                )
-            ),
-        ] = None,
-        rule_name_contains: Annotated[
-            str | None,
-            Field(
-                description="Report rule-scoped findings only for rules whose name contains this text."
-            ),
-        ] = None,
-    ) -> str:
-        """Audit the firewall rule base and report what needs attention."""
-        return _audit_message(ip_family, checks, rule_name_contains)
+    if "audit_firewall" in enabled:
 
-    @server.prompt(
-        name="explain_flow",
-        title="Explain why a flow is allowed or denied",
-        description=(
-            "Resolve the interfaces, zones, firewall rule and NAT rule that apply to one "
-            "flow, and state the verdict with the rule that decided it."
-        ),
-    )
-    def explain_flow(
-        source: Annotated[
-            str,
-            Field(description="Source IP address, zone name or FQDN."),
-        ],
-        destination: Annotated[
-            str,
-            Field(description="Destination IP address, zone name or FQDN."),
-        ],
-        service: Annotated[
-            str,
-            Field(
-                min_length=1,
-                description=(
-                    "Service object name the flow is described by (required). "
-                    "`explain_connectivity` needs a service."
+        @server.prompt(
+            name="audit_firewall",
+            title="Audit the firewall rule base",
+            description=(
+                "Run the seven read-only rule-base checks, triage the findings by severity and "
+                "confirm the high-severity ones with the read tools."
+            ),
+        )
+        def audit_firewall(
+            ip_family: Annotated[
+                str | None,
+                Field(description="Audit only this IP family: 'ipv4' or 'ipv6'. Omit for both."),
+            ] = None,
+            checks: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Comma-separated subset of the seven checks: "
+                        f"{', '.join(AUDIT_CHECKS)}. Omit for all seven."
+                    )
                 ),
-            ),
-        ],
-        endpoint_type: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "How to read source and destination: 'ip' (default), 'zone' or 'fqdn'."
-                )
-            ),
-        ] = None,
-        protocol: Annotated[
-            str | None,
-            Field(description="Protocol of the flow: tcp, udp, icmp, icmpv6 or ip."),
-        ] = None,
-        port: Annotated[
-            int | None,
-            Field(
-                description=(
-                    "Destination port (TCP or UDP only; requires `protocol` to be 'tcp' or 'udp')."
-                )
-            ),
-        ] = None,
-    ) -> str:
-        """Explain, from configuration, why a flow is allowed or denied."""
-        return _explain_message(source, destination, endpoint_type, service, protocol, port)
+            ] = None,
+            rule_name_contains: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Report rule-scoped findings only for rules whose name contains this text."
+                    )
+                ),
+            ] = None,
+        ) -> str:
+            """Audit the firewall rule base and report what needs attention."""
+            return _audit_message(ip_family, checks, rule_name_contains)
 
-    @server.prompt(
-        name="find_unused_objects",
-        title="Find unused address and service objects",
-        description=(
-            "Find address and service objects that no rule, NAT rule or group references, "
-            "and confirm each candidate with the usage lookup."
-        ),
-    )
-    def find_unused_objects(
-        object_type: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Restrict to one object type: address, address-group, service or "
-                    "service-group. Omit for all four."
-                )
+    if "explain_flow" in enabled:
+
+        @server.prompt(
+            name="explain_flow",
+            title="Explain why a flow is allowed or denied",
+            description=(
+                "Resolve the interfaces, zones, firewall rule and NAT rule that apply to one "
+                "flow, and state the verdict with the rule that decided it."
             ),
-        ] = None,
-        ip_family: Annotated[
-            str | None,
-            Field(
-                description=(
-                    "Restrict address lookups to 'ipv4', 'ipv6' or 'fqdn'. Omit for all. "
-                    "An FQDN object has no IP family, so the audit scans both rule families "
-                    "and the usage lookup is narrowed to FQDN objects."
-                )
+        )
+        def explain_flow(
+            source: Annotated[
+                str,
+                Field(description="Source IP address, zone name or FQDN."),
+            ],
+            destination: Annotated[
+                str,
+                Field(description="Destination IP address, zone name or FQDN."),
+            ],
+            service: Annotated[
+                str,
+                Field(
+                    min_length=1,
+                    description=(
+                        "Service object name the flow is described by (required). "
+                        "`explain_connectivity` needs a service."
+                    ),
+                ),
+            ],
+            endpoint_type: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "How to read source and destination: 'ip' (default), 'zone' or 'fqdn'."
+                    )
+                ),
+            ] = None,
+            protocol: Annotated[
+                str | None,
+                Field(description="Protocol of the flow: tcp, udp, icmp, icmpv6 or ip."),
+            ] = None,
+            port: Annotated[
+                int | None,
+                Field(
+                    description=(
+                        "Destination port (TCP or UDP only; requires `protocol` to be 'tcp' or "
+                        "'udp')."
+                    )
+                ),
+            ] = None,
+        ) -> str:
+            """Explain, from configuration, why a flow is allowed or denied."""
+            return _explain_message(source, destination, endpoint_type, service, protocol, port)
+
+    if "find_unused_objects" in enabled:
+
+        @server.prompt(
+            name="find_unused_objects",
+            title="Find unused address and service objects",
+            description=(
+                "Find address and service objects that no rule, NAT rule or group references, "
+                "and confirm each candidate with the usage lookup."
             ),
-        ] = None,
-    ) -> str:
-        """Find address and service objects that nothing references."""
-        return _unused_message(object_type, ip_family)
+        )
+        def find_unused_objects(
+            object_type: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Restrict to one object type: address, address-group, service or "
+                        "service-group. Omit for all four."
+                    )
+                ),
+            ] = None,
+            ip_family: Annotated[
+                str | None,
+                Field(
+                    description=(
+                        "Restrict address lookups to 'ipv4', 'ipv6' or 'fqdn'. Omit for all. "
+                        "An FQDN object has no IP family, so the audit scans both rule families "
+                        "and the usage lookup is narrowed to FQDN objects."
+                    )
+                ),
+            ] = None,
+        ) -> str:
+            """Find address and service objects that nothing references."""
+            return _unused_message(object_type, ip_family)
