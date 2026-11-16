@@ -81,7 +81,7 @@ projection of one audited operation of the SFOS 23 REST contract.
 
 | Item | Value |
 |---|---|
-| Appliance | **Sophos Firewall 23** (SFOS 23.0) |
+| Appliance | **Sophos Firewall 23** (SFOS 23.0), model **SFVH** (virtual appliance) |
 | Tested firmware build | **SFOS 23.0.0 GA-Build371** — the build every live-evidence record in this repository was produced against |
 | API | Sophos Firewall **Configuration REST API v1**, base path `/api/firewall-config/v1` |
 | Transport | HTTPS to the appliance Web Admin Console port (SFOS default `4444`), Bearer API key |
