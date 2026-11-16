@@ -46,10 +46,11 @@ every tool name are unchanged.
 ## What the trim removes
 
 The SDK derives each tool's `outputSchema` from its return annotation at registration.
-`server._trim_published_output_schemas` walks the registry after every domain has
-registered and applies `models.common.trim_published_output_schema` to a copy of each
-schema. The SDK reads `FuncMetadata.output_schema` live, so the published schema changes
-without touching the output model the SDK validates results against.
+`tools.trim_registered_output_schemas` (called from `server.create_server` after every
+domain has registered) walks the registry and applies
+`models.common.trim_published_output_schema` to a copy of each schema. The SDK reads
+`FuncMetadata.output_schema` live, so the published schema changes without touching the
+output model the SDK validates results against.
 
 Two JSON Schema annotations are removed:
 

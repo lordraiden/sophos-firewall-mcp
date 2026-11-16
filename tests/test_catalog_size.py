@@ -23,6 +23,7 @@ import json
 from typing import Any
 
 import pytest
+from mcp import Client
 from mcp.server.mcpserver.utilities.func_metadata import StrictJsonSchema, _inline_root_ref
 from mcp.types import ListToolsResult
 from pydantic import TypeAdapter
@@ -266,7 +267,8 @@ async def test_the_catalog_is_one_page_because_the_sdk_has_no_pagination_hook() 
     registry and emit an opaque cursor; no partial result is faked here.
     """
     server = create_server(_settings())
-    result = ListToolsResult(tools=list(await server.list_tools()))
+    async with Client(server) as client:
+        result = await client.list_tools()
 
     assert result.next_cursor is None
     assert len(result.tools) == 112
