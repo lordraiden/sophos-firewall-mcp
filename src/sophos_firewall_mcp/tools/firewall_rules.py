@@ -3,26 +3,21 @@
 This module implements the twelve audited firewall-rule operations for IPv4 and IPv6 and
 the four composite tools the curated scope adds on top of them:
 
-==============================  ==========================================  =========
-Tool                            Underlying operation(s)                     Kind
-==============================  ==========================================  =========
-``firewall_rule_list_ipv4``     ``getAllFirewallRulesIpv4``                 read
-``firewall_rule_list_ipv6``     ``getAllFirewallRulesIpv6``                 read
-``firewall_rule_get_ipv4``      ``getFirewallRuleIpv4``                     read
-``firewall_rule_get_ipv6``      ``getFirewallRuleIpv6``                     read
-``firewall_rule_create_ipv4``   ``createFirewallRuleIpv4``                  mutation
-``firewall_rule_create_ipv6``   ``createFirewallRuleIpv6``                  mutation
-``firewall_rule_update_ipv4``   ``updateFirewallRuleIpv4``                  mutation
-``firewall_rule_update_ipv6``   ``updateFirewallRuleIpv6``                  mutation
-``firewall_rule_delete_ipv4``   ``deleteFirewallRuleIpv4``                  mutation
-``firewall_rule_delete_ipv6``   ``deleteFirewallRuleIpv6``                  mutation
-``firewall_rule_move_ipv4``     ``moveFirewallRuleIpv4``                    mutation
-``firewall_rule_move_ipv6``     ``moveFirewallRuleIpv6``                    mutation
-``firewall_rule_set_enabled_ipv4``  ``updateFirewallRuleIpv4`` (PATCH)      mutation
-``firewall_rule_set_enabled_ipv6``  ``updateFirewallRuleIpv6`` (PATCH)      mutation
-``firewall_rule_clone_ipv4``    ``getFirewallRuleIpv4`` + create            mutation
-``firewall_rule_clone_ipv6``    ``getFirewallRuleIpv6`` + create            mutation
-==============================  ==========================================  =========
+=============================  ==========================================  =========
+Tool                           Underlying operation(s)                     Kind
+=============================  ==========================================  =========
+``firewall_rule_list``         ``getAllFirewallRulesIpv4``/``Ipv6``        read
+``firewall_rule_get``          ``getFirewallRuleIpv4``/``Ipv6``            read
+``firewall_rule_create``       ``createFirewallRuleIpv4``/``Ipv6``         mutation
+``firewall_rule_update``       ``updateFirewallRuleIpv4``/``Ipv6``         mutation
+``firewall_rule_delete``       ``deleteFirewallRuleIpv4``/``Ipv6``         mutation
+``firewall_rule_move``         ``moveFirewallRuleIpv4``/``Ipv6``           mutation
+``firewall_rule_set_enabled``  ``updateFirewallRuleIpv4``/``Ipv6`` (PATCH) mutation
+``firewall_rule_clone``        ``getFirewallRuleIpv4``/``Ipv6`` + create    mutation
+=============================  ==========================================  =========
+
+One tool per concept: the required ``ip_family`` argument selects the IPv4 or IPv6 rule
+base, and the adapter picks the path. The wire body is unchanged for each family.
 
 The composites add no new endpoint: they reuse the audited operations and are classified
 as mutations, so they are not registered at all when the server runs in read-only mode.
@@ -50,10 +45,13 @@ Annotation policy: read tools carry no write hints; every mutation declares
 every non-additive mutation (update, delete, move, set_enabled) and false for the additive
 ones (create, clone); ``idempotent_hint`` is true when repeating the same call leaves the
 appliance in the same state (update, delete, move, set_enabled) and false for the two that
-create a new rule each time. ``open_world_hint`` is left at the foundation default
-(``true``): the appliance is external to the MCP process and its responses carry
-administrator- and system-controlled values, so the conservative interaction-domain
-classification applies.
+create a new rule each time. ``open_world_hint`` comes from the per-tool verdict in
+:data:`sophos_firewall_mcp.tools.OPEN_WORLD_TOOLS`: a rule base is the appliance's own
+configuration, so every tool here is closed (``false``).
+
+``firewall_rule_delete`` asks the client to confirm before the appliance is touched
+(:func:`sophos_firewall_mcp.tools.confirm_destructive`); a client that cannot be asked
+keeps the previous behaviour.
 """
 
 from __future__ import annotations
@@ -72,23 +70,29 @@ from sophos_firewall_mcp.errors import SophosAPIError
 from sophos_firewall_mcp.models.common import ObjectRef, Pages
 from sophos_firewall_mcp.models.firewall import (
     CloneFirewallRuleInput,
+    CreateFirewallRuleInput,
     CreateFirewallRuleIpv4Input,
     CreateFirewallRuleIpv6Input,
     DeleteFirewallRuleInput,
     DeleteFirewallRuleOutput,
-    FirewallRuleIpv4Output,
-    FirewallRuleIpv6Output,
+    FirewallRuleOutput,
     GetFirewallRuleInput,
     ListFirewallRulesInput,
-    ListFirewallRulesIpv4Output,
-    ListFirewallRulesIpv6Output,
+    ListFirewallRulesOutput,
     MoveFirewallRuleInput,
     MoveFirewallRuleOutput,
     SetFirewallRuleEnabledInput,
+    UpdateFirewallRuleInput,
     UpdateFirewallRuleIpv4Input,
     UpdateFirewallRuleIpv6Input,
 )
-from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
+from sophos_firewall_mcp.tools import (
+    DomainAdapter,
+    ToolKind,
+    confirm_destructive,
+    register_tool,
+    tool_error,
+)
 
 __all__ = ["register_firewall_tools"]
 
@@ -110,8 +114,9 @@ _IPV6_ITEM = "/firewall/rules/ipv6/{idOrName}"
 #: Move path of the IPv6 rules (``moveFirewallRuleIpv6``).
 _IPV6_MOVE = "/firewall/rules/ipv6/move"
 
-#: Members the appliance generates; they are never part of a create body.
-_READ_ONLY_RULE_FIELDS = frozenset({"id", "createdAt", "updatedAt"})
+#: Members the appliance generates or the tool derives; they are never part of a create
+#: body. ``ipFamily`` is derived from the collection that was read, not sent by the API.
+_READ_ONLY_RULE_FIELDS = frozenset({"id", "createdAt", "updatedAt", "ipFamily"})
 
 #: Message for every WAF rejection: WAF is a documented v1 exclusion, not a bug.
 _WAF_EXCLUDED = (
@@ -150,16 +155,21 @@ def _project_rule(payload: Mapping[str, Any], model: type[RuleT]) -> RuleT:
         ) from exc
 
 
-def _parse_ipv4_rule(payload: Mapping[str, Any]) -> FirewallRuleIpv4Output | None:
-    """Project an IPv4 rule, or return ``None`` when the payload is the excluded WAF variant."""
+def _parse_ipv4_rule(payload: Mapping[str, Any]) -> FirewallRuleOutput | None:
+    """Project an IPv4 rule, or return ``None`` when the payload is the excluded WAF variant.
+
+    ``ipFamily`` is derived from the collection that was read, not from the payload: the
+    API does not return it, and the merged output model requires it so a caller can tell
+    the two families apart.
+    """
     if payload.get("ruleType") == "waf":
         return None
-    return _project_rule(payload, FirewallRuleIpv4Output)
+    return _project_rule({**payload, "ipFamily": "ipv4"}, FirewallRuleOutput)
 
 
-def _parse_ipv6_rule(payload: Mapping[str, Any]) -> FirewallRuleIpv6Output:
-    """Project an IPv6 rule (the IPv6 contract has no WAF variant)."""
-    return _project_rule(payload, FirewallRuleIpv6Output)
+def _parse_ipv6_rule(payload: Mapping[str, Any]) -> FirewallRuleOutput:
+    """Project an IPv6 rule (the IPv6 API has no WAF variant)."""
+    return _project_rule({**payload, "ipFamily": "ipv6"}, FirewallRuleOutput)
 
 
 def _require_firewall_rule(rule: RuleT | None) -> RuleT:
@@ -188,6 +198,7 @@ def _clone_body(
     source: Mapping[str, Any],
     request: CloneFirewallRuleInput,
     model: type[CreateT],
+    family: str,
 ) -> dict[str, Any]:
     """Build a validated create body from a source rule and the clone parameters.
 
@@ -199,6 +210,7 @@ def _clone_body(
     candidate["name"] = request.name
     candidate["enabled"] = request.enabled
     candidate["position"] = request.position
+    candidate["ip_family"] = family
     if request.reference_item is not None:
         candidate["referenceItem"] = request.reference_item.model_dump(by_alias=True)
     try:
@@ -208,7 +220,7 @@ def _clone_body(
             "the source rule cannot be cloned because its payload is not a valid create "
             "body for this IP family"
         ) from exc
-    return validated.model_dump(by_alias=True, exclude_none=True)
+    return validated.model_dump(by_alias=True, exclude_none=True, exclude={"ip_family"})
 
 
 class FirewallRuleAdapter(DomainAdapter):
@@ -307,91 +319,114 @@ class FirewallRuleAdapter(DomainAdapter):
         except SophosAPIError as exc:
             raise tool_error(exc) from exc
 
-    # -- IPv4 operations --------------------------------------------------------
+    # -- Operations (one method per concept; ``ip_family`` selects the path) ------
 
-    async def list_ipv4(self, request: ListFirewallRulesInput) -> ListFirewallRulesIpv4Output:
+    async def list_rules(self, request: ListFirewallRulesInput) -> ListFirewallRulesOutput:
+        """List one page of the IPv4 or IPv6 rule base."""
+        if request.ip_family == "ipv6":
+            return await self.list_ipv6(request)
+        return await self.list_ipv4(request)
+
+    async def list_ipv4(self, request: ListFirewallRulesInput) -> ListFirewallRulesOutput:
         items, pages, skipped = await self._list(_IPV4_COLLECTION, request, _parse_ipv4_rule)
-        return ListFirewallRulesIpv4Output(items=items, pages=pages, wafRulesSkipped=skipped)
+        return ListFirewallRulesOutput(items=items, pages=pages, wafRulesSkipped=skipped)
 
-    async def get_ipv4(self, request: GetFirewallRuleInput) -> FirewallRuleIpv4Output:
+    async def list_ipv6(self, request: ListFirewallRulesInput) -> ListFirewallRulesOutput:
+        items, pages, _ = await self._list(_IPV6_COLLECTION, request, _parse_ipv6_rule)
+        return ListFirewallRulesOutput(items=items, pages=pages)
+
+    async def get_rule(self, request: GetFirewallRuleInput) -> FirewallRuleOutput:
+        """Read one rule from the IPv4 or IPv6 rule base."""
+        if request.ip_family == "ipv6":
+            return await self.get_ipv6(request)
+        return await self.get_ipv4(request)
+
+    async def get_ipv4(self, request: GetFirewallRuleInput) -> FirewallRuleOutput:
         payload = await self._get(_IPV4_ITEM, request.id_or_name)
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
-    async def create_ipv4(self, request: CreateFirewallRuleIpv4Input) -> FirewallRuleIpv4Output:
-        payload = await self._post(
-            _IPV4_COLLECTION, request.model_dump(by_alias=True, exclude_none=True)
-        )
+    async def get_ipv6(self, request: GetFirewallRuleInput) -> FirewallRuleOutput:
+        payload = await self._get(_IPV6_ITEM, request.id_or_name)
+        return _parse_ipv6_rule(payload)
+
+    async def create_rule(self, request: CreateFirewallRuleInput) -> FirewallRuleOutput:
+        """Create a rule in the IPv4 or IPv6 rule base."""
+        if request.ip_family == "ipv6":
+            return await self.create_ipv6(request)
+        return await self.create_ipv4(request)
+
+    async def create_ipv4(self, request: CreateFirewallRuleIpv4Input) -> FirewallRuleOutput:
+        body = request.model_dump(by_alias=True, exclude_none=True, exclude={"ip_family"})
+        payload = await self._post(_IPV4_COLLECTION, body)
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
-    async def update_ipv4(self, request: UpdateFirewallRuleIpv4Input) -> FirewallRuleIpv4Output:
-        body = request.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"})
+    async def create_ipv6(self, request: CreateFirewallRuleIpv6Input) -> FirewallRuleOutput:
+        body = request.model_dump(by_alias=True, exclude_none=True, exclude={"ip_family"})
+        payload = await self._post(_IPV6_COLLECTION, body)
+        return _parse_ipv6_rule(payload)
+
+    async def update_rule(self, request: UpdateFirewallRuleInput) -> FirewallRuleOutput:
+        """Partially update a rule in the IPv4 or IPv6 rule base."""
+        if request.ip_family == "ipv6":
+            return await self.update_ipv6(request)
+        return await self.update_ipv4(request)
+
+    async def update_ipv4(self, request: UpdateFirewallRuleIpv4Input) -> FirewallRuleOutput:
+        body = request.model_dump(
+            by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
+        )
         if not body:
             raise ToolError(_NO_UPDATE_FIELDS)
         payload = await self._patch(_IPV4_ITEM, request.id_or_name, body)
         return _require_firewall_rule(_parse_ipv4_rule(payload))
 
-    async def delete_ipv4(self, request: DeleteFirewallRuleInput) -> DeleteFirewallRuleOutput:
-        payload = await self._delete(_IPV4_ITEM, request.id_or_name)
-        return _delete_output(payload, request.id_or_name)
-
-    async def move_ipv4(self, request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
-        await self._move(_IPV4_MOVE, request.model_dump(by_alias=True, exclude_none=True))
-        return _move_output(request)
-
-    async def set_enabled_ipv4(
-        self, request: SetFirewallRuleEnabledInput
-    ) -> FirewallRuleIpv4Output:
-        payload = await self._patch(_IPV4_ITEM, request.id_or_name, {"enabled": request.enabled})
-        return _require_firewall_rule(_parse_ipv4_rule(payload))
-
-    async def clone_ipv4(self, request: CloneFirewallRuleInput) -> FirewallRuleIpv4Output:
-        source = await self._get(_IPV4_ITEM, request.source)
-        if source.get("ruleType") == "waf":
-            raise ToolError(_WAF_EXCLUDED)
-        body = _clone_body(source, request, CreateFirewallRuleIpv4Input)
-        payload = await self._post(_IPV4_COLLECTION, body)
-        return _require_firewall_rule(_parse_ipv4_rule(payload))
-
-    # -- IPv6 operations --------------------------------------------------------
-
-    async def list_ipv6(self, request: ListFirewallRulesInput) -> ListFirewallRulesIpv6Output:
-        items, pages, _ = await self._list(_IPV6_COLLECTION, request, _parse_ipv6_rule)
-        return ListFirewallRulesIpv6Output(items=items, pages=pages)
-
-    async def get_ipv6(self, request: GetFirewallRuleInput) -> FirewallRuleIpv6Output:
-        payload = await self._get(_IPV6_ITEM, request.id_or_name)
-        return _parse_ipv6_rule(payload)
-
-    async def create_ipv6(self, request: CreateFirewallRuleIpv6Input) -> FirewallRuleIpv6Output:
-        payload = await self._post(
-            _IPV6_COLLECTION, request.model_dump(by_alias=True, exclude_none=True)
+    async def update_ipv6(self, request: UpdateFirewallRuleIpv6Input) -> FirewallRuleOutput:
+        body = request.model_dump(
+            by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
         )
-        return _parse_ipv6_rule(payload)
-
-    async def update_ipv6(self, request: UpdateFirewallRuleIpv6Input) -> FirewallRuleIpv6Output:
-        body = request.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"})
         if not body:
             raise ToolError(_NO_UPDATE_FIELDS)
         payload = await self._patch(_IPV6_ITEM, request.id_or_name, body)
         return _parse_ipv6_rule(payload)
 
-    async def delete_ipv6(self, request: DeleteFirewallRuleInput) -> DeleteFirewallRuleOutput:
-        payload = await self._delete(_IPV6_ITEM, request.id_or_name)
+    async def delete_rule(self, request: DeleteFirewallRuleInput) -> DeleteFirewallRuleOutput:
+        """Delete one rule from the IPv4 or IPv6 rule base."""
+        template = _IPV6_ITEM if request.ip_family == "ipv6" else _IPV4_ITEM
+        payload = await self._delete(template, request.id_or_name)
         return _delete_output(payload, request.id_or_name)
 
-    async def move_ipv6(self, request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
-        await self._move(_IPV6_MOVE, request.model_dump(by_alias=True, exclude_none=True))
+    async def move_rule(self, request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
+        """Move one rule within the IPv4 or IPv6 rule base."""
+        path = _IPV6_MOVE if request.ip_family == "ipv6" else _IPV4_MOVE
+        body = request.model_dump(by_alias=True, exclude_none=True, exclude={"ip_family"})
+        await self._move(path, body)
         return _move_output(request)
 
-    async def set_enabled_ipv6(
-        self, request: SetFirewallRuleEnabledInput
-    ) -> FirewallRuleIpv6Output:
-        payload = await self._patch(_IPV6_ITEM, request.id_or_name, {"enabled": request.enabled})
-        return _parse_ipv6_rule(payload)
+    async def set_enabled(self, request: SetFirewallRuleEnabledInput) -> FirewallRuleOutput:
+        """Enable or disable one rule in the IPv4 or IPv6 rule base."""
+        template = _IPV6_ITEM if request.ip_family == "ipv6" else _IPV4_ITEM
+        payload = await self._patch(template, request.id_or_name, {"enabled": request.enabled})
+        if request.ip_family == "ipv6":
+            return _parse_ipv6_rule(payload)
+        return _require_firewall_rule(_parse_ipv4_rule(payload))
 
-    async def clone_ipv6(self, request: CloneFirewallRuleInput) -> FirewallRuleIpv6Output:
+    async def clone_rule(self, request: CloneFirewallRuleInput) -> FirewallRuleOutput:
+        """Clone one rule within the IPv4 or IPv6 rule base."""
+        if request.ip_family == "ipv6":
+            return await self.clone_ipv6(request)
+        return await self.clone_ipv4(request)
+
+    async def clone_ipv4(self, request: CloneFirewallRuleInput) -> FirewallRuleOutput:
+        source = await self._get(_IPV4_ITEM, request.source)
+        if source.get("ruleType") == "waf":
+            raise ToolError(_WAF_EXCLUDED)
+        body = _clone_body(source, request, CreateFirewallRuleIpv4Input, "ipv4")
+        payload = await self._post(_IPV4_COLLECTION, body)
+        return _require_firewall_rule(_parse_ipv4_rule(payload))
+
+    async def clone_ipv6(self, request: CloneFirewallRuleInput) -> FirewallRuleOutput:
         source = await self._get(_IPV6_ITEM, request.source)
-        body = _clone_body(source, request, CreateFirewallRuleIpv6Input)
+        body = _clone_body(source, request, CreateFirewallRuleIpv6Input, "ipv6")
         payload = await self._post(_IPV6_COLLECTION, body)
         return _parse_ipv6_rule(payload)
 
@@ -415,325 +450,183 @@ def _move_output(request: MoveFirewallRuleInput) -> MoveFirewallRuleOutput:
 
 
 def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -> None:
-    """Register the firewall-rule tools on *server*.
+    """Register the eight firewall-rule tools on *server*.
 
-    In read-only mode the four read tools are registered and the twelve mutation tools
-    (create, update, delete, move, set_enabled, clone for both families) are not: the
-    filter lives in :func:`~sophos_firewall_mcp.tools.register_tool`, so a read-only
-    deployment does not merely hide them.
+    In read-only mode the two read tools are registered and the six mutation tools
+    (create, update, delete, move, set_enabled, clone) are not: the filter lives in
+    :func:`~sophos_firewall_mcp.tools.register_tool`, so a read-only deployment does not
+    merely hide them.
     """
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="firewall_rule_list_ipv4",
-        title="List IPv4 firewall rules",
+        name="firewall_rule_list",
+        title="List firewall rules",
         description=(
-            "List one page of IPv4 firewall rules (getAllFirewallRulesIpv4). Returns at "
-            "most pageSize rules plus the appliance's pages metadata; it never walks the "
+            "List one page of firewall rules (getAllFirewallRulesIpv4 or "
+            "getAllFirewallRulesIpv6, selected by the required ip_family). Returns at most "
+            "pageSize rules plus the appliance's pages metadata; it never walks the "
             "collection automatically. page_size defaults to 10. Filter by name with "
             "nameContains or nameNotEquals (mutually exclusive). Each rule carries its "
             "1-based evaluation position, derived from the page offset and its index in the "
-            "returned page. WAF rules are out of scope: they are omitted and counted in "
-            "wafRulesSkipped. Size: the tested appliance's 48-rule base is ~70 KB of JSON, so "
-            "keep page_size small and page through the collection. The MCP SDK returns the "
-            "payload both as a text block and as structuredContent; read one of them, not "
-            "both. Read-only."
+            "returned page, and its ipFamily. WAF rules are out of scope: they are omitted "
+            "and counted in wafRulesSkipped (always 0 for IPv6, which has no WAF variant). "
+            "Size: the tested appliance's 48-rule base is ~70 KB of JSON, so keep page_size "
+            "small and page through the collection. The MCP SDK returns the payload both as "
+            "a text block and as structuredContent; read one of them, not both. Read-only."
         ),
     )
-    async def firewall_rule_list_ipv4(
+    async def firewall_rule_list(
         request: ListFirewallRulesInput, ctx: Context[AppContext]
-    ) -> ListFirewallRulesIpv4Output:
-        return await FirewallRuleAdapter.from_context(ctx).list_ipv4(request)
+    ) -> ListFirewallRulesOutput:
+        return await FirewallRuleAdapter.from_context(ctx).list_rules(request)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.READ,
-        name="firewall_rule_list_ipv6",
-        title="List IPv6 firewall rules",
+        name="firewall_rule_get",
+        title="Get a firewall rule",
         description=(
-            "List one page of IPv6 firewall rules (getAllFirewallRulesIpv6). Returns at "
-            "most pageSize rules plus the appliance's pages metadata; it never walks the "
-            "collection automatically. page_size defaults to 10. Filter by name with "
-            "nameContains or nameNotEquals (mutually exclusive). Each rule carries its "
-            "1-based evaluation position, derived from the page offset and its index in the "
-            "returned page. Size: the tested appliance's 48-rule base is ~70 KB of JSON, so "
-            "keep page_size small and page through the collection. The MCP SDK returns the "
-            "payload both as a text block and as structuredContent; read one of them, not "
-            "both. Read-only."
+            "Read one firewall rule by id or name (getFirewallRuleIpv4 or "
+            "getFirewallRuleIpv6, selected by the required ip_family). Returns the applied "
+            "enabled state, the action, the logging flag, the schedule and the match "
+            "criteria. position is null: the API does not return the evaluation position on "
+            "a single-object read, so use firewall_rule_list to obtain it. WAF rules are out "
+            "of scope and are rejected on the IPv4 rule base. Read-only."
         ),
     )
-    async def firewall_rule_list_ipv6(
-        request: ListFirewallRulesInput, ctx: Context[AppContext]
-    ) -> ListFirewallRulesIpv6Output:
-        return await FirewallRuleAdapter.from_context(ctx).list_ipv6(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="firewall_rule_get_ipv4",
-        title="Get an IPv4 firewall rule",
-        description=(
-            "Read one IPv4 firewall rule by id or name (getFirewallRuleIpv4). Returns the "
-            "applied enabled state, the action, the logging flag, the schedule and the "
-            "match criteria. position is null: the API does not return the evaluation "
-            "position on a single-object read, so use firewall_rule_list_ipv4 to obtain it. "
-            "WAF rules are out of scope and are rejected. Read-only."
-        ),
-    )
-    async def firewall_rule_get_ipv4(
+    async def firewall_rule_get(
         request: GetFirewallRuleInput, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv4Output:
-        return await FirewallRuleAdapter.from_context(ctx).get_ipv4(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.READ,
-        name="firewall_rule_get_ipv6",
-        title="Get an IPv6 firewall rule",
-        description=(
-            "Read one IPv6 firewall rule by id or name (getFirewallRuleIpv6). Returns the "
-            "applied enabled state, the action, the logging flag, the schedule and the "
-            "match criteria. position is null: the API does not return the evaluation "
-            "position on a single-object read, so use firewall_rule_list_ipv6 to obtain it. "
-            "Read-only."
-        ),
-    )
-    async def firewall_rule_get_ipv6(
-        request: GetFirewallRuleInput, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv6Output:
-        return await FirewallRuleAdapter.from_context(ctx).get_ipv6(request)
+    ) -> FirewallRuleOutput:
+        return await FirewallRuleAdapter.from_context(ctx).get_rule(request)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.MUTATION,
-        name="firewall_rule_create_ipv4",
-        title="Create an IPv4 firewall rule",
+        name="firewall_rule_create",
+        title="Create a firewall rule",
         description=(
-            "Create an IPv4 firewall rule (createFirewallRuleIpv4). enabled is always sent "
-            "explicitly and defaults to false, so the rule is created disabled unless "
-            "enabled=true is passed. position is required (after|before|bottom|top); after "
-            "and before need a referenceItem naming the anchor rule. ruleType is always "
-            "firewall: WAF rules are out of scope. Returns the created rule with its "
+            "Create a firewall rule (createFirewallRuleIpv4 or createFirewallRuleIpv6, "
+            "selected by the required ip_family). enabled is always sent explicitly and "
+            "defaults to false, so the rule is created disabled unless enabled=true is "
+            "passed. position is required (after|before|bottom|top); after and before need a "
+            "referenceItem naming the anchor rule. ruleType is always firewall: WAF rules "
+            "are out of scope. Returns the created rule with its applied enabled state."
+        ),
+        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
+    )
+    async def firewall_rule_create(
+        request: CreateFirewallRuleInput, ctx: Context[AppContext]
+    ) -> FirewallRuleOutput:
+        return await FirewallRuleAdapter.from_context(ctx).create_rule(request)
+
+    @register_tool(
+        server,
+        read_only=read_only,
+        kind=ToolKind.MUTATION,
+        name="firewall_rule_update",
+        title="Update a firewall rule",
+        description=(
+            "Partially update a firewall rule (updateFirewallRuleIpv4 or "
+            "updateFirewallRuleIpv6, selected by the required ip_family; JSON Merge Patch). "
+            "Only the members supplied are sent; omitted members keep their persisted value, "
+            "and an explicit null on an optional member removes it. The rule is identified "
+            "by idOrName. Returns the updated rule."
+        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+    )
+    async def firewall_rule_update(
+        request: UpdateFirewallRuleInput, ctx: Context[AppContext]
+    ) -> FirewallRuleOutput:
+        return await FirewallRuleAdapter.from_context(ctx).update_rule(request)
+
+    @register_tool(
+        server,
+        read_only=read_only,
+        kind=ToolKind.MUTATION,
+        name="firewall_rule_delete",
+        title="Delete a firewall rule",
+        description=(
+            "Delete one firewall rule by id or name (deleteFirewallRuleIpv4 or "
+            "deleteFirewallRuleIpv6, selected by the required ip_family). Destructive and "
+            "irreversible: the rule is removed from that family's rule base. When the client "
+            "supports elicitation the call first asks the user to confirm, naming the rule; "
+            "a declined or cancelled confirmation aborts the call and nothing is deleted. "
+            "Returns whether the appliance confirmed the deletion."
+        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+    )
+    async def firewall_rule_delete(
+        request: DeleteFirewallRuleInput, ctx: Context[AppContext]
+    ) -> DeleteFirewallRuleOutput:
+        await confirm_destructive(
+            ctx,
+            action="delete the firewall rule",
+            target=f"{request.id_or_name!r} from the {request.ip_family} rule base",
+        )
+        return await FirewallRuleAdapter.from_context(ctx).delete_rule(request)
+
+    @register_tool(
+        server,
+        read_only=read_only,
+        kind=ToolKind.MUTATION,
+        name="firewall_rule_move",
+        title="Move a firewall rule",
+        description=(
+            "Move a firewall rule to a new position (moveFirewallRuleIpv4 or "
+            "moveFirewallRuleIpv6, selected by the required ip_family). The rule is "
+            "identified by name only, not by idOrName. position is after|before|bottom|top; "
+            "after and before need a referenceItem naming the anchor rule. Reordering "
+            "changes which rule matches first."
+        ),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+    )
+    async def firewall_rule_move(
+        request: MoveFirewallRuleInput, ctx: Context[AppContext]
+    ) -> MoveFirewallRuleOutput:
+        return await FirewallRuleAdapter.from_context(ctx).move_rule(request)
+
+    @register_tool(
+        server,
+        read_only=read_only,
+        kind=ToolKind.MUTATION,
+        name="firewall_rule_set_enabled",
+        title="Enable or disable a firewall rule",
+        description=(
+            "Enable or disable a firewall rule by PATCHing only enabled "
+            "(updateFirewallRuleIpv4 or updateFirewallRuleIpv6, selected by the required "
+            "ip_family). enabled is required: the caller must choose the target state, so a "
+            "missing value can never silently disable a rule. Returns the rule with the "
             "applied enabled state."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
-    )
-    async def firewall_rule_create_ipv4(
-        request: CreateFirewallRuleIpv4Input, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv4Output:
-        return await FirewallRuleAdapter.from_context(ctx).create_ipv4(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_create_ipv6",
-        title="Create an IPv6 firewall rule",
-        description=(
-            "Create an IPv6 firewall rule (createFirewallRuleIpv6). enabled is always sent "
-            "explicitly and defaults to false, so the rule is created disabled unless "
-            "enabled=true is passed. position is required (after|before|bottom|top); after "
-            "and before need a referenceItem naming the anchor rule. Returns the created "
-            "rule with its applied enabled state."
-        ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
-    )
-    async def firewall_rule_create_ipv6(
-        request: CreateFirewallRuleIpv6Input, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv6Output:
-        return await FirewallRuleAdapter.from_context(ctx).create_ipv6(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_update_ipv4",
-        title="Update an IPv4 firewall rule",
-        description=(
-            "Partially update an IPv4 firewall rule (updateFirewallRuleIpv4, JSON Merge "
-            "Patch). Only the members supplied are sent; omitted members keep their "
-            "persisted value, and an explicit null on an optional member removes it. The "
-            "rule is identified by idOrName. Returns the updated rule."
-        ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
-    async def firewall_rule_update_ipv4(
-        request: UpdateFirewallRuleIpv4Input, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv4Output:
-        return await FirewallRuleAdapter.from_context(ctx).update_ipv4(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_update_ipv6",
-        title="Update an IPv6 firewall rule",
-        description=(
-            "Partially update an IPv6 firewall rule (updateFirewallRuleIpv6, JSON Merge "
-            "Patch). Only the members supplied are sent; omitted members keep their "
-            "persisted value, and an explicit null on an optional member removes it. The "
-            "rule is identified by idOrName. Returns the updated rule."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_update_ipv6(
-        request: UpdateFirewallRuleIpv6Input, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv6Output:
-        return await FirewallRuleAdapter.from_context(ctx).update_ipv6(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_delete_ipv4",
-        title="Delete an IPv4 firewall rule",
-        description=(
-            "Delete one IPv4 firewall rule by id or name (deleteFirewallRuleIpv4). "
-            "Destructive and irreversible: the rule is removed from the rule base. "
-            "Returns whether the appliance confirmed the deletion."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_delete_ipv4(
-        request: DeleteFirewallRuleInput, ctx: Context[AppContext]
-    ) -> DeleteFirewallRuleOutput:
-        return await FirewallRuleAdapter.from_context(ctx).delete_ipv4(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_delete_ipv6",
-        title="Delete an IPv6 firewall rule",
-        description=(
-            "Delete one IPv6 firewall rule by id or name (deleteFirewallRuleIpv6). "
-            "Destructive and irreversible: the rule is removed from the rule base. "
-            "Returns whether the appliance confirmed the deletion."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_delete_ipv6(
-        request: DeleteFirewallRuleInput, ctx: Context[AppContext]
-    ) -> DeleteFirewallRuleOutput:
-        return await FirewallRuleAdapter.from_context(ctx).delete_ipv6(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_move_ipv4",
-        title="Move an IPv4 firewall rule",
-        description=(
-            "Move an IPv4 firewall rule to a new position (moveFirewallRuleIpv4). The rule "
-            "is identified by name only, not by idOrName. position is "
-            "after|before|bottom|top; after and before need a referenceItem naming the "
-            "anchor rule. Reordering changes which rule matches first."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_move_ipv4(
-        request: MoveFirewallRuleInput, ctx: Context[AppContext]
-    ) -> MoveFirewallRuleOutput:
-        return await FirewallRuleAdapter.from_context(ctx).move_ipv4(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_move_ipv6",
-        title="Move an IPv6 firewall rule",
-        description=(
-            "Move an IPv6 firewall rule to a new position (moveFirewallRuleIpv6). The rule "
-            "is identified by name only, not by idOrName. position is "
-            "after|before|bottom|top; after and before need a referenceItem naming the "
-            "anchor rule. Reordering changes which rule matches first."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_move_ipv6(
-        request: MoveFirewallRuleInput, ctx: Context[AppContext]
-    ) -> MoveFirewallRuleOutput:
-        return await FirewallRuleAdapter.from_context(ctx).move_ipv6(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_set_enabled_ipv4",
-        title="Enable or disable an IPv4 firewall rule",
-        description=(
-            "Enable or disable an IPv4 firewall rule by PATCHing only enabled "
-            "(updateFirewallRuleIpv4). enabled is required: the caller must choose the "
-            "target state, so a missing value can never silently disable a rule. Returns "
-            "the rule with the applied enabled state."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_set_enabled_ipv4(
+    async def firewall_rule_set_enabled(
         request: SetFirewallRuleEnabledInput, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv4Output:
-        return await FirewallRuleAdapter.from_context(ctx).set_enabled_ipv4(request)
+    ) -> FirewallRuleOutput:
+        return await FirewallRuleAdapter.from_context(ctx).set_enabled(request)
 
     @register_tool(
         server,
         read_only=read_only,
         kind=ToolKind.MUTATION,
-        name="firewall_rule_set_enabled_ipv6",
-        title="Enable or disable an IPv6 firewall rule",
+        name="firewall_rule_clone",
+        title="Clone a firewall rule",
         description=(
-            "Enable or disable an IPv6 firewall rule by PATCHing only enabled "
-            "(updateFirewallRuleIpv6). enabled is required: the caller must choose the "
-            "target state, so a missing value can never silently disable a rule. Returns "
-            "the rule with the applied enabled state."
-        ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
-    )
-    async def firewall_rule_set_enabled_ipv6(
-        request: SetFirewallRuleEnabledInput, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv6Output:
-        return await FirewallRuleAdapter.from_context(ctx).set_enabled_ipv6(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_clone_ipv4",
-        title="Clone an IPv4 firewall rule",
-        description=(
-            "Clone an IPv4 firewall rule: read the source (getFirewallRuleIpv4) and create "
-            "a copy (createFirewallRuleIpv4) with a new name and position. The clone is "
-            "created disabled unless enabled=true is passed; read-only members are not "
-            "copied. position is required and after/before need a referenceItem. WAF "
-            "sources are rejected."
+            "Clone a firewall rule: read the source (getFirewallRuleIpv4 or "
+            "getFirewallRuleIpv6) and create a copy (createFirewallRuleIpv4 or "
+            "createFirewallRuleIpv6) with a new name and position, selected by the required "
+            "ip_family. The clone is created disabled unless enabled=true is passed; "
+            "read-only members are not copied. position is required and after/before need a "
+            "referenceItem. WAF sources are rejected on the IPv4 rule base."
         ),
         annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
     )
-    async def firewall_rule_clone_ipv4(
+    async def firewall_rule_clone(
         request: CloneFirewallRuleInput, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv4Output:
-        return await FirewallRuleAdapter.from_context(ctx).clone_ipv4(request)
-
-    @register_tool(
-        server,
-        read_only=read_only,
-        kind=ToolKind.MUTATION,
-        name="firewall_rule_clone_ipv6",
-        title="Clone an IPv6 firewall rule",
-        description=(
-            "Clone an IPv6 firewall rule: read the source (getFirewallRuleIpv6) and create "
-            "a copy (createFirewallRuleIpv6) with a new name and position. The clone is "
-            "created disabled unless enabled=true is passed; read-only members are not "
-            "copied. position is required and after/before need a referenceItem."
-        ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
-    )
-    async def firewall_rule_clone_ipv6(
-        request: CloneFirewallRuleInput, ctx: Context[AppContext]
-    ) -> FirewallRuleIpv6Output:
-        return await FirewallRuleAdapter.from_context(ctx).clone_ipv6(request)
+    ) -> FirewallRuleOutput:
+        return await FirewallRuleAdapter.from_context(ctx).clone_rule(request)

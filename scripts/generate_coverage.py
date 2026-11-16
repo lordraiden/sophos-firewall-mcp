@@ -733,9 +733,12 @@ def load_curated(path: Path) -> Curated:
                 raise SpecError(f"domains.{key}.{field} must be a list of strings")
     if not curated.tool_map:
         raise SpecError("tool_map must not be empty")
+    # A merged tool covers both IP families, so two operationIds may map to the same tool
+    # name. The name is still unique per concept; only the operation-to-tool mapping is
+    # many-to-one.
     tool_names = list(curated.tool_map.values())
-    if len(tool_names) != len(set(tool_names)):
-        raise SpecError("tool_map contains duplicate MCP tool names")
+    if not all(isinstance(name, str) and name for name in tool_names):
+        raise SpecError("every tool_map value must be a non-empty MCP tool name")
     for rule in curated.exclusion_rules:
         if not isinstance(rule.get("id"), str) or not isinstance(rule.get("reason"), str):
             raise SpecError("every exclusion rule needs a string id and reason")
@@ -1002,19 +1005,30 @@ def _request_body_summary(facts: SpecFacts) -> str:
 
 
 def _tools_for_domain(records: Sequence[Record], domain: str) -> list[str]:
-    tools: list[str] = []
+    """The distinct MCP tool names the domain's operations map to, sorted.
+
+    A merged IPv4/IPv6 tool appears once even though two operations map to it.
+    """
+    tools: set[str] = set()
     for record in records:
         if record.operation.domain != domain or not record.mcp.startswith("`"):
             continue
-        tools.append(record.mcp[1:].split("`", 1)[0])
+        tools.add(record.mcp[1:].split("`", 1)[0])
     return sorted(tools)
 
 
 def _tool_counts(records: Sequence[Record], curated: Curated, domain: str) -> tuple[int, int]:
-    """Return (one-to-one operations, total tools including composites)."""
-    operations = len(_tools_for_domain(records, domain))
+    """Return (one-to-one operations, total tools including composites).
+
+    The operation count is the number of audited operations the domain exposes; the tool
+    count is the number of distinct tools, so a merged IPv4/IPv6 tool counts once.
+    """
+    operations = sum(
+        1 for record in records if record.operation.domain == domain and record.mcp.startswith("`")
+    )
+    tools = len(_tools_for_domain(records, domain))
     composites = sum(1 for tool in curated.composite_tools if tool["domain"] == domain)
-    return operations, operations + composites
+    return operations, tools + composites
 
 
 def _composite_rows(curated: Curated, domain: str | None = None) -> list[tuple[str, str, str, str]]:
@@ -1286,8 +1300,10 @@ def render_document(
     )
     add("")
     add(
-        f"Generated: {total_operations} one-to-one tools (one per audited operation) plus "
-        f"{len(curated.composite_tools)} composite tools = {total_tools} MCP tools across "
+        f"Generated: {total_operations} audited operations exposed through "
+        f"{total_tools - len(curated.composite_tools)} one-to-one tools (the IPv4/IPv6 pairs "
+        f"share one tool each) plus {len(curated.composite_tools)} composite tools = "
+        f"{total_tools} MCP tools across "
         f"{domains_with_tools} domains with tools. `admin_system` and `other` are "
         "classification-only domains (0 tools); their full inventories are in §5."
     )
@@ -1298,7 +1314,7 @@ def render_document(
     add(
         "Composite tools add no new Sophos endpoint: they reuse the audited operations in "
         "`tool_map` and reason over their results. Each tool declares its `kind`: the three "
-        "audit tools are `read`, while the four firewall composites are `mutation` because "
+        "audit tools are `read`, while the two firewall composites are `mutation` because "
         "they PATCH `enabled` or create a cloned rule. When `SOPHOS_READ_ONLY_MODE=true`, only "
         "`read` tools may be registered; the mutation composites must not be registered in "
         "that mode."

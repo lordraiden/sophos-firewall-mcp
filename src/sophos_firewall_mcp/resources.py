@@ -5,7 +5,7 @@ model-controlled actions, resources are application-controlled passive context, 
 prompts are user-controlled templates. This server's tools are narrow and typed, so the
 context a model needs *before* it calls them -- the REST API surface, the coverage matrix,
 the read-only policy and the calling conventions -- is published here once instead of
-being repeated in 152 tool descriptions.
+being repeated in 112 tool descriptions.
 
 Every resource is a constant for the process lifetime. The read-only mode is resolved
 before registration and nothing else in the content depends on request state, which is why
@@ -38,6 +38,7 @@ __all__ = [
     "API_OPERATIONS_BY_METHOD",
     "API_PAGINATED_GET_OPERATIONS",
     "API_PATHS",
+    "ARGUMENT_TOOL_COUNT",
     "COMPOSITE_TOOL_COUNT",
     "COMPOSITE_TOOLS",
     "COVERAGE_DOMAINS",
@@ -46,7 +47,6 @@ __all__ = [
     "READ_ONLY_TOOL_COUNT",
     "TOOL_MAP_COUNT",
     "TOTAL_TOOL_COUNT",
-    "WRAPPED_TOOL_COUNT",
     "CoverageDomain",
     "register_resources",
 ]
@@ -69,46 +69,54 @@ API_COMPONENT_SCHEMAS = 32
 #: GET operations that declare ``page``/``pageSize``/``pageTotal``.
 API_PAGINATED_GET_OPERATIONS = 83
 
-#: Tools that map one-to-one to an audited operation.
+#: Audited operations exposed as tools (the curated ``tool_map``).
 TOOL_MAP_COUNT = 145
 
+#: Tools that map one-to-one to an audited operation.
+#:
+#: Lower than :data:`TOOL_MAP_COUNT` because the IPv4/IPv6 pairs are one tool each: 38
+#: one-to-one pairs cover 76 operations with 38 tools.
+ONE_TO_ONE_TOOL_COUNT = 107
+
 #: Tools that compose audited operations and add no endpoint.
-COMPOSITE_TOOL_COUNT = 7
+COMPOSITE_TOOL_COUNT = 5
 
 #: Tools published with every domain registered.
-TOTAL_TOOL_COUNT = TOOL_MAP_COUNT + COMPOSITE_TOOL_COUNT
+TOTAL_TOOL_COUNT = ONE_TO_ONE_TOOL_COUNT + COMPOSITE_TOOL_COUNT
 
 #: Tools whose annotation is ``readOnlyHint=true``.
-READ_ONLY_TOOL_COUNT = 98
+READ_ONLY_TOOL_COUNT = 74
 
 #: Tools that mutate the appliance; absent when read-only mode is on.
 MUTATION_TOOL_COUNT = TOTAL_TOOL_COUNT - READ_ONLY_TOOL_COUNT
 
-#: The seven composite tools, named so the surface resource can list them.
+#: The five composite tools, named so the surface resource can list them.
 COMPOSITE_TOOLS: tuple[str, ...] = (
-    "firewall_rule_set_enabled_ipv4",
-    "firewall_rule_set_enabled_ipv6",
-    "firewall_rule_clone_ipv4",
-    "firewall_rule_clone_ipv6",
+    "firewall_rule_set_enabled",
+    "firewall_rule_clone",
     "audit_firewall_rules",
     "explain_connectivity",
     "find_object_usage",
 )
 
-#: Tools that publish no ``request`` wrapper because they take no arguments.
+#: Tools that take no arguments and publish an empty ``arguments`` object.
+#:
+#: ``live_user_list`` belongs here because its request model is deliberately empty: the
+#: API declares no parameters for ``/authentication/live-users``. Before 0.7 it published a
+#: ``request`` wrapper around that empty model, so it looked like an argument-taking tool;
+#: with flat arguments it publishes no properties at all, like the other six.
 NO_ARGUMENT_TOOLS: tuple[str, ...] = (
-    "dhcp_lease_list_ipv4",
-    "dhcp_lease_list_ipv6",
     "dns_settings_get",
     "ipsec_live_connection_list_ipv4",
     "ipsec_remote_access_settings_get",
+    "live_user_list",
     "network_status_cellular_wan",
     "network_status_dns_protection",
     "sslvpn_global_settings_get",
 )
 
-#: Tools that publish the ``request`` wrapper: every tool except the no-argument ones.
-WRAPPED_TOOL_COUNT = TOTAL_TOOL_COUNT - len(NO_ARGUMENT_TOOLS)
+#: Tools that take arguments: every tool except the no-argument ones.
+ARGUMENT_TOOL_COUNT = TOTAL_TOOL_COUNT - len(NO_ARGUMENT_TOOLS)
 
 
 def _method_count(method: str) -> int:
@@ -141,12 +149,12 @@ class CoverageDomain(NamedTuple):
 #: ``api_operations`` sums to :data:`API_OPERATIONS` and ``tools`` to
 #: :data:`TOTAL_TOOL_COUNT`; both are asserted in ``tests/test_server.py``.
 COVERAGE_DOMAINS: tuple[CoverageDomain, ...] = (
-    CoverageDomain("Firewall rules", 14, 16, "read + write", ("firewall_rule_",)),
-    CoverageDomain("NAT rules", 14, 12, "read + write", ("nat_rule_",)),
+    CoverageDomain("Firewall rules", 14, 8, "read + write", ("firewall_rule_",)),
+    CoverageDomain("NAT rules", 14, 6, "read + write", ("nat_rule_",)),
     CoverageDomain(
         "Addresses and address groups",
         48,
-        37,
+        27,
         "read + write",
         ("address_", "mac_address_", "country_group_"),
     ),
@@ -164,7 +172,7 @@ COVERAGE_DOMAINS: tuple[CoverageDomain, ...] = (
     CoverageDomain(
         "Network",
         113,
-        44,
+        28,
         "read + VLAN-only write",
         (
             "network_interface_",
@@ -216,6 +224,7 @@ a header.
 | Operations | {API_OPERATIONS} ({methods}) |
 | Component schemas | {API_COMPONENT_SCHEMAS} |
 | Operations exposed as tools | {TOOL_MAP_COUNT} |
+| One-to-one tools over those operations | {ONE_TO_ONE_TOOL_COUNT} |
 | Composite tools over those operations | {COMPOSITE_TOOL_COUNT} |
 | Tools published | {TOTAL_TOOL_COUNT} ({READ_ONLY_TOOL_COUNT} read-only, {MUTATION_TOOL_COUNT} mutations) |
 
@@ -241,10 +250,12 @@ property.
 
 ## Tool mapping
 
-One tool per audited operation, named `<resource>_<verb>_<family>`: for example
-`firewall_rule_list_ipv4`, `nat_rule_get_ipv6`, `address_create_fqdn`.
+One tool per concept, named `<resource>_<verb>`: for example `firewall_rule_list`,
+`nat_rule_get`, `address_create_fqdn`. The IPv4 and IPv6 families share one tool and the
+required `ip_family` argument (`ipv4` or `ipv6`) selects the collection, so the family is
+never inferred. The wire body is unchanged for each family.
 
-Seven composite tools compose audited operations and add no endpoint:
+Five composite tools compose audited operations and add no endpoint:
 
 {composites}
 
@@ -263,8 +274,8 @@ def _coverage_document() -> str:
     tool_total = sum(domain.tools for domain in COVERAGE_DOMAINS)
     return f"""# Coverage matrix
 
-{api_total} operations across {API_PATHS} paths, published as {tool_total} tools: {TOOL_MAP_COUNT} tools map one-to-one
-to an audited operation and {COMPOSITE_TOOL_COUNT} are composites over those same operations.
+{api_total} operations across {API_PATHS} paths, published as {tool_total} tools: {ONE_TO_ONE_TOOL_COUNT} tools map one-to-one
+to an audited operation (the IPv4/IPv6 pairs share one tool each) and {COMPOSITE_TOOL_COUNT} are composites over those same operations.
 
 | Domain | API operations | Tools | Access |
 |---|---:|---:|---|
@@ -342,39 +353,54 @@ def _conventions_document() -> str:
     no_argument = "\n".join(f"- `{name}`" for name in NO_ARGUMENT_TOOLS)
     return f"""# Calling conventions
 
-## The `request` wrapper
+## Flat arguments
 
-Every tool that takes arguments publishes exactly one top-level property, `request`, whose
-value is the real argument object. This is the MCP SDK's single-argument convention, not
-the flat-argument shape most MCP examples use, so a call that puts the fields at the top
-level is rejected.
+Every tool that takes arguments publishes those arguments at the top level of `arguments`,
+exactly as the MCP specification's own examples do. There is no wrapper object to unwrap:
+the fields the tool's `inputSchema` lists are the fields the call sends.
 
 ```json
-{{"name": "firewall_rule_list_ipv4",
- "arguments": {{"request": {{"page": 1, "page_size": 10, "page_total": true}}}}}}
+{{"name": "firewall_rule_list",
+ "arguments": {{"ip_family": "ipv4", "page": 1, "page_size": 10, "page_total": true}}}}
 ```
 
-{WRAPPED_TOOL_COUNT} of the {TOTAL_TOOL_COUNT} tools are wrapped. The other {len(NO_ARGUMENT_TOOLS)} take an empty `arguments` object
+{ARGUMENT_TOOL_COUNT} of the {TOTAL_TOOL_COUNT} tools take arguments. The other {len(NO_ARGUMENT_TOOLS)} take an empty `arguments` object
 because they declare no parameters:
 
 {no_argument}
 
-The rejection is actionable and names the accepted argument, so a model can self-correct
+A tool whose request is a union of shapes (`address_create`, `firewall_rule_create`,
+`nat_rule_create` and the other create/update tools that exist for both IP families)
+publishes a root `oneOf` instead of one flat object, because each variant has its own
+required fields; `mac_address_create` publishes `anyOf` because the API declares no
+discriminator for it. Send the variant's own fields at the top level and let its
+discriminator (`ip_family` or `type`) select it.
+
+The rejection is actionable and names the accepted arguments, so a model can self-correct
 on the next call:
 
 ```
-invalid arguments: request is required; id_or_name is not an accepted argument; accepted arguments are request
+invalid arguments: bogus is not an accepted argument; accepted arguments are ip_family, id_or_name
 ```
 
 ## Names
 
 Input names are snake_case (`page_size`, `name_contains`, `id_or_name`, `rule_type`,
-`reference_item`). Output names are the appliance's camelCase (`pageSize`, `nameContains`,
-`idOrName`).
+`reference_item`, `ip_family`). Output names are the appliance's camelCase (`pageSize`,
+`nameContains`, `idOrName`).
+
+## The IP family
+
+A tool that exists for both IP families publishes one required `ip_family` argument
+(`ipv4` or `ipv6`) instead of two tools. It is required, not defaulted: a default would
+silently target one family, and for a mutation (delete, update, move, enable/disable,
+clone) that would make a destructive target a guess. The audit composites are the one
+exception: they are read-only and can span both families, so their `ip_family` is optional
+and omitting it means both.
 
 ## One page per call
 
-A paginated list publishes `page`, `page_size` and `page_total` inside `request`. `page` is
+A paginated list publishes `page`, `page_size` and `page_total` as top-level arguments. `page` is
 1-based, `page_size` defaults to 10 and is capped at 100, and `page_total=true` adds
 `pages.total` and `pages.items` to the result. There is no cursor: call the next page
 explicitly when you need it.
@@ -463,7 +489,7 @@ def register_resources(server: MCPServer[AppContext], *, read_only: bool) -> Non
         name="calling-conventions",
         title="Calling conventions",
         description=(
-            "How to call a tool: the request wrapper, input and output naming, pagination, "
+            "How to call a tool: flat arguments, input and output naming, pagination, "
             "reading one of content/structuredContent, and error semantics."
         ),
         mime_type="text/markdown",

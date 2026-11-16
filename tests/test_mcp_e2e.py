@@ -43,6 +43,7 @@ from mcp.server.mcpserver import MCPServer
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.server import create_server
+from sophos_firewall_mcp.tools import OPEN_WORLD_TOOLS
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = ROOT / "src"
@@ -52,9 +53,9 @@ KEY = "sfos_test_key_0123456789abcdef"
 BASE = f"https://{HOST}:4444/api/firewall-config/v1"
 
 #: The phase-2 exit-criteria surface (ADR-001 section 10, API-COVERAGE section 4).
-EXPECTED_TOOL_COUNT = 152
-EXPECTED_READ_ONLY_TOOL_COUNT = 98
-EXPECTED_MUTATION_COUNT = 54
+EXPECTED_TOOL_COUNT = 112
+EXPECTED_READ_ONLY_TOOL_COUNT = 74
+EXPECTED_MUTATION_COUNT = 38
 
 #: The protocol revision the SDK negotiates by default with a modern server.
 MODERN_PROTOCOL_VERSION = "2026-07-28"
@@ -162,18 +163,18 @@ async def test_every_input_schema_is_a_closed_object_rooted_at_request():
     for tool in result.tools:
         schema = tool.input_schema
         assert schema["type"] == "object", tool.name
-        if not schema["properties"]:
-            # Eight operations declare no parameters at all (DHCP leases, DNS settings,
-            # IPsec live connections/settings, SSL VPN global settings, the two status
-            # reads). The SDK publishes an empty object schema for them; that is the
-            # correct shape for a zero-argument tool.
+        if not schema.get("properties") and "oneOf" not in schema and "anyOf" not in schema:
+            # Six operations declare no parameters at all (DNS settings, IPsec live
+            # connections/settings, SSL VPN global settings, the two status reads). The
+            # SDK publishes an empty object schema for them; that is the correct shape for
+            # a zero-argument tool.
             assert schema.get("required") is None, tool.name
             continue
-        assert "request" in schema["properties"], tool.name
-        # ``request`` is required unless every member of the request has a default.
-        if "required" in schema:
-            assert schema["required"] == ["request"], tool.name
-        assert_closed_object(schema, schema["properties"]["request"], tool.name)
+        # Arguments are flat: the request model's fields are the root properties, with no
+        # ``request`` wrapper. A discriminated-union request publishes a root ``oneOf`` of
+        # closed variants, which ``assert_closed_object`` walks.
+        assert "request" not in schema.get("properties", {}), tool.name
+        assert_closed_object(schema, schema, tool.name)
 
 
 async def test_every_output_schema_is_object_rooted():
@@ -187,14 +188,22 @@ async def test_every_output_schema_is_object_rooted():
         assert schema.get("properties"), tool.name
 
 
-async def test_every_tool_declares_the_conservative_open_world_hint():
-    """Sophos is an external appliance: its responses are not a closed data boundary."""
+async def test_every_tool_declares_the_per_tool_open_world_hint():
+    """The hint describes the interaction domain, not the trustworthiness of the data.
+
+    One configured appliance is a closed domain, so a tool that reads or writes its own
+    configuration is ``openWorldHint: false``. Only the tools whose result is produced by
+    entities the appliance does not own are open (``OPEN_WORLD_TOOLS``).
+    """
     async with Client(make_server()) as client:
         result = await client.list_tools()
 
     for tool in result.tools:
         assert tool.annotations is not None, tool.name
-        assert tool.annotations.open_world_hint is True, tool.name
+        assert tool.annotations.open_world_hint is (tool.name in OPEN_WORLD_TOOLS), tool.name
+
+    open_names = {tool.name for tool in result.tools if tool.annotations.open_world_hint}
+    assert open_names == set(OPEN_WORLD_TOOLS)
 
 
 async def test_read_only_tools_never_declare_write_only_hints():
@@ -232,9 +241,9 @@ async def test_a_read_tool_returns_structured_content_matching_its_schema():
         )
         async with Client(make_server()) as client:
             tools = (await client.list_tools()).tools
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
+            result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
 
-    tool = next(candidate for candidate in tools if candidate.name == "firewall_rule_list_ipv4")
+    tool = next(candidate for candidate in tools if candidate.name == "firewall_rule_list")
     schema = tool.output_schema
     assert schema is not None
     assert result.is_error is False
@@ -269,7 +278,7 @@ async def test_an_anticipated_failure_is_a_sanitized_tool_error():
             )
         )
         async with Client(make_server()) as client:
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
+            result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
 
     assert result.is_error is True
     message = result.content[0].text
@@ -288,7 +297,7 @@ async def test_a_malformed_payload_is_a_sanitized_tool_error():
             )
         )
         async with Client(make_server()) as client:
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {}})
+            result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
 
     assert result.is_error is True
     message = result.content[0].text
@@ -303,7 +312,7 @@ async def test_an_invalid_argument_is_rejected_before_any_io():
     with respx.mock(assert_all_called=False) as router:
         route = router.get(f"{BASE}/firewall/rules/ipv4")
         async with Client(make_server()) as client:
-            result = await client.call_tool("firewall_rule_list_ipv4", {"request": {"page": 0}})
+            result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4", "page": 0})
 
     assert result.is_error is True
     assert route.call_count == 0
@@ -312,7 +321,7 @@ async def test_an_invalid_argument_is_rejected_before_any_io():
 async def test_an_unknown_tool_is_reported_as_an_error_result():
     """The modern protocol reports an unknown tool as a tool error, not a crash."""
     async with Client(make_server()) as client:
-        result = await client.call_tool("sophos_tool_that_does_not_exist", {"request": {}})
+        result = await client.call_tool("sophos_tool_that_does_not_exist", {})
 
     assert result.is_error is True
     assert "Unknown tool" in result.content[0].text

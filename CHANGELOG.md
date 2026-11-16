@@ -5,6 +5,91 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-11-16
+
+**Breaking: the IPv4/IPv6 tool pairs collapse behind a required `ip_family`, and tool arguments are
+published flat.** The surface drops from 152 tools to **112** (107 one-to-one + 5 composites; **74
+read-only / 38 mutations**), and the `tools/list` catalog from 807,920 to **622,787 bytes**. Both
+changes break a client that hard-coded a family-specific tool name or wrapped its arguments in
+`request`; the migration table is in
+[`docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md`](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md).
+
+### Breaking changes
+
+- **One tool per concept, with a required `ip_family`.** The 40 IPv4/IPv6 pairs
+  (`firewall_rule_list_ipv4` / `_ipv6`, `address_create_ipv4` / `_ipv6`, …) are now 40 merged tools
+  that take a required `ip_family` (`ipv4` | `ipv6`), matching the three audit composites, which
+  already took it. 80 tool names are removed; the migration table maps every one to its new tool and
+  `ip_family` value. The argument is **required, not defaulted**: a default would make a destructive
+  target (delete, update, move, enable/disable, clone) a guess and would hide which family a read
+  returned. The three audit composites keep their optional `ip_family` because they are read-only and
+  can span both families. The wire body is unchanged: the adapter strips `ip_family` and selects the
+  IPv4 or IPv6 path, so `firewall_rule_create` with `ip_family: "ipv4"` sends exactly the body
+  `firewall_rule_create_ipv4` sent before. The output **payload** for a given family is unchanged;
+  the published output **schema** is the union of both families, so 40 of the 80 merged pairs publish
+  a wider schema (e.g. `address_get` publishes 8 address variants instead of 4). A client that
+  generates types from `outputSchema` must regenerate them.
+- **Tool arguments are published flat.** Every tool that takes arguments now publishes the request
+  model's own fields at the top level of `inputSchema`; the `request` wrapper is gone from all 112
+  tools. 0 tools publish a `request` property, the published input surface drops from 222,419 to
+  199,114 bytes (−10.5%), and the wrapper sentence is gone from every description. A tool whose
+  request is a union of shapes publishes a root `oneOf` of the closed variants (`address_create`,
+  `firewall_rule_create`, …), because flattening a union into one object would lose the per-variant
+  required fields; `mac_address_create` publishes `anyOf` because the API declares no discriminator.
+  The handler, its signature and the wire body are untouched; the closed argument
+  model (`additionalProperties: false`) and the sanitized errors are unchanged, and an unknown
+  argument is still rejected by name.
+
+### Added
+
+- **Confirmation for the four highest-blast-radius deletes.** `firewall_rule_delete`,
+  `nat_rule_delete`, `network_user_delete` and `network_interface_delete_vlan` ask the client to
+  confirm before the appliance is touched, through the MCP elicitation capability. The question names
+  the object and the rule base; a declined or cancelled answer aborts the call with a `ToolError` and
+  nothing is deleted. The affordance is additive, never a new precondition: it is skipped — and the
+  delete proceeds exactly as before — when the client declared no `elicitation` capability or the
+  transport has no back-channel, which is the normal case for a non-interactive client.
+- **`openWorldHint` is set per tool instead of `true` everywhere.** 6 tools publish `true` and 106
+  publish `false`. The hint describes the tool's interaction domain, not how much its data can be
+  trusted: this server talks to exactly one configured appliance and no tool accepts a URL, host or
+  endpoint, so a tool that reads or writes that appliance's own configuration is closed. The 6 open
+  tools are the ones whose result is produced by entities the appliance does not own and cannot
+  enumerate: `dhcp_lease_list`, `ipsec_live_connection_list_ipv4`, `live_user_disconnect`,
+  `live_user_list`, `network_status_cellular_wan` and `network_status_dns_protection`.
+
+### Changed
+
+- **The catalog is 22.9% smaller.** `tools/list` is 622,787 bytes (was 807,920), roughly 156k tokens
+  at ~4 bytes per token. The IPv4/IPv6 collapse removed 152,886 bytes (807,920 → 655,034) and 40
+  tools; publishing flat arguments removed a further 32,247 bytes (655,034 → 622,787). Each number is
+  the raw JSON-RPC `tools/list` response line over STDIO, including the trailing newline, measured on
+  `origin/main` (pre-0.7), `b22731a` (after the collapse, before the flatten) and HEAD respectively.
+- **The surface is 112 tools** (was 152): 107 one-to-one tools covering 145 audited operations, plus 5
+  composites that add no endpoint. 74 are read-only and 38 are mutations; 7 take no arguments and 105
+  take arguments. `live_user_list` joins the no-argument set: its request model is deliberately empty,
+  so with flat arguments it publishes no properties at all.
+
+### Known limitations
+
+- **Elicitation applies to handshake clients only.** `mcp` 2.3.0 refuses a standalone
+  server-to-client request on the modern (`2026-07-28`) per-request path
+  (`mcp/server/runner.py:552-593`), so the confirmation is available to a client that negotiated a
+  handshake version (`2024-11-05` … `2025-11-25`, the STDIO default) and is silently skipped on the
+  modern path. The modern path would need the `InputRequiredResult` round trip that `mcp` 2.3.0 only
+  wires for `Resolve` parameters, which would change every handler signature; that is out of scope
+  for this release. A non-interactive client is unaffected either way.
+- **Firmware compatibility is limited to the tested build.** The live evidence applies to **SFOS 23.0.0
+  GA-Build371** only. The Configuration REST API exposes no version endpoint, so the server cannot
+  detect the firmware and makes no claim for other SFOS builds, including later 23.0 maintenance
+  builds and SFOS 24.
+- **Live write validation is limited** to the object kinds exercised on the lab appliance; ambiguous
+  write reconciliation, a real `403` denial, bulk delete and interface/VPN mutations remain unverified.
+- **Accepted regressions** are unchanged: no system information, no service status and no log query,
+  because the Configuration REST API exposes no endpoint for them.
+- **Audit tools are configuration analysis, not packet tests**; `explain_connectivity` reports
+  `method: config-analysis` and `not-verifiable` when the configuration lacks the evidence.
+- **Pagination is one page per call**; the server never fetches every page automatically.
+
 ## [0.6.0] - 2026-11-15
 
 **Sophos Firewall 23 support, stated explicitly.** This server implements the **Sophos Firewall 23

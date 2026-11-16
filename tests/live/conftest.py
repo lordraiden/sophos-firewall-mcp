@@ -8,7 +8,7 @@ These tests are skipped unless the lab connection is configured, exactly as
 * ``SOPHOS_API_KEY`` or ``SOPHOS_API_KEY_FILE`` (exactly one source)
 
 They are marked ``live`` and are **read-only by construction**: the server is built with
-``read_only_mode=True``, so the 54 mutation tools are never registered and cannot be
+``read_only_mode=True``, so the 38 mutation tools are never registered and cannot be
 called even by mistake. The suite asserts that invariant before it calls anything.
 
 Run them with::
@@ -33,7 +33,8 @@ from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.server import create_server
 
 #: The lab key is read-only; a live run must never be able to register a mutation tool.
-EXPECTED_LIVE_TOOL_COUNT = 98
+#: 0.7.0 publishes 112 tools, of which 38 are mutations, so the read-only surface is 74.
+EXPECTED_LIVE_TOOL_COUNT = 74
 
 _LIVE_READY = bool(
     os.getenv("SOPHOS_HOST")

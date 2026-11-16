@@ -35,6 +35,7 @@ from typing import Annotated, Literal, Self, Union
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from sophos_firewall_mcp.models.common import (
+    IpFamily,
     ObjectName,
     ObjectNameOrId,
     ObjectRef,
@@ -43,6 +44,15 @@ from sophos_firewall_mcp.models.common import (
 )
 
 __all__ = [
+    "Address",
+    "AddressCreateInput",
+    "AddressGroupCreateInput",
+    "AddressGroupListInput",
+    "AddressGroupOutput",
+    "AddressGroupUpdateInput",
+    "AddressListInput",
+    "AddressResult",
+    "AddressUpdateInput",
     "CountryGroup",
     "CountryGroupListInput",
     "DeleteResult",
@@ -73,14 +83,11 @@ __all__ = [
     "Ipv4AddressCreateNetwork",
     "Ipv4AddressGroup",
     "Ipv4AddressGroupCreate",
-    "Ipv4AddressGroupListInput",
     "Ipv4AddressGroupUpdateInput",
     "Ipv4AddressIp",
     "Ipv4AddressIpList",
     "Ipv4AddressIpRange",
-    "Ipv4AddressListInput",
     "Ipv4AddressNetwork",
-    "Ipv4AddressResult",
     "Ipv4AddressUpdateInput",
     "Ipv6Address",
     "Ipv6AddressCreate",
@@ -90,14 +97,11 @@ __all__ = [
     "Ipv6AddressCreateNetwork",
     "Ipv6AddressGroup",
     "Ipv6AddressGroupCreate",
-    "Ipv6AddressGroupListInput",
     "Ipv6AddressGroupUpdateInput",
     "Ipv6AddressIp",
     "Ipv6AddressIpList",
     "Ipv6AddressIpRange",
-    "Ipv6AddressListInput",
     "Ipv6AddressNetwork",
-    "Ipv6AddressResult",
     "Ipv6AddressUpdateInput",
     "ListQuery",
     "MAC_ADDRESS_PATTERN",
@@ -113,6 +117,7 @@ __all__ = [
     "MacAddressUpdateInput",
     "MemberRef",
     "ObjectNameOrId",
+    "IpFamilyObjectIdentifierInput",
     "ObjectIdentifierInput",
     "Service",
     "ServiceCreate",
@@ -204,6 +209,18 @@ class ObjectIdentifierInput(_InputModel):
     """The ``{idOrName}`` path parameter used by get and delete operations."""
 
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
+
+
+class IpFamilyObjectIdentifierInput(ObjectIdentifierInput):
+    """The ``{idOrName}`` path parameter plus the IP family that selects the collection.
+
+    ``ObjectIdentifierInput`` stays family-neutral because the FQDN, MAC and country tools
+    use it too; the merged IPv4/IPv6 tools take this subclass instead.
+    """
+
+    ip_family: IpFamily = Field(
+        description="IP family of the object collection: 'ipv4' or 'ipv6'. Required."
+    )
 
 
 class MemberRef(_InputModel):
@@ -345,6 +362,8 @@ Ipv4Address = Annotated[
 class Ipv4AddressCreateIp(_InputModel):
     """Create a single IPv4 address."""
 
+    ip_family: Literal["ipv4"]
+
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv4Address"]
@@ -356,6 +375,8 @@ class Ipv4AddressCreateIp(_InputModel):
 
 class Ipv4AddressCreateNetwork(_InputModel):
     """Create an IPv4 network."""
+
+    ip_family: Literal["ipv4"]
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -369,6 +390,8 @@ class Ipv4AddressCreateNetwork(_InputModel):
 
 class Ipv4AddressCreateIpRange(_InputModel):
     """Create an IPv4 address range."""
+
+    ip_family: Literal["ipv4"]
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -385,6 +408,8 @@ class Ipv4AddressCreateIpRange(_InputModel):
 
 class Ipv4AddressCreateIpList(_InputModel):
     """Create a list of IPv4 addresses."""
+
+    ip_family: Literal["ipv4"]
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -411,6 +436,7 @@ Ipv4AddressCreate = Annotated[
 class Ipv4AddressUpdateInput(_InputModel):
     """The ``updateIpAddressByIdOrName`` input: identifier plus partial PATCH fields."""
 
+    ip_family: Literal["ipv4"]
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -443,18 +469,12 @@ class Ipv4AddressUpdateInput(_InputModel):
     )
 
 
-class Ipv4AddressResult(_OutputModel):
-    """Object-rooted wrapper for a single IPv4 address response.
+class AddressListInput(ListQuery):
+    """Filters for ``getAllIpAddresses``/``getAllIpv6Addresses``, plus the family."""
 
-    A plain union return annotation would be wrapped by the SDK under ``result``; this
-    wrapper keeps the output object-rooted and the discriminated union named.
-    """
-
-    address: Ipv4Address
-
-
-class Ipv4AddressListInput(ListQuery):
-    """Filters for ``getAllIpAddresses``."""
+    ip_family: IpFamily = Field(
+        description="IP family of the address collection: 'ipv4' or 'ipv6'. Required."
+    )
 
 
 # -- IPv6 addresses --------------------------------------------------------------------
@@ -522,6 +542,8 @@ Ipv6Address = Annotated[
 class Ipv6AddressCreateIp(_InputModel):
     """Create a single IPv6 address."""
 
+    ip_family: Literal["ipv6"]
+
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv6Address"]
@@ -533,6 +555,8 @@ class Ipv6AddressCreateIp(_InputModel):
 
 class Ipv6AddressCreateNetwork(_InputModel):
     """Create an IPv6 network."""
+
+    ip_family: Literal["ipv6"]
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -552,6 +576,8 @@ class Ipv6AddressCreateNetwork(_InputModel):
 class Ipv6AddressCreateIpRange(_InputModel):
     """Create an IPv6 address range."""
 
+    ip_family: Literal["ipv6"]
+
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     type: Literal["ipv6Range"]
@@ -567,6 +593,8 @@ class Ipv6AddressCreateIpRange(_InputModel):
 
 class Ipv6AddressCreateIpList(_InputModel):
     """Create a list of IPv6 addresses."""
+
+    ip_family: Literal["ipv6"]
 
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -590,9 +618,32 @@ Ipv6AddressCreate = Annotated[
 """The create payload for ``createIpv6Address``, discriminated on ``type``."""
 
 
+AddressCreateInput = Annotated[
+    Union[
+        Ipv4AddressCreateIp,
+        Ipv4AddressCreateNetwork,
+        Ipv4AddressCreateIpRange,
+        Ipv4AddressCreateIpList,
+        Ipv6AddressCreateIp,
+        Ipv6AddressCreateNetwork,
+        Ipv6AddressCreateIpRange,
+        Ipv6AddressCreateIpList,
+    ],
+    Field(discriminator="type"),
+]
+"""The create request of the merged ``address_create`` tool.
+
+The eight shapes stay separate because each family's payload is different and the
+``type`` member already discriminates them; every variant also pins ``ip_family`` to its
+family, so a caller cannot send an IPv4 shape to the IPv6 path. ``ip_family`` is stripped
+from the wire body, which is byte-identical to the pre-0.7 per-family tool.
+"""
+
+
 class Ipv6AddressUpdateInput(_InputModel):
     """The ``updateIpv6AddressByIdOrName`` input: identifier plus partial PATCH fields."""
 
+    ip_family: Literal["ipv6"]
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -631,14 +682,42 @@ class Ipv6AddressUpdateInput(_InputModel):
     )
 
 
-class Ipv6AddressResult(_OutputModel):
-    """Object-rooted wrapper for a single IPv6 address response."""
+AddressUpdateInput = Annotated[
+    Union[Ipv4AddressUpdateInput, Ipv6AddressUpdateInput],
+    Field(discriminator="ip_family"),
+]
+"""The update request of the merged ``address_update`` tool.
 
-    address: Ipv6Address
+The two family merge-patch bodies differ in their address members, so ``ip_family``
+discriminates them and is stripped from the PATCH body.
+"""
 
 
-class Ipv6AddressListInput(ListQuery):
-    """Filters for ``getAllIpv6Addresses``."""
+Address = Annotated[
+    Union[
+        Ipv4AddressIp,
+        Ipv4AddressNetwork,
+        Ipv4AddressIpRange,
+        Ipv4AddressIpList,
+        Ipv6AddressIp,
+        Ipv6AddressNetwork,
+        Ipv6AddressIpRange,
+        Ipv6AddressIpList,
+    ],
+    Field(discriminator="type"),
+]
+"""Any address object of either family, discriminated on the required ``type`` member."""
+
+
+class AddressResult(_OutputModel):
+    """Object-rooted wrapper for a single address response of either family.
+
+    A plain union return annotation would be wrapped by the SDK under ``result``; this
+    wrapper keeps the output object-rooted and the discriminated union named. The shape is
+    the same one the per-family tools published before 0.7.
+    """
+
+    address: Address
 
 
 # -- FQDN addresses --------------------------------------------------------------------
@@ -693,6 +772,7 @@ class Ipv4AddressGroup(_OutputModel):
 class Ipv4AddressGroupCreate(_InputModel):
     """Create an IPv4 address group from existing IPv4 address objects."""
 
+    ip_family: Literal["ipv4"]
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     ipv4_addresses: list[MemberRef] = Field(
@@ -705,6 +785,7 @@ class Ipv4AddressGroupCreate(_InputModel):
 class Ipv4AddressGroupUpdateInput(_InputModel):
     """The ``updateIpv4AddressGroupByIdOrName`` input: identifier plus partial fields."""
 
+    ip_family: Literal["ipv4"]
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -715,8 +796,12 @@ class Ipv4AddressGroupUpdateInput(_InputModel):
     )
 
 
-class Ipv4AddressGroupListInput(ListQuery):
-    """Filters for ``getAllIpv4AddressGroups``."""
+class AddressGroupListInput(ListQuery):
+    """Filters for ``getAllIpv4AddressGroups``/``getAllIpv6AddressGroups``, plus the family."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the address-group collection: 'ipv4' or 'ipv6'. Required."
+    )
 
 
 class Ipv6AddressGroup(_OutputModel):
@@ -733,6 +818,7 @@ class Ipv6AddressGroup(_OutputModel):
 class Ipv6AddressGroupCreate(_InputModel):
     """Create an IPv6 address group from existing IPv6 address objects."""
 
+    ip_family: Literal["ipv6"]
     name: ObjectName = Field(..., max_length=60)
     description: str | None = Field(None, max_length=255)
     ipv6_addresses: list[MemberRef] = Field(
@@ -745,6 +831,7 @@ class Ipv6AddressGroupCreate(_InputModel):
 class Ipv6AddressGroupUpdateInput(_InputModel):
     """The ``updateIpv6AddressGroupByIdOrName`` input: identifier plus partial fields."""
 
+    ip_family: Literal["ipv6"]
     id_or_name: ObjectNameOrId = Field(..., min_length=1, max_length=60)
     name: ObjectName | None = Field(None, max_length=60)
     description: str | None = Field(None, max_length=255)
@@ -755,8 +842,28 @@ class Ipv6AddressGroupUpdateInput(_InputModel):
     )
 
 
-class Ipv6AddressGroupListInput(ListQuery):
-    """Filters for ``getAllIpv6AddressGroups``."""
+class AddressGroupOutput(Ipv4AddressGroup, Ipv6AddressGroup):
+    """An address group of either family.
+
+    The two family projections differ only in the member list (``ipv4Addresses`` or
+    ``ipv6Addresses``), so the merged model carries both and the family that was read
+    populates exactly one of them. The shape is the same one the per-family tools
+    published before 0.7.
+    """
+
+
+AddressGroupCreateInput = Annotated[
+    Union[Ipv4AddressGroupCreate, Ipv6AddressGroupCreate],
+    Field(discriminator="ip_family"),
+]
+"""The create request of the merged ``address_group_create`` tool."""
+
+
+AddressGroupUpdateInput = Annotated[
+    Union[Ipv4AddressGroupUpdateInput, Ipv6AddressGroupUpdateInput],
+    Field(discriminator="ip_family"),
+]
+"""The update request of the merged ``address_group_update`` tool."""
 
 
 class FqdnAddressGroup(_OutputModel):

@@ -180,7 +180,7 @@ openapi-python-client generate --path firewall_config_openapi.yaml \
 | Declared runtime dependencies | `httpx2>=2.13.1,<3`, `attrs>=22.2.0` — **no Pydantic** |
 
 **The failures hit exactly the first-release core.** Of the **96** operationIds in the first-release scope
-as it stood when the POC ran (the owner expanded it to 145 operations / 152 tools on 15 Nov 2026, §10):
+as it stood when the POC ran (the owner expanded it to 145 operations / 112 tools on 15 Nov 2026, §10):
 
 | Failure class | Count | Operations |
 |---|---|---|
@@ -295,7 +295,7 @@ SHA-gated, deterministic operation inventory that makes manual modelling auditab
 **Negative / accepted costs**
 
 - Manual modelling effort: the bounded POC took 316 lines for 5 operations, of which ~120 are shared
-  transport and typed errors. The **145-operation / 152-tool** first-release scope (§10) is therefore in the
+  transport and typed errors. The **145-operation / 112-tool** first-release scope (§10) is therefore in the
   low thousands of lines (per-operation models dominate) — bounded, reviewable, and split across #25–#31.
   It is still an order of magnitude smaller than the 976,963-line generated package.
 - Model drift is possible if the YAML changes without review. Mitigated by the SHA gate in the coverage
@@ -431,33 +431,38 @@ read/reconciliation before any repeat.
 
 **Scope revision — 15 Nov 2026.** The repository owner superseded the original v1 scope with a broader
 first-release surface (issue #24 comment; issues #27/#29/#31/#35). The new surface is **145 operations /
-152 MCP tools across 11 domains**. It adds MAC address CRUD, country-group read-only, VLAN-only interface
+112 MCP tools across 11 domains**. It adds MAC address CRUD, country-group read-only, VLAN-only interface
 writes, the network-architecture read surface, the #35 audit tools, and firewall enable/disable + clone
 tools. PLAN.md §4's initial per-domain table is superseded by the issues for the first release; this ADR
 records the revised scope only and does not re-open the client decision (§6), which is unaffected.
+
+**0.7.0 surface reduction.** The 0.7.0 breaking release collapsed the 40 IPv4/IPv6 tool pairs behind a
+required `ip_family` argument, so the tool count fell from 152 to **112** (107 one-to-one tools + 5
+composites) without changing the operation scope: the same 145 operationIds are covered, and the
+per-domain tool counts below are the 0.7.0 ones. `docs/API-COVERAGE.md` §4 carries the same table.
 
 The 145 operationIds below were verified against the parsed YAML (700 operations): **all present, all
 unique, 0 missing, 0 duplicate**. `docs/API-COVERAGE.md` (#24/T4) carries the per-operation detail.
 
 | Domain | Ops | Tools | operationIds |
 |---|---|---|---|
-| Firewall rules IPv4/IPv6 | 12 | 16 | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getFirewallRuleIpv4`, `getFirewallRuleIpv6`, `createFirewallRuleIpv4`, `createFirewallRuleIpv6`, `updateFirewallRuleIpv4`, `updateFirewallRuleIpv6`, `deleteFirewallRuleIpv4`, `deleteFirewallRuleIpv6`, `moveFirewallRuleIpv4`, `moveFirewallRuleIpv6` |
-| NAT rules IPv4/IPv6 | 12 | 12 | `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getNatRuleIpv4ByIdOrName`, `getNatRuleIpv6ByIdOrName`, `createNatRuleIpv4`, `createNatRuleIpv6`, `updateNatRuleIpv4ByIdOrName`, `updateNatRuleIpv6ByIdOrName`, `deleteNatRuleIpv4ByIdOrName`, `deleteNatRuleIpv6ByIdOrName`, `moveNatRuleIpv4`, `moveNatRuleIpv6` |
-| Addresses and groups | 37 | 37 | `getAllIpAddresses`, `getIpAddressByIdOrName`, `createIpAddress`, `updateIpAddressByIdOrName`, `deleteIpAddressByIdOrName`, `getAllIpv6Addresses`, `getIpv6AddressByIdOrName`, `createIpv6Address`, `updateIpv6AddressByIdOrName`, `deleteIpv6AddressByIdOrName`, `getAllFqdns`, `getFqdnByIdOrName`, `createFqdn`, `updateFqdnByIdOrName`, `deleteFqdnByIdOrName`, `getAllIpv4AddressGroups`, `getIpv4AddressGroupByIdOrName`, `createIpv4AddressGroup`, `updateIpv4AddressGroupByIdOrName`, `deleteIpv4AddressGroupByIdOrName`, `getAllIpv6AddressGroups`, `getIpv6AddressGroupByIdOrName`, `createIpv6AddressGroup`, `updateIpv6AddressGroupByIdOrName`, `deleteIpv6AddressGroupByIdOrName`, `getAllFqdnGroups`, `getFqdnGroupByIdOrName`, `createFqdnGroup`, `updateFqdnGroupByIdOrName`, `deleteFqdnGroupByIdOrName`, `getAllMacAddresses`, `getMacAddressByIdOrName`, `createMacAddress`, `updateMacAddressByIdOrName`, `deleteMacAddressByIdOrName`, `getAllCountryGroups`, `getCountryGroupByIdOrName` |
+| Firewall rules IPv4/IPv6 | 12 | 8 | `getAllFirewallRulesIpv4`, `getAllFirewallRulesIpv6`, `getFirewallRuleIpv4`, `getFirewallRuleIpv6`, `createFirewallRuleIpv4`, `createFirewallRuleIpv6`, `updateFirewallRuleIpv4`, `updateFirewallRuleIpv6`, `deleteFirewallRuleIpv4`, `deleteFirewallRuleIpv6`, `moveFirewallRuleIpv4`, `moveFirewallRuleIpv6` |
+| NAT rules IPv4/IPv6 | 12 | 6 | `getAllNatRulesIpv4`, `getAllNatRulesIpv6`, `getNatRuleIpv4ByIdOrName`, `getNatRuleIpv6ByIdOrName`, `createNatRuleIpv4`, `createNatRuleIpv6`, `updateNatRuleIpv4ByIdOrName`, `updateNatRuleIpv6ByIdOrName`, `deleteNatRuleIpv4ByIdOrName`, `deleteNatRuleIpv6ByIdOrName`, `moveNatRuleIpv4`, `moveNatRuleIpv6` |
+| Addresses and groups | 37 | 27 | `getAllIpAddresses`, `getIpAddressByIdOrName`, `createIpAddress`, `updateIpAddressByIdOrName`, `deleteIpAddressByIdOrName`, `getAllIpv6Addresses`, `getIpv6AddressByIdOrName`, `createIpv6Address`, `updateIpv6AddressByIdOrName`, `deleteIpv6AddressByIdOrName`, `getAllFqdns`, `getFqdnByIdOrName`, `createFqdn`, `updateFqdnByIdOrName`, `deleteFqdnByIdOrName`, `getAllIpv4AddressGroups`, `getIpv4AddressGroupByIdOrName`, `createIpv4AddressGroup`, `updateIpv4AddressGroupByIdOrName`, `deleteIpv4AddressGroupByIdOrName`, `getAllIpv6AddressGroups`, `getIpv6AddressGroupByIdOrName`, `createIpv6AddressGroup`, `updateIpv6AddressGroupByIdOrName`, `deleteIpv6AddressGroupByIdOrName`, `getAllFqdnGroups`, `getFqdnGroupByIdOrName`, `createFqdnGroup`, `updateFqdnGroupByIdOrName`, `deleteFqdnGroupByIdOrName`, `getAllMacAddresses`, `getMacAddressByIdOrName`, `createMacAddress`, `updateMacAddressByIdOrName`, `deleteMacAddressByIdOrName`, `getAllCountryGroups`, `getCountryGroupByIdOrName` |
 | Services and service groups | 10 | 10 | `getAllServices`, `getServiceByIdOrName`, `createService`, `updateServiceByIdOrName`, `deleteServiceByIdOrName`, `getAllServiceGroups`, `getServiceGroupByIdOrName`, `createServiceGroup`, `updateServiceGroupByIdOrName`, `deleteServiceGroupByIdOrName` |
 | Users | 6 | 6 | `getUsers`, `getNetworkUsers`, `getNetworkUser`, `createNetworkUser`, `updateNetworkUser`, `deleteNetworkUser` |
 | Live users | 2 | 2 | `getLiveUsers`, `disconnectLiveUser` |
 | IPsec VPN (read-only) | 11 | 11 | `getProfiles`, `getProfile`, `getFailovergroups`, `getFailovergroup`, `listIpsecConnectionsIpv4`, `listIpsecPolicyBasedConnectionsIpv4`, `getPolicyBasedIpsecConnectionIpv4`, `listIpsecRouteBasedConnectionsIpv4`, `getRouteBasedIpsecConnectionIpv4`, `getIpsecSiteToSiteLiveConnectionsIpv4`, `getIpsecRemoteAccessVpnSettings` |
 | SSL VPN (read-only) | 9 | 9 | `getRemoteAccessPolicies`, `getRemoteAccessPolicy`, `listBookmarkGroups`, `getBookmarkGroup`, `getBookmarks`, `getBookmark`, `listClientlessPolicies`, `getClientlessPolicy`, `getSslvpnGlobalSettings` |
-| Network architecture | 44 | 44 | **41 reads:** `listNetworkInterfaces`, `getNetworkInterface`, `getAllZones`, `getZone`, `getGatewaysIpv4`, `getWanGatewaysIpv4`, `getWanGatewayIpv4ByIdOrName`, `getCustomGatewaysIpv4`, `getCustomGatewayIpv4ByIdOrName`, `getGatewaysIpv6`, `getWanGatewaysIpv6`, `getWanGatewayIpv6ByIdOrName`, `getCustomGatewaysIpv6`, `getCustomGatewayIpv6ByIdOrName`, `getUnicastRoutesIPv4`, `getUnicastRouteIPv4`, `getUnicastRoutesIPv6`, `getUnicastRouteIPv6`, `listSdwanRoutesIpv4`, `getSdwanRouteIpv4`, `listSdwanRoutesIpv6`, `getSdwanRouteIpv6`, `listDhcpServersIpv4`, `getDhcpServerIpv4`, `listDhcpServersIpv6`, `getDhcpServerIpv6`, `getDhcpLeasesIpv4`, `getDhcpLeasesIpv6`, `getAllDhcpRelayIpv4`, `getDhcpRelayByIdIpv4`, `getAllDhcpRelayIpv6`, `getDhcpRelayByIdIpv6`, `getDnsSettings`, `getAllDnsHostEntries`, `getDnsHostEntryById`, `getAllDnsRequestRoutes`, `getDnsRequestRouteById`, `getAllStaticNeighborIpv4s`, `getStaticNeighborIpv4`, `getAllStaticNeighborIpv6s`, `getStaticNeighborIpv6`. **3 VLAN-only writes:** `createNetworkInterface`, `updateNetworkInterface`, `deleteNetworkInterface` |
+| Network architecture | 44 | 28 | **41 reads:** `listNetworkInterfaces`, `getNetworkInterface`, `getAllZones`, `getZone`, `getGatewaysIpv4`, `getWanGatewaysIpv4`, `getWanGatewayIpv4ByIdOrName`, `getCustomGatewaysIpv4`, `getCustomGatewayIpv4ByIdOrName`, `getGatewaysIpv6`, `getWanGatewaysIpv6`, `getWanGatewayIpv6ByIdOrName`, `getCustomGatewaysIpv6`, `getCustomGatewayIpv6ByIdOrName`, `getUnicastRoutesIPv4`, `getUnicastRouteIPv4`, `getUnicastRoutesIPv6`, `getUnicastRouteIPv6`, `listSdwanRoutesIpv4`, `getSdwanRouteIpv4`, `listSdwanRoutesIpv6`, `getSdwanRouteIpv6`, `listDhcpServersIpv4`, `getDhcpServerIpv4`, `listDhcpServersIpv6`, `getDhcpServerIpv6`, `getDhcpLeasesIpv4`, `getDhcpLeasesIpv6`, `getAllDhcpRelayIpv4`, `getDhcpRelayByIdIpv4`, `getAllDhcpRelayIpv6`, `getDhcpRelayByIdIpv6`, `getDnsSettings`, `getAllDnsHostEntries`, `getDnsHostEntryById`, `getAllDnsRequestRoutes`, `getDnsRequestRouteById`, `getAllStaticNeighborIpv4s`, `getStaticNeighborIpv4`, `getAllStaticNeighborIpv6s`, `getStaticNeighborIpv6`. **3 VLAN-only writes:** `createNetworkInterface`, `updateNetworkInterface`, `deleteNetworkInterface` |
 | Network status | 2 | 2 | `getDnsProtectionStatus`, `getCellularWanStatus` |
 | Audit (#35) | 0 | 3 | No new operations. Composite, read-only tools: `audit_firewall_rules`, `explain_connectivity`, `find_object_usage` |
-| **Total** | **145** | **152** | — |
+| **Total** | **145** | **112** | — |
 
-The four extra firewall tools are not separate operations: `firewall_rule_set_enabled_ipv4/ipv6` is a
-`PATCH enabled` on the matching `updateFirewallRuleIpv4/Ipv6` operation, and
-`firewall_rule_clone_ipv4/ipv6` is a `get` + `create` composition. The three audit tools are pure
-compositions of read operations already listed above.
+The two extra firewall tools are not separate operations: `firewall_rule_set_enabled` is a
+`PATCH enabled` on the matching `updateFirewallRuleIpv4/Ipv6` operation (the required `ip_family`
+selects the family), and `firewall_rule_clone` is a `get` + `create` composition. The three audit
+tools are pure compositions of read operations already listed above.
 
 **Explicitly out of first-release scope** (classified in `API-COVERAGE.md`, not registered as tools):
 

@@ -36,7 +36,7 @@ PAGE_TOTAL_DESCRIPTION = (
 )
 
 #: The tools whose published input schema declares ``page``/``page_total`` (M7).
-EXPECTED_PAGINATED_TOOL_COUNT = 41
+EXPECTED_PAGINATED_TOOL_COUNT = 31
 
 #: The six pagination input models, one per domain family that paginates.
 PAGINATION_INPUT_MODELS = [
@@ -380,7 +380,7 @@ async def test_output_schemas_publish_no_property_titles():
     the properties rather than a schema with no titles at all.
     """
     schemas = await _published_output_schemas()
-    assert len(schemas) == 152
+    assert len(schemas) == 112
 
     property_titles = 0
     model_titles = 0
@@ -444,14 +444,14 @@ async def test_nullable_output_fields_use_the_compact_type_form():
 async def test_compacted_nullable_fields_keep_their_default_description_and_bounds():
     """H1: folding the union keeps the default, the description and the bounds."""
     schemas = await _published_output_schemas()
-    schema = schemas["firewall_rule_list_ipv4"]
+    schema = schemas["firewall_rule_list"]
 
     current = schema["$defs"]["Pages"]["properties"]["current"]
     assert current["type"] == ["integer", "null"]
     assert current["default"] is None
     assert current["description"] == "The current page number, 1-based."
 
-    position = schema["$defs"]["FirewallRuleIpv4Output"]["properties"]["position"]
+    position = schema["$defs"]["FirewallRuleOutput"]["properties"]["position"]
     assert position["type"] == ["integer", "null"]
     assert position["default"] is None
     assert position["minimum"] == 1

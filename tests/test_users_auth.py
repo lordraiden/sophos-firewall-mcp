@@ -169,7 +169,7 @@ def router() -> Any:
 async def call(server: MCPServer[AppContext], name: str, request: dict[str, Any]) -> Any:
     """Call one tool through the official SDK client (full schema validation included)."""
     async with Client(server) as client:
-        return await client.call_tool(name, {"request": request})
+        return await client.call_tool(name, request)
 
 
 def body_of(request: httpx.Request) -> Any:
@@ -178,10 +178,12 @@ def body_of(request: httpx.Request) -> Any:
 
 
 def request_model_schema(tool: Any) -> dict[str, Any]:
-    """Return the JSON schema of the tool's single ``request`` argument model."""
-    schema = tool.input_schema
-    reference = schema["properties"]["request"]["$ref"]
-    return schema["$defs"][reference.rsplit("/", 1)[-1]]
+    """Return the JSON schema of the tool's request model.
+
+    Since 0.7 the request model's fields are published flat at the root of ``inputSchema``,
+    so the root *is* the request model's schema.
+    """
+    return tool.input_schema
 
 
 def find_password_schema(schema: Any) -> dict[str, Any]:
@@ -1260,15 +1262,15 @@ async def test_write_mode_registers_every_tool():
     [
         (
             "user_list",
-            {"title": "List authentication users", "readOnlyHint": True, "openWorldHint": True},
+            {"title": "List authentication users", "readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_list",
-            {"title": "List network users", "readOnlyHint": True, "openWorldHint": True},
+            {"title": "List network users", "readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_get",
-            {"title": "Get network user", "readOnlyHint": True, "openWorldHint": True},
+            {"title": "Get network user", "readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_create",
@@ -1277,7 +1279,7 @@ async def test_write_mode_registers_every_tool():
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": False,
-                "openWorldHint": True,
+                "openWorldHint": False,
             },
         ),
         (
@@ -1287,7 +1289,7 @@ async def test_write_mode_registers_every_tool():
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": True,
-                "openWorldHint": True,
+                "openWorldHint": False,
             },
         ),
         (
@@ -1297,7 +1299,7 @@ async def test_write_mode_registers_every_tool():
                 "readOnlyHint": False,
                 "destructiveHint": True,
                 "idempotentHint": True,
-                "openWorldHint": True,
+                "openWorldHint": False,
             },
         ),
         (
@@ -1329,7 +1331,9 @@ async def test_input_schemas_are_closed_and_hide_the_context():
     for name, tool in tools.items():
         schema = tool.input_schema
         assert schema["type"] == "object", name
-        assert set(schema["properties"]) == {"request"}, name
+        # Arguments are flat: the request model's fields are the root properties, and the
+        # root is closed so an unknown argument is rejected rather than silently dropped.
+        assert schema["additionalProperties"] is False, name
         assert "ctx" not in schema["properties"], name
         assert request_model_schema(tool)["additionalProperties"] is False, name
 

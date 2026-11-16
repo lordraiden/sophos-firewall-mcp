@@ -45,7 +45,7 @@ from pydantic import (
     model_validator,
 )
 
-from .common import ObjectName, ObjectNameOrId, ObjectRef, OutputModel
+from .common import IpFamily, ObjectName, ObjectNameOrId, ObjectRef, OutputModel
 from .objects import serialize_epoch_sentinel
 
 __all__ = [
@@ -57,6 +57,7 @@ __all__ = [
     "CellularWanStatus",
     "CustomGatewayIpv4",
     "CustomGatewayIpv6",
+    "CustomGatewayOutput",
     "DhcpAddressPoolIpv4",
     "DhcpAddressPoolIpv6",
     "DhcpBootNextServer",
@@ -64,11 +65,15 @@ __all__ = [
     "DhcpClientReservationIpv6",
     "DhcpLeaseIpv4",
     "DhcpLeaseIpv6",
+    "DhcpLeaseListInput",
+    "DhcpLeaseOutput",
     "DhcpOption",
     "DhcpRelayIpv4",
     "DhcpRelayIpv6",
+    "DhcpRelayOutput",
     "DhcpServerIpv4",
     "DhcpServerIpv6",
+    "DhcpServerOutput",
     "DnsHostEntry",
     "DnsHostEntryIpv4",
     "DnsHostEntryIpv6",
@@ -84,6 +89,7 @@ __all__ = [
     "DnsUnencryptedSettings",
     "GatewayIpv4",
     "GatewayIpv6",
+    "GatewayOutput",
     "HealthCheck",
     "HealthCheckHost",
     "HealthCheckRule",
@@ -117,8 +123,10 @@ __all__ = [
     "SdwanUserSelector",
     "StaticNeighborIpv4",
     "StaticNeighborIpv6",
+    "StaticNeighborOutput",
     "UnicastRouteIpv4",
     "UnicastRouteIpv6",
+    "UnicastRouteOutput",
     "UnpaginatedList",
     "VlanIpv4Create",
     "VlanIpv4Update",
@@ -126,6 +134,7 @@ __all__ = [
     "VlanIpv6Update",
     "WanGatewayIpv4",
     "WanGatewayIpv6",
+    "WanGatewayOutput",
     "Zone",
     "ZoneService",
 ]
@@ -412,6 +421,77 @@ class DhcpRelayRefInput(_Input):
     """
 
     id: UuidString = Field(description="DHCP relay UUID.")
+
+
+# -- Merged IPv4/IPv6 request models ---------------------------------------------------
+#
+# The family-neutral inputs above stay as they are: the interface, zone, DNS and VLAN
+# tools use them and have no family axis. A merged tool takes one of the subclasses below,
+# which add the required ``ip_family`` that selects the IPv4 or IPv6 collection.
+
+
+class IpFamilyPageInput(PageInput):
+    """One page of an IPv4 or IPv6 collection, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class IpFamilyFilteredPageInput(FilteredPageInput):
+    """A filtered page of an IPv4 or IPv6 collection, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class IpFamilyFilterInput(FilterInput):
+    """Name filters for an unpaginated IPv4 or IPv6 collection, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class IpFamilyGatewayRefInput(GatewayRefInput):
+    """Identify one IPv4 or IPv6 gateway by name or UUID, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the gateway collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class IpFamilyWideRefInput(WideRefInput):
+    """Identify one IPv4 or IPv6 object by name or UUID, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class IpFamilySdwanRefInput(SdwanRefInput):
+    """Identify one IPv4 or IPv6 SD-WAN route by name or UUID, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the SD-WAN route collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class IpFamilyDhcpRelayRefInput(DhcpRelayRefInput):
+    """Identify one IPv4 or IPv6 DHCP relay by UUID, selected by ``ip_family``."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the DHCP relay collection: 'ipv4' or 'ipv6'. Required."
+    )
+
+
+class DhcpLeaseListInput(_Input):
+    """The DHCP lease list takes no pagination input; ``ip_family`` selects the collection."""
+
+    ip_family: IpFamily = Field(
+        description="IP family of the lease collection: 'ipv4' or 'ipv6'. Required."
+    )
 
 
 class VlanIpv4Create(_Input):
@@ -836,6 +916,16 @@ class GatewayIpv6(_Output):
     updatedAt: datetime | None = None
 
 
+class GatewayOutput(GatewayIpv4, GatewayIpv6):
+    """One gateway of either family.
+
+    The two family projections differ only in the address member (``ipv4Address`` or
+    ``ipv6Address``), so the merged model carries both and the family that was read
+    populates exactly one. The shape is the same one the per-family tools published before
+    0.7.
+    """
+
+
 class HealthCheckHost(_Output):
     """Monitored host of a gateway health check: an IPv4 address, an IPv6 address or an FQDN."""
 
@@ -902,6 +992,10 @@ class WanGatewayIpv6(_Output):
     updatedAt: datetime | None = None
 
 
+class WanGatewayOutput(WanGatewayIpv4, WanGatewayIpv6):
+    """One WAN gateway of either family (``ipv4Address`` or ``ipv6Address``)."""
+
+
 class CustomGatewayIpv4(_Output):
     """One custom IPv4 gateway."""
 
@@ -926,6 +1020,10 @@ class CustomGatewayIpv6(_Output):
     healthCheck: HealthCheck | None = None
     createdAt: datetime | None = None
     updatedAt: datetime | None = None
+
+
+class CustomGatewayOutput(CustomGatewayIpv4, CustomGatewayIpv6):
+    """One custom gateway of either family (``ipv4Address`` or ``ipv6Address``)."""
 
 
 # -- Static unicast routes -------------------------------------------------------------
@@ -960,6 +1058,16 @@ class UnicastRouteIpv6(_Output):
     description: str | None = None
     createdAt: datetime | None = None
     updatedAt: datetime | None = None
+
+
+class UnicastRouteOutput(UnicastRouteIpv4, UnicastRouteIpv6):
+    """One static unicast route of either family.
+
+    The IPv4 projection carries ``destinationAddressIpv4``/``cidr``/``gatewayIpv4`` and
+    ``administrativeDistance``; the IPv6 projection carries
+    ``destinationAddressIpv6``/``prefixLength``/``gatewayIpv6``. The merged model carries
+    both sets and the family that was read populates exactly one.
+    """
 
 
 # -- SD-WAN routes ---------------------------------------------------------------------
@@ -1158,6 +1266,46 @@ class DhcpServerIpv6(_Output):
     updatedAt: datetime | None = None
 
 
+class DhcpServerOutput(_Output):
+    """One DHCP server of either family.
+
+    The two family projections share most members but disagree on the pool and reservation
+    item types, so this model is written out instead of inheriting both: ``addressPools``
+    and ``clientReservations`` accept either family's item, and the family-specific scalar
+    members (``cidr``/``gatewayIpv4``/``primaryDnsIpv4``/... versus
+    ``preferredLifetime``/``primaryDnsIpv6``/...) are all optional. The family that was
+    read populates exactly one set.
+    """
+
+    id: str | None = None
+    name: str | None = None
+    enabled: bool | None = None
+    interface: ObjectRef | None = None
+    acceptRelayRequests: bool | None = None
+    addressPools: list[DhcpAddressPoolIpv4 | DhcpAddressPoolIpv6] = Field(default_factory=list)
+    clientReservations: list[DhcpClientReservationIpv4 | DhcpClientReservationIpv6] = Field(
+        default_factory=list
+    )
+    cidr: int | None = None
+    domainName: str | None = None
+    gatewayIpv4: str | None = None
+    maxLifetime: int | None = None
+    preferredLifetime: int | None = None
+    defaultLifetime: int | None = None
+    conflictDetection: bool | None = None
+    primaryDnsIpv4: str | None = None
+    secondaryDnsIpv4: str | None = None
+    primaryDnsIpv6: str | None = None
+    secondaryDnsIpv6: str | None = None
+    primaryWins: str | None = None
+    secondaryWins: str | None = None
+    bootFile: str | None = None
+    bootNextServer: DhcpBootNextServer | None = None
+    dhcpOptions: list[DhcpOption] = Field(default_factory=list)
+    createdAt: datetime | None = None
+    updatedAt: datetime | None = None
+
+
 class DhcpLeaseIpv4(_Output):
     """One active IPv4 DHCP lease (live state)."""
 
@@ -1177,6 +1325,14 @@ class DhcpLeaseIpv6(_Output):
     leasedIp: str | None = None
     macAddress: str | None = None
     duid: str | None = None
+
+
+class DhcpLeaseOutput(DhcpLeaseIpv4, DhcpLeaseIpv6):
+    """One active DHCP lease of either family.
+
+    The IPv4 projection carries ``leaseType`` and the IPv6 projection ``duid``; the merged
+    model carries both and the family that was read populates exactly one.
+    """
 
 
 class KeysetPages(_Output):
@@ -1287,6 +1443,15 @@ class DhcpRelayIpv6(_Output):
     dhcpServerAddressesIpv6: list[str] = Field(default_factory=list)
     createdAt: datetime | None = None
     updatedAt: datetime | None = None
+
+
+class DhcpRelayOutput(DhcpRelayIpv4, DhcpRelayIpv6):
+    """One DHCP relay of either family.
+
+    The IPv4 projection carries ``dhcpServerAddressesIpv4`` and the IPv6 projection
+    ``dhcpServerAddressesIpv6``; the merged model carries both and the family that was read
+    populates exactly one.
+    """
 
 
 # -- DNS -------------------------------------------------------------------------------
@@ -1453,6 +1618,10 @@ class StaticNeighborIpv6(_Output):
     interface: ObjectRef | None = None
     createdAt: datetime | None = None
     updatedAt: datetime | None = None
+
+
+class StaticNeighborOutput(StaticNeighborIpv4, StaticNeighborIpv6):
+    """One static neighbor entry of either family (``ipv4Address`` or ``ipv6Address``)."""
 
 
 # -- Network status --------------------------------------------------------------------

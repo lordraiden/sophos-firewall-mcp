@@ -56,7 +56,6 @@ from sophos_firewall_mcp.server import (
     create_server_from_env,
 )
 from sophos_firewall_mcp.tools import (
-    _REQUEST_WRAPPER_NOTE,
     DomainAdapter,
     ToolKind,
     _registered_tool,
@@ -302,10 +301,10 @@ def test_create_server_rejects_non_settings():
 
 
 def test_instructions_document_the_calling_conventions():
-    """H2/M1: the wrapper and the duplicated-payload rule are stated once, server-wide."""
-    assert "`request` object" in INSTRUCTIONS
-    assert '{"request": {...}}' in INSTRUCTIONS
-    assert "not at the top level" in INSTRUCTIONS
+    """H2/M1: flat arguments and the duplicated-payload rule are stated once, server-wide."""
+    assert "takes them flat" in INSTRUCTIONS
+    assert "no wrapper object" in INSTRUCTIONS
+    assert "`oneOf`" in INSTRUCTIONS
     assert "`structuredContent`" in INSTRUCTIONS
     assert "read one of them, not both" in INSTRUCTIONS
 
@@ -586,10 +585,11 @@ async def test_tool_annotations_use_the_wire_names_and_expected_values():
     read_wire = tools["sophos_synthetic_echo"].annotations.model_dump(
         by_alias=True, exclude_none=True
     )
+    # A synthetic tool is not in OPEN_WORLD_TOOLS, so the closed default applies.
     assert read_wire == {
         "title": "Echo a name",
         "readOnlyHint": True,
-        "openWorldHint": True,
+        "openWorldHint": False,
     }
 
     write_wire = tools["sophos_synthetic_mutate"].annotations.model_dump(
@@ -600,7 +600,7 @@ async def test_tool_annotations_use_the_wire_names_and_expected_values():
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
-        "openWorldHint": True,
+        "openWorldHint": False,
     }
 
 
@@ -611,10 +611,11 @@ async def test_input_schema_is_closed_and_excludes_the_context_parameter():
     schema = tool.input_schema
 
     assert schema["type"] == "object"
-    assert schema["required"] == ["request"]
-    assert set(schema["properties"]) == {"request"}
+    # Flat arguments: the request model's own fields are the top-level properties.
+    assert set(schema["properties"]) == {"name"}
+    assert schema["required"] == ["name"]
     assert "ctx" not in schema["properties"]
-    assert schema["$defs"]["EchoInput"]["additionalProperties"] is False
+    assert schema["additionalProperties"] is False
 
 
 async def test_output_schema_is_object_rooted_and_typed():
@@ -752,8 +753,8 @@ async def test_context_identity_is_stable_across_handler_calls():
     server = create_server(make_settings(), domains=[register_synthetic_tools])
 
     async with Client(server) as client:
-        first = await client.call_tool("sophos_synthetic_echo", {"request": {"name": "one"}})
-        second = await client.call_tool("sophos_synthetic_echo", {"request": {"name": "two"}})
+        first = await client.call_tool("sophos_synthetic_echo", {"name": "one"})
+        second = await client.call_tool("sophos_synthetic_echo", {"name": "two"})
 
     assert first.is_error is False
     assert second.is_error is False
@@ -766,7 +767,7 @@ async def test_structured_output_is_published_on_both_channels():
     server = create_server(make_settings(), domains=[register_synthetic_tools])
 
     async with Client(server) as client:
-        result = await client.call_tool("sophos_synthetic_echo", {"request": {"name": "x"}})
+        result = await client.call_tool("sophos_synthetic_echo", {"name": "x"})
 
     assert result.is_error is False
     assert result.structured_content["name"] == "x"
@@ -973,13 +974,11 @@ async def test_unknown_argument_is_rejected_with_a_sanitized_message():
     server = create_server(make_settings(), domains=[register_synthetic_tools])
 
     async with Client(server) as client:
-        result = await client.call_tool(
-            "sophos_synthetic_echo", {"request": {"name": "x", "bogus": 1}}
-        )
+        result = await client.call_tool("sophos_synthetic_echo", {"name": "x", "bogus": 1})
 
     assert result.is_error is True
     text = result.content[0].text
-    assert "request.bogus is not an accepted argument" in text
+    assert "bogus is not an accepted argument" in text
     assert "accepted arguments are name" in text
     # Nothing from the raw pydantic dump may reach the model.
     assert "validation error for" not in text
@@ -992,11 +991,11 @@ async def test_argument_rule_violation_names_the_field_and_the_rule():
     server = create_server(make_settings(), domains=[register_synthetic_tools])
 
     async with Client(server) as client:
-        result = await client.call_tool("sophos_synthetic_echo", {"request": {"name": ""}})
+        result = await client.call_tool("sophos_synthetic_echo", {"name": ""})
 
     assert result.is_error is True
     text = result.content[0].text
-    assert "request.name must be at least 1 characters" in text
+    assert "name must be at least 1 characters" in text
     assert "https://" not in text
 
 
@@ -1007,7 +1006,7 @@ async def test_missing_argument_is_reported_as_required():
         result = await client.call_tool("sophos_synthetic_echo", {})
 
     assert result.is_error is True
-    assert "request is required" in result.content[0].text
+    assert "name is required" in result.content[0].text
 
 
 async def test_no_argument_tool_rejects_unknown_arguments():
@@ -1035,117 +1034,107 @@ async def test_published_input_schema_rejects_unknown_arguments():
     assert echo.input_schema["additionalProperties"] is False
 
 
-# -- The ``request`` wrapper (M10) -----------------------------------------------------
+def _is_union_schema(schema: dict[str, Any]) -> bool:
+    """Whether a published input schema is a root union of variants."""
+    return "oneOf" in schema or "anyOf" in schema
+
+
+# -- Flat arguments (H2) ---------------------------------------------------------------
 #
-# The wrapper is the SDK's single-argument convention and is unusual for MCP, where flat
-# arguments are the norm. ``register_tool`` appends one sentence to the description of
-# every tool whose published input schema declares it, so no domain has to repeat it.
+# The SDK derives one argument field per handler parameter, so a handler that takes a
+# single ``request`` model would publish a ``request`` wrapper. ``register_tool`` publishes
+# the request model's own fields at the top level instead: MCP's own examples are flat and
+# a model's prior is flat, so the wrapper was a per-call failure mode. A discriminated-union
+# request keeps a root ``oneOf``, because flattening it into one object would lose the
+# per-variant required fields.
 
 
-async def test_tool_description_explains_the_request_wrapper():
-    """M10: a tool that takes arguments says how to pass them."""
+async def test_tool_description_is_the_domain_description():
+    """The description is the domain's own text: there is no wrapper sentence to append."""
     server = create_server(make_settings(), domains=[register_synthetic_tools])
     tools = await tools_by_name(server)
 
     description = tools["sophos_synthetic_echo"].description
 
-    # The domain description is kept and the sentence is appended, not substituted.
-    assert description.startswith("Read-only synthetic tool")
-    assert description.endswith(
-        "Arguments are passed inside a `request` object, for example "
-        '`{"request": {...}}`, not at the top level.'
+    assert description == (
+        "Read-only synthetic tool used by the foundation tests. It echoes the name "
+        "and reports the shared client identity; it never contacts the appliance."
     )
-    # The wrapper itself is unchanged: it is still the single required argument.
-    assert tools["sophos_synthetic_echo"].input_schema["required"] == ["request"]
 
 
-async def test_no_argument_tool_description_does_not_mention_the_request_wrapper():
-    """M10: a tool with no arguments has no wrapper to explain."""
-    server = create_server(make_settings(), domains=[register_error_tools])
-    tools = await tools_by_name(server)
-
-    description = tools["sophos_test_tool_error"].description
-
-    assert description == "Raises an anticipated ToolError for the error-semantics tests."
-    assert _REQUEST_WRAPPER_NOTE not in description
-
-
-async def test_every_tool_that_takes_arguments_documents_the_request_wrapper():
-    """M10: the sentence is applied centrally, so no domain module can forget it."""
-    server = create_server(make_settings())
-    tools = await tools_by_name(server)
-
-    with_arguments = [
-        tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
-    ]
-    without_arguments = [
-        tool for tool in tools.values() if "request" not in tool.input_schema.get("properties", {})
-    ]
-
-    assert with_arguments, "the default domains must register tools that take arguments"
-    assert without_arguments, "the default domains must register no-argument tools"
-    for tool in with_arguments:
-        assert tool.description.endswith(_REQUEST_WRAPPER_NOTE), tool.name
-    for tool in without_arguments:
-        assert _REQUEST_WRAPPER_NOTE not in tool.description, tool.name
-
-
-#: Matches a JSON object key inside the wrapper example, e.g. ``"page"`` in
-#: ``{"request": {"page": 1}}``. The example is illustrative, not necessarily valid JSON
-#: (the neutral form is ``{"request": {...}}``), so it is scanned rather than parsed.
-_EXAMPLE_FIELD_PATTERN = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)":')
-
-
-def _wrapper_example(description: str) -> str:
-    """Return the example object quoted in a tool description's wrapper sentence."""
-    match = re.search(
-        r"Arguments are passed inside a `request` object, for example `([^`]+)`", description
-    )
-    assert match is not None, description
-    return match.group(1)
-
-
-def _accepted_request_fields(schema: dict[str, Any]) -> set[str]:
-    """Return every field name a wrapped tool accepts inside its ``request`` object.
-
-    The request model is published as a ``$ref`` into ``$defs`` for most tools and as a
-    ``oneOf`` of ``$ref`` variants for the discriminated-union tools (the address and
-    service creates), so both shapes are resolved.
-    """
-    request = schema.get("properties", {}).get("request", {})
-    definitions = schema.get("$defs", {})
-    references = [request, *request.get("oneOf", [])]
-    fields: set[str] = set()
-    for reference in references:
-        target = reference.get("$ref")
-        if target is None:
-            continue
-        model = definitions.get(target.rsplit("/", 1)[-1], {})
-        fields.update(model.get("properties", {}))
-    return fields
-
-
-async def test_request_wrapper_example_never_names_a_field_the_tool_rejects():
-    """H2: the example must not tell the model to send an argument the tool rejects.
-
-    The sentence is shared by every wrapped tool, so a hard-coded field is wrong for most
-    of them: the previous example named ``page``, which only 41 of the 144 wrapped tools
-    accept. This sweep is the guard -- it fails if the example ever names a field that the
-    tool it is appended to does not accept.
-    """
+async def test_no_tool_publishes_a_request_wrapper():
+    """H2: the wrapper is gone from the whole surface."""
     server = create_server(make_settings())
     tools = await tools_by_name(server)
 
     wrapped = [
-        tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
+        tool.name for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
     ]
 
-    assert len(wrapped) == 144, "the sweep must cover every wrapped tool"
-    for tool in wrapped:
-        example = _wrapper_example(tool.description)
-        accepted = {"request"} | _accepted_request_fields(tool.input_schema)
-        for field in _EXAMPLE_FIELD_PATTERN.findall(example):
-            assert field in accepted, f"{tool.name}: the example names {field!r}, which it rejects"
+    assert wrapped == []
+
+
+async def test_every_tool_with_arguments_publishes_them_flat_and_closed():
+    """H2: the request model's fields are the top-level properties, and the root is closed."""
+    server = create_server(make_settings())
+    tools = await tools_by_name(server)
+
+    flat = [
+        tool
+        for tool in tools.values()
+        if tool.input_schema.get("properties") and not _is_union_schema(tool.input_schema)
+    ]
+    unions = [tool for tool in tools.values() if _is_union_schema(tool.input_schema)]
+    no_argument = [
+        tool
+        for tool in tools.values()
+        if not tool.input_schema.get("properties") and not _is_union_schema(tool.input_schema)
+    ]
+
+    assert len(flat) == 96, "the sweep must cover every flat-argument tool"
+    assert len(unions) == 9, "the sweep must cover every union-request tool"
+    assert len(flat) + len(unions) + len(no_argument) == 112
+    for tool in flat:
+        assert tool.input_schema["additionalProperties"] is False, tool.name
+        assert "ctx" not in tool.input_schema["properties"], tool.name
+
+
+async def test_union_request_tools_publish_a_root_union_of_closed_variants():
+    """H2: a union request keeps its per-variant required fields under a root union.
+
+    A discriminated union is published as ``oneOf`` (exactly one variant matches); the one
+    undiscriminated union (``mac_address_create``, resolved left to right) keeps pydantic's
+    ``anyOf``, where ``oneOf`` would be wrong.
+    """
+    server = create_server(make_settings())
+    tools = await tools_by_name(server)
+
+    unions = [tool for tool in tools.values() if _is_union_schema(tool.input_schema)]
+
+    assert len(unions) == 9, "the sweep must cover every union-request tool"
+    for tool in unions:
+        schema = tool.input_schema
+        assert schema["type"] == "object", tool.name
+        # A root ``additionalProperties: false`` would reject every variant's fields.
+        assert "additionalProperties" not in schema, tool.name
+        branches = schema.get("oneOf") or schema.get("anyOf")
+        assert branches, tool.name
+        for branch in branches:
+            target = schema["$defs"][branch["$ref"].rsplit("/", 1)[-1]]
+            assert target["additionalProperties"] is False, tool.name
+            assert target["required"], tool.name
+
+
+async def test_flat_arguments_reach_the_handler_as_the_request_model():
+    """H2: the handler still receives the request model, so no domain module changed."""
+    server = create_server(make_settings(), domains=[register_synthetic_tools])
+
+    async with Client(server) as client:
+        result = await client.call_tool("sophos_synthetic_echo", {"name": "flat"})
+
+    assert result.is_error is False
+    assert result.structured_content is not None
+    assert result.structured_content["name"] == "flat"
 
 
 # -- Private SDK seam (L4) -------------------------------------------------------------
@@ -1165,11 +1154,12 @@ def test_argument_model_seam_mutates_the_object_the_sdk_validates_with():
     assert tool is not None
     # The accessor must return the very object the SDK keeps in its registry.
     assert tool is server._tool_manager.get_tool("sophos_synthetic_echo")
-    # The mutation: ``Tool.run`` validates every call against this model...
+    # The mutation: ``Tool.run`` validates every call against this model, and it now
+    # accepts the flat arguments the published schema advertises.
     assert tool.fn_metadata.arg_model.model_config.get("extra") == "forbid"
     with pytest.raises(ValidationError) as rejected:
-        tool.fn_metadata.arg_model.model_validate({"request": {"name": "x", "bogus": 1}})
-    assert "request.bogus is not an accepted argument" in str(rejected.value)
+        tool.fn_metadata.arg_model.model_validate({"name": "x", "bogus": 1})
+    assert "bogus is not an accepted argument" in str(rejected.value)
     # ...and ``MCPServer.list_tools`` publishes this schema.
     assert tool.parameters["additionalProperties"] is False
 
@@ -1226,7 +1216,7 @@ async def test_stdio_transport_works_with_the_official_client():
     # have broken it before the tool list arrived.
     names = {tool.name for tool in result.tools}
     assert names, "the server must advertise the phase-2 domain tools over stdio"
-    assert "firewall_rule_list_ipv4" in names
+    assert "firewall_rule_list" in names
     assert "network_status_dns_protection" in names
 
 
@@ -1321,8 +1311,8 @@ PROMPT_ARGUMENT_MATRIX: dict[str, tuple[dict[str, str], ...]] = {
     ),
 }
 
-#: The literal prefix of a rendered tool call.
-_RENDERED_REQUEST = '{"request":'
+#: A rendered tool call starts a line with a JSON object (``_request`` emits compact JSON).
+_RENDERED_CALL = re.compile(r"^[ \t]*(\{.*)$", re.MULTILINE)
 
 #: A backticked snake_case token, which is how the prompt text names a tool.
 _BACKTICKED_NAME = re.compile(r"`([a-z][a-z0-9_]*)`")
@@ -1441,7 +1431,7 @@ async def test_the_surface_resource_states_the_real_api_facts():
     text = (await server.read_resource("sophos://api/surface"))[0].content
 
     assert API_PATH_PREFIX in text
-    for fact in ("384", "700", "145", "152", "98", "54"):
+    for fact in ("384", "700", "145", "107", "112", "74", "38"):
         assert fact in text, f"the surface resource omits {fact}"
     for name in resources_module.COMPOSITE_TOOLS:
         assert f"`{name}`" in text, f"the surface resource omits the composite {name}"
@@ -1464,22 +1454,24 @@ async def test_the_read_only_policy_states_the_mode_of_this_process():
 
 
 async def test_the_conventions_resource_names_the_real_no_argument_tools():
-    """M3: the wrapper count and the no-argument list are the published surface."""
+    """M3: the argument-tool count and the no-argument list are the published surface."""
     server = create_server(make_settings())
 
     text = (await server.read_resource("sophos://conventions"))[0].content
     tools = {tool.name: tool for tool in await server.list_tools()}
 
-    assert len(resources_module.NO_ARGUMENT_TOOLS) == 8
+    assert len(resources_module.NO_ARGUMENT_TOOLS) == 7
     for name in resources_module.NO_ARGUMENT_TOOLS:
         assert f"`{name}`" in text
-        assert "request" not in tools[name].input_schema.get("properties", {}), name
-    wrapped = [
-        tool for tool in tools.values() if "request" in tool.input_schema.get("properties", {})
+        assert not tools[name].input_schema.get("properties"), name
+    with_arguments = [
+        tool
+        for tool in tools.values()
+        if tool.input_schema.get("properties") or _is_union_schema(tool.input_schema)
     ]
-    assert len(wrapped) == resources_module.WRAPPED_TOOL_COUNT
+    assert len(with_arguments) == resources_module.ARGUMENT_TOOL_COUNT
     assert (
-        f"{resources_module.WRAPPED_TOOL_COUNT} of the {resources_module.TOTAL_TOOL_COUNT}" in text
+        f"{resources_module.ARGUMENT_TOOL_COUNT} of the {resources_module.TOTAL_TOOL_COUNT}" in text
     )
 
 
@@ -1532,7 +1524,7 @@ async def test_each_prompt_renders_a_self_contained_instruction():
         message = result.messages[0]
         assert message.role == "user"
         text = message.content.text
-        assert '{"request":' in text, f"{name} does not show the request wrapper"
+        assert _RENDERED_CALL.search(text), f"{name} does not show a rendered tool call"
         assert "read-only" in text.lower() or "nothing" in text.lower(), name
 
 
@@ -1587,18 +1579,18 @@ async def test_explain_flow_requires_its_endpoints():
 
 
 def rendered_tool_calls(text: str, tool_names: set[str]) -> list[tuple[str, dict[str, Any]]]:
-    """Extract every rendered ``{"request": ...}`` and the tool it belongs to.
+    """Extract every rendered call object and the tool it belongs to.
 
     The prompt text names the tool immediately before the call, so the nearest preceding
     backticked token that is a registered tool is the callee. ``raw_decode`` parses the
     nested object without needing to know where it ends.
     """
     calls: list[tuple[str, dict[str, Any]]] = []
-    for match in re.finditer(re.escape(_RENDERED_REQUEST), text):
-        prefix = text[: match.start()]
+    for match in _RENDERED_CALL.finditer(text):
+        prefix = text[: match.start(1)]
         names = [name for name in _BACKTICKED_NAME.findall(prefix) if name in tool_names]
-        assert names, f"no tool name before the request at offset {match.start()}"
-        payload, _ = json.JSONDecoder().raw_decode(text[match.start() :])
+        assert names, f"no tool name before the call at offset {match.start(1)}"
+        payload, _ = json.JSONDecoder().raw_decode(text[match.start(1) :])
         calls.append((names[-1], payload))
     return calls
 

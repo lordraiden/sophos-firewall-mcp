@@ -12,7 +12,7 @@ model-controlled actions (:mod:`sophos_firewall_mcp.tools`), resources are
 application-controlled passive context (:mod:`sophos_firewall_mcp.resources`) and prompts
 are user-controlled templates (:mod:`sophos_firewall_mcp.prompts`). The resources carry the
 REST API surface, the coverage matrix, the read-only policy and the calling conventions
-once, instead of repeating them in 152 tool descriptions; the prompts carry the three
+once, instead of repeating them in 112 tool descriptions; the prompts carry the three
 analysis workflows (audit the rule base, explain a flow, find unused objects). All three
 catalogs are static for the process lifetime.
 
@@ -35,7 +35,7 @@ prompt catalogs are static for the process lifetime (the read-only mode is appli
 startup), so the SDK must not advertise ``subscriptions/listen`` or ``listChanged``. The
 same static catalogs are why ``cache_hints`` gives ``tools/list``, ``server/discover``,
 ``resources/list``, ``resources/read`` and ``prompts/list`` a long TTL: the SDK default of
-``0`` means "immediately stale" and makes a client re-fetch a ~894 KB payload on every
+``0`` means "immediately stale" and makes a client re-fetch a ~623 KB payload on every
 turn.
 
 Identity
@@ -111,7 +111,7 @@ _UNKNOWN_VERSION = "0.0.0+unknown"
 #: The tool catalog cannot change while the process runs -- the read-only mode is applied
 #: at startup and ``subscriptions=False`` is passed, so no ``listChanged`` notification is
 #: ever sent. The SDK default is ``0``, which the MCP caching specification defines as
-#: "immediately stale" and which makes a client re-fetch a ~894 KB ``tools/list`` payload
+#: "immediately stale" and which makes a client re-fetch a ~623 KB ``tools/list`` payload
 #: on every turn. One hour matches the ``server/discover`` example in the specification
 #: and is short enough that a client notices a restarted server (a different read-only
 #: mode) within a session.
@@ -133,17 +133,20 @@ _CATALOG_CACHE_HINTS: dict[CacheableMethod, CacheHint] = {
 
 #: Server-level instructions shown to the model. Domain tools carry their own.
 #:
-#: Two conventions are stated here, once, instead of in 144 tool descriptions: the
-#: ``request`` wrapper every tool with arguments uses, and the fact that a successful
-#: result carries the same payload twice (``content`` text and ``structuredContent``).
-#: Both are properties of this server's calling convention, not of any one domain.
+#: One convention is stated here, once, instead of in 105 tool descriptions: a successful
+#: result carries the same payload twice (``content`` text and ``structuredContent``), so a
+#: client reads one of them. It is a property of this server's calling convention, not of
+#: any one domain.
 INSTRUCTIONS = (
     "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
     "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
     "rules, address and service objects, users and live sessions. Read-only tools never "
     "modify the appliance. When the server runs in read-only mode, mutation tools are "
-    "not registered at all. Every tool that takes arguments takes them inside a single "
-    '`request` object, for example `{"request": {...}}`, not at the top level. Every '
+    "not registered at all. Every tool that takes arguments takes them flat: the fields "
+    "its `inputSchema` lists are the fields the call sends, with no wrapper object. A tool "
+    "whose request is a union of shapes publishes a root `oneOf` instead, and its "
+    "discriminator (`ip_family` or `type`) selects the variant; `mac_address_create` "
+    "publishes `anyOf` because the API declares no discriminator. Every "
     "successful result carries the same payload twice, as `content` text and as "
     "`structuredContent`; read one of them, not both."
 )

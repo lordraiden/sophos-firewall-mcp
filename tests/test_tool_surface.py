@@ -1,15 +1,15 @@
-"""Global surface invariants for the complete 152-tool server (phase-2 review finding 8).
+"""Global surface invariants for the complete 112-tool server (phase-2 review finding 8).
 
 Every other domain test asserts its own subset, so a duplicated, stray or missing tool could
 pass CI unnoticed. These tests build the real server with every domain registered and assert
 the invariants that only the whole surface can prove:
 
-* the registered set is exactly the curated ``tool_map`` (145 operationIds) plus the seven
-  declared composites -- 152 tools with 152 unique names;
-* the full surface declares exactly 54 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
-  exactly those, leaving 98 read-only tools and zero mutations;
-* every tool publishes an object-rooted output schema, a non-empty input schema and
-  ``openWorldHint=true``;
+* the registered set is exactly the curated ``tool_map`` (145 operationIds mapped to 107
+  one-to-one tools) plus the five declared composites -- 112 tools with 112 unique names;
+* the full surface declares exactly 38 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
+  exactly those, leaving 74 read-only tools and zero mutations;
+* every tool publishes an object-rooted output schema, a non-empty input schema and the
+  per-tool ``openWorldHint`` verdict from ``OPEN_WORLD_TOOLS`` (closed by default);
 * every published input property name, at every depth of the request body, is snake_case
   (M1, the 0.5.0 breaking change);
 * every published output property name, at every depth of the response body, is camelCase
@@ -30,11 +30,15 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from mcp import Client
 from mcp.server.mcpserver import MCPServer
+
+from mcp.types import ToolAnnotations
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
-from sophos_firewall_mcp.server import create_server
+from sophos_firewall_mcp.server import INSTRUCTIONS, create_server
+from sophos_firewall_mcp.tools import OPEN_WORLD_TOOLS, ToolKind, register_tool
 
 ROOT = Path(__file__).resolve().parents[1]
 CURATED_PATH = ROOT / "scripts" / "coverage_curated.yaml"
@@ -43,23 +47,28 @@ HOST = "fw.example.com"
 KEY = "sfos_test_key_0123456789abcdef"
 
 #: The phase-2 exit-criteria counts (ADR-001 section 10, API-COVERAGE section 4).
-EXPECTED_TOOL_COUNT = 152
-EXPECTED_READ_ONLY_TOOL_COUNT = 98
-EXPECTED_MUTATION_COUNT = 54
+EXPECTED_TOOL_COUNT = 112
+EXPECTED_READ_ONLY_TOOL_COUNT = 74
+EXPECTED_MUTATION_COUNT = 38
 EXPECTED_TOOL_MAP_COUNT = 145
-EXPECTED_COMPOSITE_COUNT = 7
+EXPECTED_COMPOSITE_COUNT = 5
 
-#: Tools whose operation declares no request parameters: they publish no ``request``.
-EXPECTED_NO_ARGUMENT_TOOL_COUNT = 8
+#: Tools whose operation declares no request parameters: they publish no arguments.
+EXPECTED_NO_ARGUMENT_TOOL_COUNT = 6
+
+#: Tools that publish no input properties at all. ``live_user_list`` is the seventh: its
+#: operation declares no parameters either, but it is not in ``NO_ARGUMENT_TOOLS`` because
+#: it still takes a (deliberately empty) request model.
+EXPECTED_EMPTY_INPUT_TOOL_COUNT = 7
 
 #: The published input surface, pinned: property occurrences at every depth and the number
 #: of distinct names. A change here means the input schema changed.
-EXPECTED_INPUT_PROPERTY_COUNT = 1495
-EXPECTED_INPUT_PROPERTY_NAME_COUNT = 167
+EXPECTED_INPUT_PROPERTY_COUNT = 1322
+EXPECTED_INPUT_PROPERTY_NAME_COUNT = 166
 
 #: The published output surface, pinned: property occurrences at every depth and the number
 #: of distinct names. A change here means the output schema changed.
-EXPECTED_OUTPUT_PROPERTY_COUNT = 4547
+EXPECTED_OUTPUT_PROPERTY_COUNT = 3518
 EXPECTED_OUTPUT_PROPERTY_NAME_COUNT = 430
 
 #: The published input naming convention (M1): lowercase words joined by underscores.
@@ -177,6 +186,88 @@ async def test_read_only_mode_removes_exactly_the_mutations() -> None:
     assert mutation_names(read_only) == set()
 
 
+async def test_the_live_suite_expects_the_read_only_surface() -> None:
+    """The opt-in live suite must track the read-only surface, not a stale count.
+
+    ``tests/live/`` is skipped without lab credentials, so a stale
+    ``EXPECTED_LIVE_TOOL_COUNT`` or a stale ``LIVE_READ_TOOLS`` would only fail on the next
+    lab run -- the phase-8 review found exactly that (98 expected, 74 published). This test
+    runs in the default suite and pins both to the surface the server actually publishes in
+    read-only mode.
+    """
+    from tests.live.conftest import EXPECTED_LIVE_TOOL_COUNT
+    from tests.live.test_live_reads import LIVE_READ_TOOLS
+
+    read_only = await tools_by_name(read_only=True)
+
+    assert EXPECTED_LIVE_TOOL_COUNT == EXPECTED_READ_ONLY_TOOL_COUNT
+    assert len(read_only) == EXPECTED_LIVE_TOOL_COUNT
+    assert set(LIVE_READ_TOOLS) == set(read_only)
+    assert len(LIVE_READ_TOOLS) == len(set(LIVE_READ_TOOLS)) == EXPECTED_LIVE_TOOL_COUNT
+
+
+# -- Union argument errors (phase-8 review Low 4) --------------------------------------
+#
+# A union request publishes a root ``oneOf``/``anyOf``, so pydantic reports every variant's
+# errors at once: the model saw contradictory rules ("ip_family must be one of 'ipv4' ...
+# ip_family must be one of 'ipv6'") and the 300-character cap truncated the dump mid-word.
+# The union argument model resolves the discriminator first and reports one line.
+
+
+async def test_a_bad_discriminator_is_reported_once_with_the_accepted_values() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool("firewall_rule_create", {"ip_family": "ipv9", "name": "x"})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "ip_family must be one of 'ipv4', 'ipv6'" in text
+    # One discriminator rule, not one per variant, and no required-field noise.
+    assert text.count("ip_family must be one of") == 1
+    assert "source_zones is required" not in text
+
+
+async def test_a_missing_discriminator_names_the_accepted_values() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool("address_create", {"ip_family": "ipv4"})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "type is required" in text
+    assert "accepted values are 'ipv4Address'" in text
+    assert "ipv4_address is required" not in text
+
+
+async def test_a_valid_discriminator_reports_only_the_selected_variant() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool(
+            "address_create",
+            {"ip_family": "ipv4", "type": "ipv4Address", "name": "x"},
+        )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "ipv4_address is required" in text
+    # The other seven variants' required fields are not enumerated.
+    assert "ipv4_network_address" not in text
+    assert "ipv6_address" not in text
+    assert text.count("is required") == 1
+
+
+async def test_an_undiscriminated_union_offers_the_alternatives() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool("mac_address_create", {"name": "x"})
+
+    assert result.is_error is True
+    assert "mac_address is required or mac_addresses is required" in result.content[0].text
+
+
+def test_the_instructions_state_the_anyof_exception() -> None:
+    """Low 3: the one undiscriminated union publishes ``anyOf``, not ``oneOf``."""
+    assert "`oneOf`" in INSTRUCTIONS
+    assert "`anyOf`" in INSTRUCTIONS
+    assert "mac_address_create" in INSTRUCTIONS
+
+
 async def test_every_tool_publishes_an_object_rooted_output() -> None:
     tools = await tools_by_name()
 
@@ -192,13 +283,75 @@ async def test_every_tool_publishes_an_input_schema_and_an_open_world_hint() -> 
     for name, tool in tools.items():
         schema = tool.input_schema
         assert schema["type"] == "object", name
-        # Tools whose operation declares no request parameters accept no arguments.
-        assert set(schema["properties"]) <= {"request"}, name
+        # Arguments are flat: a tool whose operation declares no request parameters
+        # publishes no properties, and every other tool publishes its own fields.
+        assert "request" not in schema.get("properties", {}), name
+        assert "ctx" not in schema.get("properties", {}), name
 
         annotations = tool.annotations
         assert annotations is not None, name
         assert annotations.title, name
-        assert annotations.open_world_hint is True, name
+        assert annotations.open_world_hint is (name in OPEN_WORLD_TOOLS), name
+
+
+async def test_the_open_world_set_is_exactly_the_documented_tools() -> None:
+    """Pin the judgment: changing the set must be a deliberate, reviewed edit.
+
+    ``openWorldHint`` describes the tool's interaction domain. This server talks to one
+    configured appliance, so a tool that reads or writes that appliance's own
+    configuration is closed. Only a result produced by entities the appliance does not own
+    -- DHCP clients, live users, live IPsec peers, the cellular carrier, the vendor's DNS
+    Protection verdict -- is open.
+    """
+    assert OPEN_WORLD_TOOLS == {
+        "dhcp_lease_list",
+        "ipsec_live_connection_list_ipv4",
+        "live_user_disconnect",
+        "live_user_list",
+        "network_status_cellular_wan",
+        "network_status_dns_protection",
+    }
+
+
+async def test_the_open_world_set_names_only_registered_tools() -> None:
+    """A rename must not leave a stale entry behind: the set is checked against the surface."""
+    tools = await tools_by_name()
+
+    assert OPEN_WORLD_TOOLS <= set(tools)
+
+
+async def test_an_explicit_open_world_hint_overrides_the_per_tool_default() -> None:
+    """A domain module may still declare the hint itself; the table is only the default."""
+    server = MCPServer[AppContext]("open-world-override")
+
+    @register_tool(
+        server,
+        read_only=False,
+        kind=ToolKind.READ,
+        name="synthetic_closed_read",
+        title="Synthetic closed read",
+        description="A read-only tool that declares a closed interaction domain explicitly.",
+        annotations=ToolAnnotations(open_world_hint=False),
+    )
+    async def synthetic_closed_read() -> dict[str, bool]:
+        return {"ok": True}
+
+    @register_tool(
+        server,
+        read_only=False,
+        kind=ToolKind.READ,
+        name="synthetic_open_read",
+        title="Synthetic open read",
+        description="A read-only tool that declares an open interaction domain explicitly.",
+        annotations=ToolAnnotations(open_world_hint=True),
+    )
+    async def synthetic_open_read() -> dict[str, bool]:
+        return {"ok": True}
+
+    tools = {tool.name: tool for tool in await server.list_tools()}
+
+    assert tools["synthetic_closed_read"].annotations.open_world_hint is False
+    assert tools["synthetic_open_read"].annotations.open_world_hint is True
 
 
 def _walk_properties(
@@ -265,11 +418,11 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
     digit or underscore. A single lowercase word such as ``from`` or ``to`` is identical
     in both conventions and passes.
 
-    The counts are pinned deliberately. 144 tools publish a ``request`` object (152 minus
-    the 8 tools whose operation declares no parameters), and the walk reaches 1,495
-    property occurrences over 167 distinct names, at every depth the schema nests. A
-    change to any of those numbers means the published input surface changed and must be
-    acknowledged here rather than silently shrinking the scan.
+    The counts are pinned deliberately. 105 of the 112 tools publish at least one input
+    property (the other 7 declare no parameters), and the walk reaches 1,322 property
+    occurrences over 166 distinct names, at every depth the schema nests. A change to any
+    of those numbers means the published input surface changed and must be acknowledged
+    here rather than silently shrinking the scan.
     """
     tools = await tools_by_name()
 
@@ -287,13 +440,13 @@ async def test_every_published_input_property_is_snake_case_at_every_depth() -> 
 
     # The scan must reach the whole surface, not a subset of it.
     assert sum(1 for properties in scanned.values() if properties) == (
-        EXPECTED_TOOL_COUNT - EXPECTED_NO_ARGUMENT_TOOL_COUNT
+        EXPECTED_TOOL_COUNT - EXPECTED_EMPTY_INPUT_TOOL_COUNT
     )
     assert occurrences == EXPECTED_INPUT_PROPERTY_COUNT
     assert len(distinct) == EXPECTED_INPUT_PROPERTY_NAME_COUNT
 
     # The union-request tools are the ones a top-level-only scan skipped; prove they are in.
-    for name in ("address_create_ipv4", "address_create_ipv6", "mac_address_create"):
+    for name in ("address_create", "mac_address_create"):
         assert scanned[name], name
 
     assert offending == {}
@@ -307,7 +460,7 @@ async def test_every_published_output_property_is_camel_case_at_every_depth() ->
     same global test: the per-domain tests only cover the domains that were converted, so
     three audit composites kept publishing snake_case output properties through the whole
     phase and CI stayed green (phase-5 review finding 1). This test walks the published
-    ``outputSchema`` of all 152 tools -- local ``$ref`` targets, array ``items`` and every
+    ``outputSchema`` of all 112 tools -- local ``$ref`` targets, array ``items`` and every
     ``allOf``/``oneOf``/``anyOf`` branch -- so a snake_case name at any depth fails here
     instead of reaching a caller.
 
@@ -315,8 +468,8 @@ async def test_every_published_output_property_is_camel_case_at_every_depth() ->
     letters and digits only -- no underscore and no leading uppercase letter. A single
     lowercase word such as ``name`` or ``kind`` is identical in both conventions and passes.
 
-    The counts are pinned deliberately. All 152 tools publish an object-rooted output
-    schema, and the walk reaches 4,547 property occurrences over 430 distinct names, at
+    The counts are pinned deliberately. All 112 tools publish an object-rooted output
+    schema, and the walk reaches 3,518 property occurrences over 430 distinct names, at
     every depth the schema nests. A change to any of those numbers means the published
     output surface changed and must be acknowledged here rather than silently shrinking the
     scan.
@@ -370,7 +523,7 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
     runs ``tools/list``.
 
     The sweep is deliberately global and strict: it walks the description, the title, the
-    annotations, the input schema and the output schema of all 152 tools plus the server
+    annotations, the input schema and the output schema of all 112 tools plus the server
     instructions, with no allowlist, so a single reintroduced marker fails here instead of
     reaching a caller. The counts are pinned so the scan cannot silently shrink to a subset
     of the surface.
@@ -404,7 +557,7 @@ async def test_the_published_surface_carries_no_internal_markers() -> None:
         blobs[f"{tool.name} inputSchema"] = json.dumps(tool.input_schema, sort_keys=True)
         blobs[f"{tool.name} outputSchema"] = json.dumps(tool.output_schema, sort_keys=True)
 
-    # 152 tools x 5 published strings, plus the server instructions.
+    # 112 tools x 5 published strings, plus the server instructions.
     assert len(blobs) == EXPECTED_TOOL_COUNT * 5 + 1
 
     offenders: list[str] = []

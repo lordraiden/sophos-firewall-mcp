@@ -242,7 +242,7 @@ async def test_read_operation_contract(
 ) -> None:
     route = router.get(f"{BASE}{path}").mock(return_value=httpx.Response(200, json=body))
 
-    result = await call_tool(tool, {} if arguments is None else {"request": arguments})
+    result = await call_tool(tool, {} if arguments is None else arguments)
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -266,7 +266,7 @@ async def test_configured_and_live_connections_are_separate_operations(router: A
         return_value=httpx.Response(200, json={"items": [], "pages": PAGE})
     )
 
-    configured_result = await call_tool("ipsec_connection_list_ipv4", {"request": {}})
+    configured_result = await call_tool("ipsec_connection_list_ipv4", {})
     live_result = await call_tool("ipsec_live_connection_list_ipv4", {})
 
     assert configured_result.is_error is False
@@ -409,7 +409,7 @@ async def test_authorization_failure_is_a_sanitized_tool_error(router: Any) -> N
         return_value=httpx.Response(403, json={"error": "forbidden", "message": "raw detail"})
     )
 
-    result = await call_tool("ipsec_profile_list", {"request": {}})
+    result = await call_tool("ipsec_profile_list", {})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -424,7 +424,7 @@ async def test_a_malformed_profile_payload_is_a_sanitized_tool_error(router: Any
         return_value=httpx.Response(200, json={"id": "u-1", "name": 123})
     )
 
-    result = await call_tool("ipsec_profile_get", {"request": {"idOrName": "prof1"}})
+    result = await call_tool("ipsec_profile_get", {"idOrName": "prof1"})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -656,7 +656,7 @@ async def test_ipsec_profile_get_publishes_the_epoch_sentinel_as_null(router: An
         )
     )
 
-    result = await call_tool("ipsec_profile_get", {"request": {"idOrName": "DefaultHeadOffice"}})
+    result = await call_tool("ipsec_profile_get", {"idOrName": "DefaultHeadOffice"})
 
     assert result.is_error is False
     assert result.structured_content is not None

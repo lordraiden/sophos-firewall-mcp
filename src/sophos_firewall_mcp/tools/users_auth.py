@@ -60,6 +60,7 @@ from sophos_firewall_mcp.models.users import (
 from sophos_firewall_mcp.tools import (
     DomainAdapter,
     ToolKind,
+    confirm_destructive,
     register_tool,
     tool_error,
 )
@@ -404,16 +405,24 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         title="Delete network user",
         description=(
             "Delete a network-user account (`deleteNetworkUser`) by name or UUID. Destructive: "
-            "the account is removed from the appliance. Idempotent: repeating the delete has no "
-            "further effect and a second call reports not found. If the name has been reused in "
-            "the meantime, re-read before retrying: the retry would target the new account. "
-            "Returns `deleted` and the identifier the delete was issued for."
+            "the account is removed from the appliance. When the client supports elicitation "
+            "the call first asks the user to confirm, naming the account; a declined or "
+            "cancelled confirmation aborts the call and nothing is deleted. Idempotent: "
+            "repeating the delete has no further effect and a second call reports not found. "
+            "If the name has been reused in the meantime, re-read before retrying: the retry "
+            "would target the new account. Returns `deleted` and the identifier the delete was "
+            "issued for."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_user_delete(
         request: NetworkUserDeleteInput, ctx: Context[AppContext]
     ) -> NetworkUserDeleteOutput:
+        await confirm_destructive(
+            ctx,
+            action="delete the network user",
+            target=f"{request.id_or_name!r}",
+        )
         return await UsersAdapter.from_context(ctx).delete_network_user(request)
 
     @register_tool(

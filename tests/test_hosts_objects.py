@@ -33,11 +33,11 @@ from sophos_firewall_mcp.models.objects import (
     Ipv4AddressCreateIpList,
     Ipv4AddressCreateIpRange,
     Ipv4AddressCreateNetwork,
+    AddressListInput,
+    AddressResult,
     Ipv4AddressGroup,
     Ipv4AddressGroupCreate,
     Ipv4AddressIp,
-    Ipv4AddressListInput,
-    Ipv4AddressResult,
     Ipv4AddressUpdateInput,
     Ipv6AddressCreate,
     Ipv6AddressCreateIp,
@@ -65,16 +65,12 @@ PAGES = {"current": 2, "size": 10, "maxSize": 100, "total": 47, "items": 10}
 # -- Published surface -----------------------------------------------------------------
 
 HOSTS_READ_TOOLS = {
-    "address_list_ipv4",
-    "address_get_ipv4",
-    "address_list_ipv6",
-    "address_get_ipv6",
+    "address_list",
+    "address_get",
     "address_list_fqdn",
     "address_get_fqdn",
-    "address_group_list_ipv4",
-    "address_group_get_ipv4",
-    "address_group_list_ipv6",
-    "address_group_get_ipv6",
+    "address_group_list",
+    "address_group_get",
     "address_group_list_fqdn",
     "address_group_get_fqdn",
     "mac_address_list",
@@ -84,21 +80,15 @@ HOSTS_READ_TOOLS = {
 }
 
 HOSTS_MUTATION_TOOLS = {
-    "address_create_ipv4",
-    "address_update_ipv4",
-    "address_delete_ipv4",
-    "address_create_ipv6",
-    "address_update_ipv6",
-    "address_delete_ipv6",
+    "address_create",
+    "address_update",
+    "address_delete",
     "address_create_fqdn",
     "address_update_fqdn",
     "address_delete_fqdn",
-    "address_group_create_ipv4",
-    "address_group_update_ipv4",
-    "address_group_delete_ipv4",
-    "address_group_create_ipv6",
-    "address_group_update_ipv6",
-    "address_group_delete_ipv6",
+    "address_group_create",
+    "address_group_update",
+    "address_group_delete",
     "address_group_create_fqdn",
     "address_group_update_fqdn",
     "address_group_delete_fqdn",
@@ -179,6 +169,28 @@ def property_names(schema: dict[str, Any]) -> set[str]:
     return names
 
 
+#: The tools that take the required ``ip_family`` argument.
+MERGED_TOOLS = {
+    "address_list",
+    "address_get",
+    "address_create",
+    "address_update",
+    "address_delete",
+    "address_group_list",
+    "address_group_get",
+    "address_group_create",
+    "address_group_update",
+    "address_group_delete",
+}
+
+
+def with_family(tool: str, path: str, request: dict[str, Any]) -> dict[str, Any]:
+    """Add the required ``ip_family`` to a merged tool's request, from the case path."""
+    if tool not in MERGED_TOOLS:
+        return request
+    return {"ip_family": "ipv6" if "/ipv6" in path else "ipv4", **request}
+
+
 # -- Wire payloads ---------------------------------------------------------------------
 
 IPV4_ITEM = {
@@ -212,11 +224,11 @@ COUNTRY_ITEM = {
 # -- Contract cases --------------------------------------------------------------------
 
 LIST_CASES = [
-    ("address_list_ipv4", "/network/addresses/ipv4", IPV4_ITEM),
-    ("address_list_ipv6", "/network/addresses/ipv6", IPV6_ITEM),
+    ("address_list", "/network/addresses/ipv4", IPV4_ITEM),
+    ("address_list", "/network/addresses/ipv6", IPV6_ITEM),
     ("address_list_fqdn", "/network/addresses/fqdn", FQDN_ITEM),
-    ("address_group_list_ipv4", "/network/address-groups/ipv4", IPV4_GROUP_ITEM),
-    ("address_group_list_ipv6", "/network/address-groups/ipv6", IPV6_GROUP_ITEM),
+    ("address_group_list", "/network/address-groups/ipv4", IPV4_GROUP_ITEM),
+    ("address_group_list", "/network/address-groups/ipv6", IPV6_GROUP_ITEM),
     ("address_group_list_fqdn", "/network/address-groups/fqdn", FQDN_GROUP_ITEM),
     ("mac_address_list", "/network/addresses/mac", MAC_ITEM),
     ("country_group_list", "/network/address-groups/country", COUNTRY_ITEM),
@@ -224,14 +236,14 @@ LIST_CASES = [
 
 GET_CASES = [
     (
-        "address_get_ipv4",
+        "address_get",
         "/network/addresses/ipv4",
         IPV4_ITEM,
         ("address", "type"),
         "ipv4Address",
     ),
     (
-        "address_get_ipv6",
+        "address_get",
         "/network/addresses/ipv6",
         IPV6_ITEM,
         ("address", "type"),
@@ -239,14 +251,14 @@ GET_CASES = [
     ),
     ("address_get_fqdn", "/network/addresses/fqdn", FQDN_ITEM, ("fqdn",), "example.com"),
     (
-        "address_group_get_ipv4",
+        "address_group_get",
         "/network/address-groups/ipv4",
         IPV4_GROUP_ITEM,
         ("ipv4Addresses", 0, "name"),
         "web",
     ),
     (
-        "address_group_get_ipv6",
+        "address_group_get",
         "/network/address-groups/ipv6",
         IPV6_GROUP_ITEM,
         ("ipv6Addresses", 0, "name"),
@@ -271,7 +283,7 @@ GET_CASES = [
 
 CREATE_CASES = [
     (
-        "address_create_ipv4",
+        "address_create",
         "/network/addresses/ipv4",
         {"name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"},
         IPV4_ITEM,
@@ -279,7 +291,7 @@ CREATE_CASES = [
         "ipv4Address",
     ),
     (
-        "address_create_ipv6",
+        "address_create",
         "/network/addresses/ipv6",
         {
             "name": "v6-net",
@@ -306,7 +318,7 @@ CREATE_CASES = [
         "example.com",
     ),
     (
-        "address_group_create_ipv4",
+        "address_group_create",
         "/network/address-groups/ipv4",
         {"name": "grp4", "ipv4Addresses": [{"name": "web"}]},
         IPV4_GROUP_ITEM,
@@ -314,7 +326,7 @@ CREATE_CASES = [
         "web",
     ),
     (
-        "address_group_create_ipv6",
+        "address_group_create",
         "/network/address-groups/ipv6",
         {"name": "grp6", "ipv6Addresses": [{"name": "v6-web"}]},
         IPV6_GROUP_ITEM,
@@ -354,7 +366,7 @@ CREATE_CASES = [
 
 UPDATE_CASES = [
     (
-        "address_update_ipv4",
+        "address_update",
         "/network/addresses/ipv4",
         {
             "id_or_name": "web",
@@ -372,7 +384,7 @@ UPDATE_CASES = [
         "ipv4List",
     ),
     (
-        "address_update_ipv6",
+        "address_update",
         "/network/addresses/ipv6",
         {"id_or_name": "web", "prefixLength": 56},
         {"prefixLength": 56},
@@ -396,7 +408,7 @@ UPDATE_CASES = [
         "new.example.com",
     ),
     (
-        "address_group_update_ipv4",
+        "address_group_update",
         "/network/address-groups/ipv4",
         {"id_or_name": "web", "ipv4Addresses": [{"name": "web"}]},
         {"ipv4Addresses": [{"name": "web"}]},
@@ -405,7 +417,7 @@ UPDATE_CASES = [
         "web",
     ),
     (
-        "address_group_update_ipv6",
+        "address_group_update",
         "/network/address-groups/ipv6",
         {"id_or_name": "web", "ipv6Addresses": [{"name": "v6-web"}]},
         {"ipv6Addresses": [{"name": "v6-web"}]},
@@ -439,11 +451,11 @@ UPDATE_CASES = [
 ]
 
 DELETE_CASES = [
-    ("address_delete_ipv4", "/network/addresses/ipv4"),
-    ("address_delete_ipv6", "/network/addresses/ipv6"),
+    ("address_delete", "/network/addresses/ipv4"),
+    ("address_delete", "/network/addresses/ipv6"),
     ("address_delete_fqdn", "/network/addresses/fqdn"),
-    ("address_group_delete_ipv4", "/network/address-groups/ipv4"),
-    ("address_group_delete_ipv6", "/network/address-groups/ipv6"),
+    ("address_group_delete", "/network/address-groups/ipv4"),
+    ("address_group_delete", "/network/address-groups/ipv6"),
     ("address_group_delete_fqdn", "/network/address-groups/fqdn"),
     ("mac_address_delete", "/network/addresses/mac"),
 ]
@@ -458,14 +470,14 @@ async def test_write_mode_publishes_the_full_objects_surface():
     assert names == (
         HOSTS_READ_TOOLS | HOSTS_MUTATION_TOOLS | SERVICE_READ_TOOLS | SERVICE_MUTATION_TOOLS
     )
-    assert len(names) == 47
+    assert len(names) == 37
 
 
 async def test_read_only_mode_publishes_only_read_tools():
     names = set(await tools_by_name(make_server(read_only=True)))
 
     assert names == HOSTS_READ_TOOLS | SERVICE_READ_TOOLS
-    assert len(names) == 20
+    assert len(names) == 16
 
 
 async def test_country_groups_have_no_mutation_tools():
@@ -516,8 +528,16 @@ async def test_input_schemas_are_closed_and_hide_the_context():
     for tool in tools.values():
         schema = tool.input_schema
         assert schema["type"] == "object"
-        assert schema["required"] == ["request"]
-        assert "ctx" not in schema["properties"]
+        # Arguments are flat: the request model's fields are the root properties, and the
+        # root is closed. A discriminated-union request publishes a root ``oneOf`` of
+        # closed variants instead of one closed object.
+        branches = schema.get("oneOf") or schema.get("anyOf") or [schema]
+        for branch in branches:
+            target = (
+                schema["$defs"][branch["$ref"].rsplit("/", 1)[-1]] if "$ref" in branch else branch
+            )
+            assert target["additionalProperties"] is False
+        assert "ctx" not in schema.get("properties", {})
         for definition in schema.get("$defs", {}).values():
             assert definition.get("additionalProperties") is False
 
@@ -552,14 +572,16 @@ async def test_list_operations_build_the_documented_request(
     async with open_client() as client:
         result = await client.call_tool(
             tool,
-            {
-                "request": {
+            with_family(
+                tool,
+                path,
+                {
                     "page": 2,
                     "page_size": 10,
                     "page_total": True,
                     "name_contains": "web",
-                }
-            },
+                },
+            ),
         )
 
     assert result.is_error is False
@@ -585,7 +607,8 @@ async def test_list_supports_name_not_equals_and_defaults(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_list_ipv4", {"request": {"name_not_equals": "web"}}
+            "address_list",
+            {"ip_family": "ipv4", "name_not_equals": "web"},
         )
 
     assert result.is_error is False
@@ -616,7 +639,7 @@ async def test_get_operations_build_the_documented_request(
     route = router.get(f"{BASE}{path}/web").mock(return_value=httpx.Response(200, json=item))
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": {"id_or_name": "web"}})
+        result = await client.call_tool(tool, with_family(tool, path, {"id_or_name": "web"}))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -633,7 +656,7 @@ async def test_get_percent_encodes_the_identifier(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_get_ipv4", {"request": {"id_or_name": "web server"}}
+            "address_get", {"ip_family": "ipv4", "id_or_name": "web server"}
         )
 
     assert result.is_error is False
@@ -663,7 +686,9 @@ async def test_get_accepts_builtin_and_slash_names(
     )
 
     async with open_client() as client:
-        result = await client.call_tool("address_get_ipv4", {"request": {"id_or_name": identifier}})
+        result = await client.call_tool(
+            "address_get", {"ip_family": "ipv4", "id_or_name": identifier}
+        )
 
     assert result.is_error is False
     assert (
@@ -693,7 +718,7 @@ async def test_create_operations_build_the_documented_request(
     route = router.post(f"{BASE}{path}").mock(return_value=httpx.Response(201, json=response_body))
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": request_body})
+        result = await client.call_tool(tool, with_family(tool, path, request_body))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -728,7 +753,7 @@ async def test_update_operations_build_the_documented_request(
     )
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": request_body})
+        result = await client.call_tool(tool, with_family(tool, path, request_body))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -750,7 +775,7 @@ async def test_delete_operations_build_the_documented_request(router: Any, tool:
     )
 
     async with open_client() as client:
-        result = await client.call_tool(tool, {"request": {"id_or_name": "web"}})
+        result = await client.call_tool(tool, with_family(tool, path, {"id_or_name": "web"}))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -771,7 +796,9 @@ async def test_get_not_found_maps_to_a_clear_tool_error(router: Any):
     )
 
     async with open_client() as client:
-        result = await client.call_tool("address_get_ipv4", {"request": {"id_or_name": "missing"}})
+        result = await client.call_tool(
+            "address_get", {"ip_family": "ipv4", "id_or_name": "missing"}
+        )
 
     assert result.is_error is True
     assert "does not exist" in result.content[0].text
@@ -784,7 +811,7 @@ async def test_delete_in_use_conflict_maps_to_a_clear_tool_error(router: Any):
 
     async with open_client() as client:
         result = await client.call_tool(
-            "address_delete_ipv4", {"request": {"id_or_name": "in-use"}}
+            "address_delete", {"ip_family": "ipv4", "id_or_name": "in-use"}
         )
 
     assert result.is_error is True
@@ -799,7 +826,7 @@ async def test_create_duplicate_name_conflict_maps_to_a_clear_tool_error(router:
     async with open_client() as client:
         result = await client.call_tool(
             "address_create_fqdn",
-            {"request": {"name": "example", "fqdn": "example.com"}},
+            {"name": "example", "fqdn": "example.com"},
         )
 
     assert result.is_error is True
@@ -816,7 +843,7 @@ async def test_validation_error_never_echoes_the_raw_body(router: Any):
     async with open_client() as client:
         result = await client.call_tool(
             "address_create_fqdn",
-            {"request": {"name": "example", "fqdn": "example.com"}},
+            {"name": "example", "fqdn": "example.com"},
         )
 
     assert result.is_error is True
@@ -831,7 +858,7 @@ async def test_a_malformed_address_payload_is_a_sanitized_tool_error(router: Any
     )
 
     async with open_client() as client:
-        result = await client.call_tool("address_get_ipv4", {"request": {"id_or_name": "web"}})
+        result = await client.call_tool("address_get", {"ip_family": "ipv4", "id_or_name": "web"})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -847,10 +874,11 @@ def test_ipv4_create_variants_are_distinct():
     adapter = TypeAdapter(Ipv4AddressCreate)
 
     single = adapter.validate_python(
-        {"name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"}
+        {"ip_family": "ipv4", "name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"}
     )
     network = adapter.validate_python(
         {
+            "ip_family": "ipv4",
             "name": "net",
             "type": "ipv4Network",
             "ipv4NetworkAddress": "192.0.2.0",
@@ -859,6 +887,7 @@ def test_ipv4_create_variants_are_distinct():
     )
     address_range = adapter.validate_python(
         {
+            "ip_family": "ipv4",
             "name": "range",
             "type": "ipv4Range",
             "ipv4AddressStart": "192.0.2.1",
@@ -866,7 +895,7 @@ def test_ipv4_create_variants_are_distinct():
         }
     )
     listed = adapter.validate_python(
-        {"name": "list", "type": "ipv4List", "ipv4Addresses": ["192.0.2.1"]}
+        {"ip_family": "ipv4", "name": "list", "type": "ipv4List", "ipv4Addresses": ["192.0.2.1"]}
     )
 
     assert isinstance(single, Ipv4AddressCreateIp)
@@ -879,10 +908,11 @@ def test_ipv6_create_variants_are_distinct():
     adapter = TypeAdapter(Ipv6AddressCreate)
 
     single = adapter.validate_python(
-        {"name": "web", "type": "ipv6Address", "ipv6Address": "2001:db8::1"}
+        {"ip_family": "ipv6", "name": "web", "type": "ipv6Address", "ipv6Address": "2001:db8::1"}
     )
     network = adapter.validate_python(
         {
+            "ip_family": "ipv6",
             "name": "net",
             "type": "ipv6Network",
             "ipv6NetworkAddress": "2001:db8::",
@@ -891,6 +921,7 @@ def test_ipv6_create_variants_are_distinct():
     )
     address_range = adapter.validate_python(
         {
+            "ip_family": "ipv6",
             "name": "range",
             "type": "ipv6Range",
             "ipv6AddressStart": "2001:db8::1",
@@ -898,7 +929,7 @@ def test_ipv6_create_variants_are_distinct():
         }
     )
     listed = adapter.validate_python(
-        {"name": "list", "type": "ipv6List", "ipv6Addresses": ["2001:db8::1"]}
+        {"ip_family": "ipv6", "name": "list", "type": "ipv6List", "ipv6Addresses": ["2001:db8::1"]}
     )
 
     assert isinstance(single, Ipv6AddressCreateIp)
@@ -911,6 +942,7 @@ def test_ipv4_create_rejects_an_ipv6_member():
     with pytest.raises(ValidationError):
         TypeAdapter(Ipv4AddressCreate).validate_python(
             {
+                "ip_family": "ipv4",
                 "name": "web",
                 "type": "ipv4Address",
                 "ipv4Address": "203.0.113.10",
@@ -923,6 +955,7 @@ def test_ipv6_create_rejects_an_ipv4_member():
     with pytest.raises(ValidationError):
         TypeAdapter(Ipv6AddressCreate).validate_python(
             {
+                "ip_family": "ipv6",
                 "name": "web",
                 "type": "ipv6Address",
                 "ipv6Address": "2001:db8::1",
@@ -948,17 +981,17 @@ def test_family_models_do_not_share_fields():
     assert "countries" in wire_fields(CountryGroup)
 
 
-def test_ipv4_result_rejects_an_ipv6_payload():
-    with pytest.raises(ValidationError):
-        Ipv4AddressResult.model_validate(
-            {
-                "address": {
-                    "name": "v6",
-                    "type": "ipv6Address",
-                    "ipv6Address": "2001:db8::1",
-                }
-            }
-        )
+def test_address_result_accepts_either_family():
+    """The merged result carries whichever family was read; the family is in ``type``."""
+    ipv4 = AddressResult.model_validate(
+        {"address": {"name": "v4", "type": "ipv4Address", "ipv4Address": "203.0.113.10"}}
+    )
+    ipv6 = AddressResult.model_validate(
+        {"address": {"name": "v6", "type": "ipv6Address", "ipv6Address": "2001:db8::1"}}
+    )
+
+    assert ipv4.address.type == "ipv4Address"
+    assert ipv6.address.type == "ipv6Address"
 
 
 # -- Model tests: address validation ---------------------------------------------------
@@ -969,6 +1002,7 @@ def test_ipv4_network_rejects_an_out_of_range_cidr(cidr: int):
     with pytest.raises(ValidationError):
         TypeAdapter(Ipv4AddressCreate).validate_python(
             {
+                "ip_family": "ipv4",
                 "name": "net",
                 "type": "ipv4Network",
                 "ipv4NetworkAddress": "192.0.2.0",
@@ -980,6 +1014,7 @@ def test_ipv4_network_rejects_an_out_of_range_cidr(cidr: int):
 def test_ipv4_network_accepts_cidr_24():
     created = TypeAdapter(Ipv4AddressCreate).validate_python(
         {
+            "ip_family": "ipv4",
             "name": "net",
             "type": "ipv4Network",
             "ipv4NetworkAddress": "192.0.2.0",
@@ -1006,6 +1041,7 @@ def test_ipv6_network_rejects_an_out_of_range_prefix(prefix_length: int):
 def test_ipv6_network_accepts_prefix_64():
     created = TypeAdapter(Ipv6AddressCreate).validate_python(
         {
+            "ip_family": "ipv6",
             "name": "net",
             "type": "ipv6Network",
             "ipv6NetworkAddress": "2001:db8::",
@@ -1136,30 +1172,30 @@ def test_object_id_or_name_rejects_an_invalid_value(value: str):
 
 def test_list_query_rejects_both_name_filters():
     with pytest.raises(ValidationError):
-        Ipv4AddressListInput(name_contains="web", name_not_equals="mail")
+        AddressListInput(ip_family="ipv4", name_contains="web", name_not_equals="mail")
 
 
 @pytest.mark.parametrize("page", [0, -1])
 def test_list_query_rejects_a_page_below_one(page: int):
     with pytest.raises(ValidationError):
-        Ipv4AddressListInput(page=page)
+        AddressListInput(ip_family="ipv4", page=page)
 
 
 @pytest.mark.parametrize("page_size", [0, 101])
 def test_list_query_rejects_a_page_size_out_of_range(page_size: int):
     with pytest.raises(ValidationError):
-        Ipv4AddressListInput(page_size=page_size)
+        AddressListInput(ip_family="ipv4", page_size=page_size)
 
 
 def test_update_body_omits_unset_fields_and_keeps_an_explicit_null():
-    omitted = Ipv4AddressUpdateInput(id_or_name="web", name="renamed")
-    cleared = Ipv4AddressUpdateInput(id_or_name="web", description=None)
+    omitted = Ipv4AddressUpdateInput(ip_family="ipv4", id_or_name="web", name="renamed")
+    cleared = Ipv4AddressUpdateInput(ip_family="ipv4", id_or_name="web", description=None)
 
     omitted_body = omitted.model_dump(
-        mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
+        mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
     )
     cleared_body = cleared.model_dump(
-        mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name"}
+        mode="json", by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
     )
 
     assert omitted_body == {"name": "renamed"}
@@ -1198,23 +1234,47 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
     ipv4_cases = [
         (
             Ipv4AddressCreateIp,
-            {"name": "web", "type": "ipv4Address", "ipv4_address": "203.0.113.10"},
-            {"name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"},
+            {
+                "ip_family": "ipv4",
+                "name": "web",
+                "type": "ipv4Address",
+                "ipv4_address": "203.0.113.10",
+            },
+            {
+                "ip_family": "ipv4",
+                "name": "web",
+                "type": "ipv4Address",
+                "ipv4Address": "203.0.113.10",
+            },
         ),
         (
             Ipv4AddressCreateNetwork,
-            {"name": "net", "type": "ipv4Network", "ipv4_network_address": "10.0.0.0", "cidr": 8},
-            {"name": "net", "type": "ipv4Network", "ipv4NetworkAddress": "10.0.0.0", "cidr": 8},
+            {
+                "ip_family": "ipv4",
+                "name": "net",
+                "type": "ipv4Network",
+                "ipv4_network_address": "10.0.0.0",
+                "cidr": 8,
+            },
+            {
+                "ip_family": "ipv4",
+                "name": "net",
+                "type": "ipv4Network",
+                "ipv4NetworkAddress": "10.0.0.0",
+                "cidr": 8,
+            },
         ),
         (
             Ipv4AddressCreateIpRange,
             {
+                "ip_family": "ipv4",
                 "name": "range",
                 "type": "ipv4Range",
                 "ipv4_address_start": "203.0.113.10",
                 "ipv4_address_end": "203.0.113.20",
             },
             {
+                "ip_family": "ipv4",
                 "name": "range",
                 "type": "ipv4Range",
                 "ipv4AddressStart": "203.0.113.10",
@@ -1223,8 +1283,18 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
         ),
         (
             Ipv4AddressCreateIpList,
-            {"name": "list", "type": "ipv4List", "ipv4_addresses": ["203.0.113.10"]},
-            {"name": "list", "type": "ipv4List", "ipv4Addresses": ["203.0.113.10"]},
+            {
+                "ip_family": "ipv4",
+                "name": "list",
+                "type": "ipv4List",
+                "ipv4_addresses": ["203.0.113.10"],
+            },
+            {
+                "ip_family": "ipv4",
+                "name": "list",
+                "type": "ipv4List",
+                "ipv4Addresses": ["203.0.113.10"],
+            },
         ),
     ]
     for model, snake_case, wire in ipv4_cases:
@@ -1235,18 +1305,30 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
     ipv6_cases = [
         (
             Ipv6AddressCreateIp,
-            {"name": "web6", "type": "ipv6Address", "ipv6_address": "2001:db8::1"},
-            {"name": "web6", "type": "ipv6Address", "ipv6Address": "2001:db8::1"},
+            {
+                "ip_family": "ipv6",
+                "name": "web6",
+                "type": "ipv6Address",
+                "ipv6_address": "2001:db8::1",
+            },
+            {
+                "ip_family": "ipv6",
+                "name": "web6",
+                "type": "ipv6Address",
+                "ipv6Address": "2001:db8::1",
+            },
         ),
         (
             Ipv6AddressCreateNetwork,
             {
+                "ip_family": "ipv6",
                 "name": "net6",
                 "type": "ipv6Network",
                 "ipv6_network_address": "2001:db8::",
                 "prefix_length": 64,
             },
             {
+                "ip_family": "ipv6",
                 "name": "net6",
                 "type": "ipv6Network",
                 "ipv6NetworkAddress": "2001:db8::",
@@ -1256,12 +1338,14 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
         (
             Ipv6AddressCreateIpRange,
             {
+                "ip_family": "ipv6",
                 "name": "range6",
                 "type": "ipv6Range",
                 "ipv6_address_start": "2001:db8::1",
                 "ipv6_address_end": "2001:db8::9",
             },
             {
+                "ip_family": "ipv6",
                 "name": "range6",
                 "type": "ipv6Range",
                 "ipv6AddressStart": "2001:db8::1",
@@ -1270,8 +1354,18 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
         ),
         (
             Ipv6AddressCreateIpList,
-            {"name": "list6", "type": "ipv6List", "ipv6_addresses": ["2001:db8::1"]},
-            {"name": "list6", "type": "ipv6List", "ipv6Addresses": ["2001:db8::1"]},
+            {
+                "ip_family": "ipv6",
+                "name": "list6",
+                "type": "ipv6List",
+                "ipv6_addresses": ["2001:db8::1"],
+            },
+            {
+                "ip_family": "ipv6",
+                "name": "list6",
+                "type": "ipv6List",
+                "ipv6Addresses": ["2001:db8::1"],
+            },
         ),
     ]
     for model, snake_case, wire in ipv6_cases:
@@ -1298,8 +1392,10 @@ def test_nested_create_models_publish_snake_case_and_serialize_to_the_wire_names
 
     # The camelCase spelling is still accepted on input, so the alias is a choice.
     assert TypeAdapter(Ipv4AddressCreate).validate_python(
-        {"name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"}
-    ) == Ipv4AddressCreateIp(name="web", type="ipv4Address", ipv4_address="203.0.113.10")
+        {"ip_family": "ipv4", "name": "web", "type": "ipv4Address", "ipv4Address": "203.0.113.10"}
+    ) == Ipv4AddressCreateIp(
+        ip_family="ipv4", name="web", type="ipv4Address", ipv4_address="203.0.113.10"
+    )
     assert TypeAdapter(MacAddressCreate).validate_python(
         {"name": "printer", "macAddress": "00:11:22:33:44:55"}
     ) == MacAddressCreateSingle(name="printer", mac_address="00:11:22:33:44:55")

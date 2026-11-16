@@ -43,7 +43,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Any, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping, Union
 
 from pydantic import (
     AfterValidator,
@@ -55,6 +55,7 @@ from pydantic import (
 )
 
 from sophos_firewall_mcp.models.common import (
+    IpFamily,
     ListPage,
     ObjectRef,
     OutputModel,
@@ -67,6 +68,7 @@ __all__ = [
     "InterfaceName",
     "InterfaceRef",
     "LoadBalancingMethod",
+    "NatRuleCreateInput",
     "NatRuleCreateIpv4Input",
     "NatRuleCreateIpv6Input",
     "NatRuleDeleteInput",
@@ -99,6 +101,7 @@ __all__ = [
     "NatRuleServicesOutput",
     "NatRuleSnatOverrideOutput",
     "NatRuleTranslationOutput",
+    "NatRuleUpdateInput",
     "NatRuleUpdateIpv4Input",
     "NatRuleUpdateIpv6Input",
     "NatRuleWire",
@@ -510,6 +513,10 @@ class NatRuleListInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    ip_family: IpFamily = Field(
+        description="IP family of the rule base: 'ipv4' or 'ipv6'. Required: the two rule "
+        "bases are separate, so the family is never inferred."
+    )
     page: int = Field(
         default=1,
         ge=1,
@@ -561,6 +568,7 @@ class NatRuleGetInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    ip_family: IpFamily = Field(description="IP family of the rule base: 'ipv4' or 'ipv6'.")
     id_or_name: NatRuleIdOrName = Field(description="Name or UUID of the NAT rule.")
 
 
@@ -569,6 +577,7 @@ class NatRuleDeleteInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    ip_family: IpFamily = Field(description="IP family of the rule base: 'ipv4' or 'ipv6'.")
     id_or_name: NatRuleIdOrName = Field(description="Name or UUID of the NAT rule.")
 
 
@@ -650,6 +659,7 @@ class _NatRuleCreateBase(BaseModel):
 class NatRuleCreateIpv4Input(_NatRuleCreateBase):
     """Body of ``createNatRuleIpv4``."""
 
+    ip_family: Literal["ipv4"]
     original_source_networks: NatRuleIpv4NetworksInput = Field(
         serialization_alias="originalSourceNetworks", description="Match source networks."
     )
@@ -677,6 +687,7 @@ class NatRuleCreateIpv4Input(_NatRuleCreateBase):
 class NatRuleCreateIpv6Input(_NatRuleCreateBase):
     """Body of ``createNatRuleIpv6``."""
 
+    ip_family: Literal["ipv6"]
     original_source_networks: NatRuleIpv6NetworksInput = Field(
         serialization_alias="originalSourceNetworks", description="Match source networks."
     )
@@ -699,6 +710,18 @@ class NatRuleCreateIpv6Input(_NatRuleCreateBase):
         serialization_alias="overrideSnatForOutboundInterfaces",
         description="Per-outbound-interface source-NAT overrides.",
     )
+
+
+NatRuleCreateInput = Annotated[
+    Union[NatRuleCreateIpv4Input, NatRuleCreateIpv6Input],
+    Field(discriminator="ip_family"),
+]
+"""The create request of the merged ``nat_rule_create`` tool.
+
+The family bodies stay separate because the IPv4 and IPv6 network, translation and
+source-NAT-override members are family-shaped. ``ip_family`` discriminates them and is
+stripped from the wire body, so each family sends exactly the body it sent before 0.7.
+"""
 
 
 # -- Inputs: update (PATCH, JSON Merge Patch) ------------------------------------------
@@ -749,7 +772,7 @@ class _NatRuleUpdateBase(BaseModel):
 
     @model_validator(mode="after")
     def _at_least_one_update(self) -> "_NatRuleUpdateBase":
-        if not (self.model_fields_set - {"id_or_name"}):
+        if not (self.model_fields_set - {"id_or_name", "ip_family"}):
             raise ValueError("provide at least one field to update")
         for field in ("name", "enabled"):
             if field in self.model_fields_set and getattr(self, field) is None:
@@ -762,6 +785,7 @@ class _NatRuleUpdateBase(BaseModel):
 class NatRuleUpdateIpv4Input(_NatRuleUpdateBase):
     """Body of ``updateNatRuleIpv4ByIdOrName`` (PATCH, JSON Merge Patch)."""
 
+    ip_family: Literal["ipv4"]
     original_source_networks: NatRuleIpv4NetworksInput | None = Field(
         default=None,
         serialization_alias="originalSourceNetworks",
@@ -792,6 +816,7 @@ class NatRuleUpdateIpv4Input(_NatRuleUpdateBase):
 class NatRuleUpdateIpv6Input(_NatRuleUpdateBase):
     """Body of ``updateNatRuleIpv6ByIdOrName`` (PATCH, JSON Merge Patch)."""
 
+    ip_family: Literal["ipv6"]
     original_source_networks: NatRuleIpv6NetworksInput | None = Field(
         default=None,
         serialization_alias="originalSourceNetworks",
@@ -819,6 +844,17 @@ class NatRuleUpdateIpv6Input(_NatRuleUpdateBase):
     )
 
 
+NatRuleUpdateInput = Annotated[
+    Union[NatRuleUpdateIpv4Input, NatRuleUpdateIpv6Input],
+    Field(discriminator="ip_family"),
+]
+"""The update request of the merged ``nat_rule_update`` tool.
+
+Same split and same discriminator as :data:`NatRuleCreateInput`; ``ip_family`` is never
+part of the PATCH body.
+"""
+
+
 # -- Inputs: move ----------------------------------------------------------------------
 
 
@@ -832,6 +868,7 @@ class NatRuleMoveInput(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    ip_family: IpFamily = Field(description="IP family of the rule base: 'ipv4' or 'ipv6'.")
     name: NatRuleName = Field(description="Name of the NAT rule to move.")
     position: NatRulePosition = Field(description="Where to move the rule.")
     reference_item: NatRuleNameRef | None = Field(

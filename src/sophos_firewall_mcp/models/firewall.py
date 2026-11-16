@@ -38,7 +38,7 @@ Contract decisions encoded here:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, Union
 
 from pydantic import (
     AfterValidator,
@@ -51,6 +51,7 @@ from pydantic import (
 )
 
 from sophos_firewall_mcp.models.common import (
+    IpFamily,
     ListPage,
     ObjectName,
     ObjectNameOrId,
@@ -64,6 +65,7 @@ from sophos_firewall_mcp.models.objects import serialize_epoch_sentinel
 __all__ = [
     "AnySelection",
     "CloneFirewallRuleInput",
+    "CreateFirewallRuleInput",
     "CreateFirewallRuleIpv4Input",
     "CreateFirewallRuleIpv6Input",
     "DeleteFirewallRuleInput",
@@ -74,8 +76,7 @@ __all__ = [
     "ExclusionsIpv4",
     "ExclusionsIpv6",
     "FirewallAction",
-    "FirewallRuleIpv4Output",
-    "FirewallRuleIpv6Output",
+    "FirewallRuleOutput",
     "GetFirewallRuleInput",
     "HeartbeatEndpoint",
     "Ipv4NetworkMatchOutput",
@@ -83,8 +84,7 @@ __all__ = [
     "Ipv6NetworkMatchOutput",
     "Ipv6Networks",
     "ListFirewallRulesInput",
-    "ListFirewallRulesIpv4Output",
-    "ListFirewallRulesIpv6Output",
+    "ListFirewallRulesOutput",
     "MoveFirewallRuleInput",
     "MoveFirewallRuleOutput",
     "ObjectNameOrId",
@@ -99,6 +99,7 @@ __all__ = [
     "Services",
     "SetFirewallRuleEnabledInput",
     "SynchronizedSecurityHeartbeat",
+    "UpdateFirewallRuleInput",
     "UpdateFirewallRuleIpv4Input",
     "UpdateFirewallRuleIpv6Input",
     "UserAuthentication",
@@ -683,6 +684,7 @@ class CreateFirewallRuleIpv4Input(_ClosedModel):
     ``reference_item`` anchor. ``rule_type`` accepts only ``firewall`` (WAF is out of scope).
     """
 
+    ip_family: Literal["ipv4"]
     name: RuleName
     description: Description | None = None
     rule_type: Literal["firewall"] = Field(
@@ -762,6 +764,7 @@ class CreateFirewallRuleIpv6Input(_ClosedModel):
     still sent as ``firewall`` because the API declares it required.
     """
 
+    ip_family: Literal["ipv6"]
     name: RuleName
     description: Description | None = None
     rule_type: Literal["firewall"] = Field(
@@ -825,6 +828,21 @@ class CreateFirewallRuleIpv6Input(_ClosedModel):
     def _check_position(self) -> Self:
         _require_anchor(self.position, self.reference_item)
         return self
+
+
+CreateFirewallRuleInput = Annotated[
+    Union[CreateFirewallRuleIpv4Input, CreateFirewallRuleIpv6Input],
+    Field(discriminator="ip_family"),
+]
+"""The create request of the merged ``firewall_rule_create`` tool.
+
+The two family bodies stay separate models because the API's IPv4 and IPv6 create schemas
+differ (the IPv4 network match, exclusions and security features are IPv4-shaped, and only
+IPv4 has a synchronized-security heartbeat). ``ip_family`` is the discriminator, so the
+published schema pins each variant to its family and a caller cannot send an IPv4 body to
+the IPv6 path. The adapter strips ``ip_family`` before the wire body is sent, so the body
+is byte-identical to the pre-0.7 per-family tool.
+"""
 
 
 # -- Update (PATCH) requests -----------------------------------------------------------
@@ -909,6 +927,7 @@ class _UpdateFirewallRuleBase(_ClosedModel):
 class UpdateFirewallRuleIpv4Input(_UpdateFirewallRuleBase):
     """Partially update an IPv4 firewall rule (``updateFirewallRuleIpv4``)."""
 
+    ip_family: Literal["ipv4"]
     source_networks: Ipv4NetworkMatch | None = Field(
         default=None,
         validation_alias=AliasChoices("source_networks", "sourceNetworks"),
@@ -937,6 +956,7 @@ class UpdateFirewallRuleIpv4Input(_UpdateFirewallRuleBase):
 class UpdateFirewallRuleIpv6Input(_UpdateFirewallRuleBase):
     """Partially update an IPv6 firewall rule (``updateFirewallRuleIpv6``)."""
 
+    ip_family: Literal["ipv6"]
     source_networks: Ipv6NetworkMatch | None = Field(
         default=None,
         validation_alias=AliasChoices("source_networks", "sourceNetworks"),
@@ -955,6 +975,19 @@ class UpdateFirewallRuleIpv6Input(_UpdateFirewallRuleBase):
     )
 
 
+UpdateFirewallRuleInput = Annotated[
+    Union[UpdateFirewallRuleIpv4Input, UpdateFirewallRuleIpv6Input],
+    Field(discriminator="ip_family"),
+]
+"""The update request of the merged ``firewall_rule_update`` tool.
+
+Same split and same discriminator as :data:`CreateFirewallRuleInput`: the family-specific
+network match, exclusions and security-feature members differ, so each family keeps its
+own merge-patch model and ``ip_family`` selects it. ``ip_family`` is never part of the
+PATCH body.
+"""
+
+
 # -- Other operation requests ----------------------------------------------------------
 
 
@@ -970,6 +1003,7 @@ class ListFirewallRulesInput(_ClosedModel):
     caller raises the page size explicitly when it wants a bigger page.
     """
 
+    ip_family: IpFamily
     page: int = Field(
         default=1,
         ge=1,
@@ -1022,6 +1056,7 @@ class ListFirewallRulesInput(_ClosedModel):
 class GetFirewallRuleInput(_ClosedModel):
     """Read one firewall rule by id or name (``getFirewallRuleIpv4/Ipv6``)."""
 
+    ip_family: IpFamily
     id_or_name: ObjectNameOrId = Field(
         validation_alias=AliasChoices("id_or_name", "idOrName"),
         serialization_alias="idOrName",
@@ -1031,6 +1066,7 @@ class GetFirewallRuleInput(_ClosedModel):
 class DeleteFirewallRuleInput(_ClosedModel):
     """Delete one firewall rule by id or name (``deleteFirewallRuleIpv4/Ipv6``)."""
 
+    ip_family: IpFamily
     id_or_name: ObjectNameOrId = Field(
         validation_alias=AliasChoices("id_or_name", "idOrName"),
         serialization_alias="idOrName",
@@ -1044,6 +1080,7 @@ class MoveFirewallRuleInput(_ClosedModel):
     accepted here. ``after``/``before`` require a ``reference_item`` anchor.
     """
 
+    ip_family: IpFamily
     name: RuleName
     position: RulePosition
     reference_item: ObjectReference | None = Field(
@@ -1065,6 +1102,7 @@ class SetFirewallRuleEnabledInput(_ClosedModel):
     can never silently disable a rule.
     """
 
+    ip_family: IpFamily
     id_or_name: ObjectNameOrId = Field(
         validation_alias=AliasChoices("id_or_name", "idOrName"),
         serialization_alias="idOrName",
@@ -1079,6 +1117,7 @@ class CloneFirewallRuleInput(_ClosedModel):
     create operation. The clone is never auto-enabled: ``enabled`` defaults to ``false``.
     """
 
+    ip_family: IpFamily
     source: ObjectNameOrId
     name: RuleName
     position: RulePosition
@@ -1175,35 +1214,30 @@ class FirewallRuleOutputBase(_WireModel):
     updatedAt: datetime | None = None
 
 
-class FirewallRuleIpv4Output(FirewallRuleOutputBase):
-    """An IPv4 firewall rule projected for MCP output."""
+class FirewallRuleOutput(FirewallRuleOutputBase):
+    """A firewall rule of either IP family, projected for MCP output.
 
-    ipFamily: Literal["ipv4"] = "ipv4"
-    sourceNetworks: Ipv4NetworkMatchOutput | None = None
-    destinationNetworks: Ipv4NetworkMatchOutput | None = None
+    ``ipFamily`` is the family the rule was read from, so one merged tool can return both
+    families without the caller having to infer it. The network match is the union of the
+    two family projections: an IPv4 rule carries ``ipv4Addresses``/``ipv4Groups`` and an
+    IPv6 rule carries ``ipv6Addresses``/``ipv6Groups``, and the other family's members are
+    simply absent.
+    """
+
+    ipFamily: Literal["ipv4", "ipv6"]
+    sourceNetworks: Ipv4NetworkMatchOutput | Ipv6NetworkMatchOutput | None = None
+    destinationNetworks: Ipv4NetworkMatchOutput | Ipv6NetworkMatchOutput | None = None
 
 
-class FirewallRuleIpv6Output(FirewallRuleOutputBase):
-    """An IPv6 firewall rule projected for MCP output."""
-
-    ipFamily: Literal["ipv6"] = "ipv6"
-    sourceNetworks: Ipv6NetworkMatchOutput | None = None
-    destinationNetworks: Ipv6NetworkMatchOutput | None = None
-
-
-class ListFirewallRulesIpv4Output(ListPage[FirewallRuleIpv4Output]):
-    """One page of IPv4 firewall rules plus the number of WAF rules that were skipped.
+class ListFirewallRulesOutput(ListPage[FirewallRuleOutput]):
+    """One page of firewall rules plus the number of WAF rules that were skipped.
 
     WAF rules are out of v1 scope. They are never projected into the output, but the count
     is reported so the caller can tell that the appliance holds rules this tool does not
-    return.
+    return. The IPv6 API has no WAF variant, so ``wafRulesSkipped`` is always 0 there.
     """
 
     wafRulesSkipped: int = Field(default=0, ge=0)
-
-
-class ListFirewallRulesIpv6Output(ListPage[FirewallRuleIpv6Output]):
-    """One page of IPv6 firewall rules (the IPv6 API has no WAF variant)."""
 
 
 class DeleteFirewallRuleOutput(_WireModel):

@@ -32,11 +32,10 @@ from sophos_firewall_mcp.models.firewall import (
     CreateFirewallRuleIpv4Input,
     CreateFirewallRuleIpv6Input,
     DscpMarking,
-    FirewallRuleIpv4Output,
-    FirewallRuleIpv6Output,
+    FirewallRuleOutput,
     Ipv4Networks,
     ListFirewallRulesInput,
-    ListFirewallRulesIpv4Output,
+    ListFirewallRulesOutput,
     MoveFirewallRuleInput,
     ObjectReference,
     UpdateFirewallRuleIpv4Input,
@@ -59,31 +58,32 @@ IPV4_ITEM = f"{BASE}/firewall/rules/ipv4/allow-lan-to-wan"
 IPV6_ITEM = f"{BASE}/firewall/rules/ipv6/allow-lan-to-wan-v6"
 
 READ_TOOLS = {
-    "firewall_rule_list_ipv4",
-    "firewall_rule_list_ipv6",
-    "firewall_rule_get_ipv4",
-    "firewall_rule_get_ipv6",
+    "firewall_rule_list",
+    "firewall_rule_list",
+    "firewall_rule_get",
+    "firewall_rule_get",
 }
 
 MUTATION_TOOLS = {
-    "firewall_rule_create_ipv4",
-    "firewall_rule_create_ipv6",
-    "firewall_rule_update_ipv4",
-    "firewall_rule_update_ipv6",
-    "firewall_rule_delete_ipv4",
-    "firewall_rule_delete_ipv6",
-    "firewall_rule_move_ipv4",
-    "firewall_rule_move_ipv6",
-    "firewall_rule_set_enabled_ipv4",
-    "firewall_rule_set_enabled_ipv6",
-    "firewall_rule_clone_ipv4",
-    "firewall_rule_clone_ipv6",
+    "firewall_rule_create",
+    "firewall_rule_create",
+    "firewall_rule_update",
+    "firewall_rule_update",
+    "firewall_rule_delete",
+    "firewall_rule_delete",
+    "firewall_rule_move",
+    "firewall_rule_move",
+    "firewall_rule_set_enabled",
+    "firewall_rule_set_enabled",
+    "firewall_rule_clone",
+    "firewall_rule_clone",
 }
 
 ALL_TOOLS = READ_TOOLS | MUTATION_TOOLS
 
 #: The minimal valid create request used by several tests.
 MINIMAL_CREATE: dict[str, Any] = {
+    "ip_family": "ipv4",
     "name": "allow-lan-to-wan",
     "sourceZones": {"any": True},
     "destinationZones": {"any": True},
@@ -120,9 +120,25 @@ def router() -> Any:
         yield mocked
 
 
-async def call(server: Any, name: str, request: dict[str, Any]) -> Any:
+#: The tools that take the required ``ip_family`` argument.
+MERGED_TOOLS = {
+    "firewall_rule_list",
+    "firewall_rule_get",
+    "firewall_rule_create",
+    "firewall_rule_update",
+    "firewall_rule_delete",
+    "firewall_rule_move",
+    "firewall_rule_set_enabled",
+    "firewall_rule_clone",
+}
+
+
+async def call(server: Any, name: str, request: dict[str, Any], *, family: str = "ipv4") -> Any:
+    """Call one tool, supplying the required ``ip_family`` for a merged tool."""
+    if name in MERGED_TOOLS:
+        request = {"ip_family": family, **request}
     async with Client(server) as client:
-        return await client.call_tool(name, {"request": request})
+        return await client.call_tool(name, request)
 
 
 def body_of(route: Any) -> dict[str, Any]:
@@ -136,6 +152,7 @@ def query_of(route: Any) -> dict[str, str]:
 def ipv4_rule(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "id": UUID,
+        "ipFamily": "ipv4",
         "name": "allow-lan-to-wan",
         "description": "Allow LAN to WAN",
         "ruleType": "firewall",
@@ -157,6 +174,7 @@ def ipv4_rule(**overrides: Any) -> dict[str, Any]:
 
 def ipv6_rule(**overrides: Any) -> dict[str, Any]:
     payload = ipv4_rule(
+        ipFamily="ipv6",
         name="allow-lan-to-wan-v6",
         sourceNetworks={"ipv6Addresses": [{"name": "2001:db8::/32"}]},
         destinationNetworks={"ipv6Groups": [{"name": "WAN-IPV6"}]},
@@ -181,7 +199,7 @@ async def test_list_ipv4_contract(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_list_ipv4",
+        "firewall_rule_list",
         {"page": 2, "pageSize": 10, "pageTotal": True, "nameContains": "allow"},
     )
 
@@ -218,7 +236,9 @@ async def test_list_ipv6_contract(router: Any) -> None:
         return_value=httpx.Response(200, json=page([ipv6_rule()], current=3, total=7))
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv6", {"page": 3, "pageTotal": True})
+    result = await call(
+        make_server(), "firewall_rule_list", {"page": 3, "pageTotal": True}, family="ipv6"
+    )
 
     assert result.is_error is False
     assert query_of(route) == {"page": "3", "pageSize": "10", "pageTotal": "true"}
@@ -228,13 +248,14 @@ async def test_list_ipv6_contract(router: Any) -> None:
     assert output["items"][0]["sourceNetworks"]["ipv6Addresses"] == [{"name": "2001:db8::/32"}]
     assert output["pages"]["current"] == 3
     assert output["pages"]["total"] == 7
-    assert "wafRulesSkipped" not in output
+    # The IPv6 API has no WAF variant, so the merged output reports zero skipped rules.
+    assert output["wafRulesSkipped"] == 0
 
 
 async def test_list_applies_name_not_equals_filter(router: Any) -> None:
     route = router.get(IPV4_COLLECTION).mock(return_value=httpx.Response(200, json=page([])))
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {"nameNotEquals": "blocked"})
+    result = await call(make_server(), "firewall_rule_list", {"nameNotEquals": "blocked"})
 
     assert result.is_error is False
     assert query_of(route) == {
@@ -248,7 +269,7 @@ async def test_list_applies_name_not_equals_filter(router: Any) -> None:
 async def test_list_rejects_both_name_filters_before_any_request(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_list_ipv4",
+        "firewall_rule_list",
         {"nameContains": "a", "nameNotEquals": "b"},
     )
 
@@ -258,7 +279,7 @@ async def test_list_rejects_both_name_filters_before_any_request(router: Any) ->
 
 
 async def test_list_rejects_a_page_size_above_the_live_limit(router: Any) -> None:
-    result = await call(make_server(), "firewall_rule_list_ipv4", {"pageSize": 101})
+    result = await call(make_server(), "firewall_rule_list", {"pageSize": 101})
 
     assert result.is_error is True
     assert router.calls == []
@@ -269,7 +290,7 @@ async def test_list_ipv4_reports_the_evaluation_position_from_the_page_offset(ro
         return_value=httpx.Response(200, json=page([ipv4_rule(), ipv4_rule(name="second-rule")]))
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {"page": 2, "pageSize": 10})
+    result = await call(make_server(), "firewall_rule_list", {"page": 2, "pageSize": 10})
 
     assert result.is_error is False
     output = result.structured_content
@@ -283,7 +304,9 @@ async def test_list_ipv6_reports_the_evaluation_position_from_the_page_offset(ro
         return_value=httpx.Response(200, json=page([ipv6_rule(), ipv6_rule(name="second-rule-v6")]))
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv6", {"page": 1, "pageSize": 50})
+    result = await call(
+        make_server(), "firewall_rule_list", {"page": 1, "pageSize": 50}, family="ipv6"
+    )
 
     assert result.is_error is False
     output = result.structured_content
@@ -304,7 +327,7 @@ async def test_list_position_counts_a_skipped_waf_rule(router: Any) -> None:
         )
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+    result = await call(make_server(), "firewall_rule_list", {})
 
     assert result.is_error is False
     output = result.structured_content
@@ -329,7 +352,7 @@ async def test_list_ipv4_skips_waf_rules_and_reports_the_count(router: Any) -> N
         )
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+    result = await call(make_server(), "firewall_rule_list", {})
 
     assert result.is_error is False
     output = result.structured_content
@@ -343,7 +366,7 @@ async def test_list_preserves_a_missing_pages_object(router: Any) -> None:
         return_value=httpx.Response(200, json={"items": [ipv4_rule()]})
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+    result = await call(make_server(), "firewall_rule_list", {})
 
     assert result.is_error is False
     assert result.structured_content["pages"] is None
@@ -354,7 +377,7 @@ async def test_list_rejects_a_malformed_rule_payload(router: Any) -> None:
         return_value=httpx.Response(200, json=page([{"ruleType": "firewall"}]))
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+    result = await call(make_server(), "firewall_rule_list", {})
 
     assert result.is_error is True
     assert "does not match the API" in result.content[0].text
@@ -365,7 +388,7 @@ async def test_list_maps_401_to_a_sanitized_auth_tool_error(router: Any) -> None
         return_value=httpx.Response(401, json={"error": "unauthenticated"})
     )
 
-    result = await call(make_server(), "firewall_rule_list_ipv4", {})
+    result = await call(make_server(), "firewall_rule_list", {})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -382,7 +405,7 @@ async def test_get_ipv4_contract_encodes_the_name(router: Any) -> None:
         return_value=httpx.Response(200, json=ipv4_rule(name="My Rule"))
     )
 
-    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": "My Rule"})
+    result = await call(make_server(), "firewall_rule_get", {"idOrName": "My Rule"})
 
     assert result.is_error is False
     assert route.calls.last.request.method == "GET"
@@ -400,7 +423,10 @@ async def test_get_ipv6_contract(router: Any) -> None:
     route = router.get(IPV6_ITEM).mock(return_value=httpx.Response(200, json=ipv6_rule()))
 
     result = await call(
-        make_server(), "firewall_rule_get_ipv6", {"idOrName": "allow-lan-to-wan-v6"}
+        make_server(),
+        "firewall_rule_get",
+        {"idOrName": "allow-lan-to-wan-v6"},
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -413,7 +439,7 @@ async def test_get_accepts_a_uuid_identifier(router: Any) -> None:
         return_value=httpx.Response(200, json=ipv4_rule())
     )
 
-    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": UUID})
+    result = await call(make_server(), "firewall_rule_get", {"idOrName": UUID})
 
     assert result.is_error is False
     assert str(route.calls.last.request.url) == f"{BASE}/firewall/rules/ipv4/{UUID}"
@@ -422,7 +448,7 @@ async def test_get_accepts_a_uuid_identifier(router: Any) -> None:
 async def test_get_reports_a_null_position(router: Any) -> None:
     router.get(IPV4_ITEM).mock(return_value=httpx.Response(200, json=ipv4_rule()))
 
-    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": "allow-lan-to-wan"})
+    result = await call(make_server(), "firewall_rule_get", {"idOrName": "allow-lan-to-wan"})
 
     assert result.is_error is False
     output = result.structured_content
@@ -436,7 +462,7 @@ async def test_get_reports_a_null_position(router: Any) -> None:
 async def test_get_rejects_a_waf_rule(router: Any) -> None:
     router.get(IPV4_ITEM).mock(return_value=httpx.Response(200, json=ipv4_rule(ruleType="waf")))
 
-    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": "allow-lan-to-wan"})
+    result = await call(make_server(), "firewall_rule_get", {"idOrName": "allow-lan-to-wan"})
 
     assert result.is_error is True
     assert "WAF rules are out of scope" in result.content[0].text
@@ -449,7 +475,7 @@ async def test_get_maps_404_to_a_sanitized_tool_error(router: Any) -> None:
         )
     )
 
-    result = await call(make_server(), "firewall_rule_get_ipv4", {"idOrName": "missing"})
+    result = await call(make_server(), "firewall_rule_get", {"idOrName": "missing"})
 
     assert result.is_error is True
     text = result.content[0].text
@@ -464,7 +490,7 @@ async def test_get_maps_404_to_a_sanitized_tool_error(router: Any) -> None:
 async def test_create_ipv4_contract_always_sends_enabled_and_position(router: Any) -> None:
     route = router.post(IPV4_COLLECTION).mock(return_value=httpx.Response(201, json=ipv4_rule()))
 
-    result = await call(make_server(), "firewall_rule_create_ipv4", dict(MINIMAL_CREATE))
+    result = await call(make_server(), "firewall_rule_create", dict(MINIMAL_CREATE))
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -487,9 +513,7 @@ async def test_create_ipv4_returns_the_applied_enabled_state(router: Any) -> Non
         return_value=httpx.Response(201, json=ipv4_rule(enabled=True))
     )
 
-    result = await call(
-        make_server(), "firewall_rule_create_ipv4", {**MINIMAL_CREATE, "enabled": True}
-    )
+    result = await call(make_server(), "firewall_rule_create", {**MINIMAL_CREATE, "enabled": True})
 
     assert result.is_error is False
     assert result.structured_content["enabled"] is True
@@ -500,14 +524,16 @@ async def test_create_ipv6_contract(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_create_ipv6",
+        "firewall_rule_create",
         {
             **MINIMAL_CREATE,
+            "ip_family": "ipv6",
             "name": "allow-lan-to-wan-v6",
             "sourceNetworks": {"ipv6Addresses": [{"name": "2001:db8::/32"}]},
             "destinationNetworks": {"any": True},
             "position": "top",
         },
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -524,7 +550,7 @@ async def test_create_relative_position_sends_the_anchor(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_create_ipv4",
+        "firewall_rule_create",
         {**MINIMAL_CREATE, "position": "after", "referenceItem": {"name": "allow-dns"}},
     )
 
@@ -535,7 +561,7 @@ async def test_create_relative_position_sends_the_anchor(router: Any) -> None:
 async def test_create_rejects_the_waf_variant_before_any_request(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_create_ipv4",
+        "firewall_rule_create",
         {**MINIMAL_CREATE, "ruleType": "waf"},
     )
 
@@ -546,7 +572,7 @@ async def test_create_rejects_the_waf_variant_before_any_request(router: Any) ->
 async def test_create_requires_position_before_any_request(router: Any) -> None:
     request = {key: value for key, value in MINIMAL_CREATE.items() if key != "position"}
 
-    result = await call(make_server(), "firewall_rule_create_ipv4", request)
+    result = await call(make_server(), "firewall_rule_create", request)
 
     assert result.is_error is True
     assert router.calls == []
@@ -555,7 +581,7 @@ async def test_create_requires_position_before_any_request(router: Any) -> None:
 async def test_create_relative_position_requires_an_anchor(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_create_ipv4",
+        "firewall_rule_create",
         {**MINIMAL_CREATE, "position": "before"},
     )
 
@@ -567,7 +593,7 @@ async def test_create_relative_position_requires_an_anchor(router: Any) -> None:
 async def test_create_rejects_an_unknown_member(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_create_ipv4",
+        "firewall_rule_create",
         {**MINIMAL_CREATE, "sourceZone": {"any": True}},
     )
 
@@ -582,7 +608,7 @@ async def test_create_maps_409_to_a_conflict_tool_error(router: Any) -> None:
         )
     )
 
-    result = await call(make_server(), "firewall_rule_create_ipv4", dict(MINIMAL_CREATE))
+    result = await call(make_server(), "firewall_rule_create", dict(MINIMAL_CREATE))
 
     assert result.is_error is True
     text = result.content[0].text
@@ -600,7 +626,7 @@ async def test_update_ipv4_sends_only_the_changed_members(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_update_ipv4",
+        "firewall_rule_update",
         {"idOrName": "allow-lan-to-wan", "enabled": True},
     )
 
@@ -619,12 +645,13 @@ async def test_update_ipv6_sends_only_the_changed_members(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_update_ipv6",
+        "firewall_rule_update",
         {
             "idOrName": "allow-lan-to-wan-v6",
             "description": "updated",
             "sourceNetworks": {"ipv6Groups": [{"name": "LAN-IPV6"}]},
         },
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -642,7 +669,7 @@ async def test_update_sends_an_explicit_null_to_remove_an_optional_member(router
 
     result = await call(
         make_server(),
-        "firewall_rule_update_ipv4",
+        "firewall_rule_update",
         {"idOrName": "allow-lan-to-wan", "description": None},
     )
 
@@ -653,7 +680,7 @@ async def test_update_sends_an_explicit_null_to_remove_an_optional_member(router
 async def test_update_rejects_null_for_a_member_that_cannot_be_removed(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_update_ipv4",
+        "firewall_rule_update",
         {"idOrName": "allow-lan-to-wan", "enabled": None},
     )
 
@@ -665,7 +692,7 @@ async def test_update_rejects_null_for_a_member_that_cannot_be_removed(router: A
 async def test_update_rejects_an_empty_patch(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_update_ipv4",
+        "firewall_rule_update",
         {"idOrName": "allow-lan-to-wan"},
     )
 
@@ -679,7 +706,7 @@ async def test_update_does_not_send_the_identifier_in_the_body(router: Any) -> N
 
     await call(
         make_server(),
-        "firewall_rule_update_ipv4",
+        "firewall_rule_update",
         {"idOrName": "allow-lan-to-wan", "logTraffic": False},
     )
 
@@ -692,9 +719,7 @@ async def test_update_does_not_send_the_identifier_in_the_body(router: Any) -> N
 async def test_delete_ipv4_contract(router: Any) -> None:
     route = router.delete(IPV4_ITEM).mock(return_value=httpx.Response(200, json={"deleted": True}))
 
-    result = await call(
-        make_server(), "firewall_rule_delete_ipv4", {"idOrName": "allow-lan-to-wan"}
-    )
+    result = await call(make_server(), "firewall_rule_delete", {"idOrName": "allow-lan-to-wan"})
 
     assert result.is_error is False
     request = route.calls.last.request
@@ -708,7 +733,10 @@ async def test_delete_ipv6_contract(router: Any) -> None:
     route = router.delete(IPV6_ITEM).mock(return_value=httpx.Response(200, json={"deleted": True}))
 
     result = await call(
-        make_server(), "firewall_rule_delete_ipv6", {"idOrName": "allow-lan-to-wan-v6"}
+        make_server(),
+        "firewall_rule_delete",
+        {"idOrName": "allow-lan-to-wan-v6"},
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -720,7 +748,7 @@ async def test_delete_maps_404_to_a_sanitized_tool_error(router: Any) -> None:
         return_value=httpx.Response(404, json={"error": "resourceNotFound"})
     )
 
-    result = await call(make_server(), "firewall_rule_delete_ipv4", {"idOrName": "missing"})
+    result = await call(make_server(), "firewall_rule_delete", {"idOrName": "missing"})
 
     assert result.is_error is True
     assert "does not exist" in result.content[0].text
@@ -737,7 +765,7 @@ async def test_move_ipv4_contract(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_move_ipv4",
+        "firewall_rule_move",
         {
             "name": "allow-lan-to-wan",
             "position": "after",
@@ -769,8 +797,9 @@ async def test_move_ipv6_contract(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_move_ipv6",
+        "firewall_rule_move",
         {"name": "allow-lan-to-wan-v6", "position": "bottom"},
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -780,7 +809,7 @@ async def test_move_ipv6_contract(router: Any) -> None:
 async def test_move_requires_a_name_and_rejects_id_or_name(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_move_ipv4",
+        "firewall_rule_move",
         {"idOrName": "allow-lan-to-wan", "position": "top"},
     )
 
@@ -791,7 +820,7 @@ async def test_move_requires_a_name_and_rejects_id_or_name(router: Any) -> None:
 async def test_move_relative_position_requires_an_anchor(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_move_ipv4",
+        "firewall_rule_move",
         {"name": "allow-lan-to-wan", "position": "after"},
     )
 
@@ -810,7 +839,7 @@ async def test_set_enabled_ipv4_patches_only_enabled(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_set_enabled_ipv4",
+        "firewall_rule_set_enabled",
         {"idOrName": "allow-lan-to-wan", "enabled": False},
     )
 
@@ -827,8 +856,9 @@ async def test_set_enabled_ipv6_patches_only_enabled(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_set_enabled_ipv6",
+        "firewall_rule_set_enabled",
         {"idOrName": "allow-lan-to-wan-v6", "enabled": True},
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -839,7 +869,7 @@ async def test_set_enabled_ipv6_patches_only_enabled(router: Any) -> None:
 async def test_set_enabled_requires_an_explicit_target_state(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_set_enabled_ipv4",
+        "firewall_rule_set_enabled",
         {"idOrName": "allow-lan-to-wan"},
     )
 
@@ -862,7 +892,7 @@ async def test_clone_ipv4_reads_then_creates_without_inheriting_enabled(router: 
 
     result = await call(
         make_server(),
-        "firewall_rule_clone_ipv4",
+        "firewall_rule_clone",
         {
             "source": "allow-lan-to-wan",
             "name": "allow-lan-to-wan-copy",
@@ -893,8 +923,9 @@ async def test_clone_ipv6_reads_then_creates(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_clone_ipv6",
+        "firewall_rule_clone",
         {"source": "allow-lan-to-wan-v6", "name": "copy-v6", "position": "top"},
+        family="ipv6",
     )
 
     assert result.is_error is False
@@ -915,7 +946,7 @@ async def test_clone_rejects_a_waf_source_without_creating(router: Any) -> None:
 
     result = await call(
         make_server(),
-        "firewall_rule_clone_ipv4",
+        "firewall_rule_clone",
         {"source": "allow-lan-to-wan", "name": "copy", "position": "bottom"},
     )
 
@@ -928,7 +959,7 @@ async def test_clone_rejects_a_waf_source_without_creating(router: Any) -> None:
 async def test_clone_requires_a_position(router: Any) -> None:
     result = await call(
         make_server(),
-        "firewall_rule_clone_ipv4",
+        "firewall_rule_clone",
         {"source": "allow-lan-to-wan", "name": "copy"},
     )
 
@@ -939,13 +970,13 @@ async def test_clone_requires_a_position(router: Any) -> None:
 # -- Registry, annotations and schemas -------------------------------------------------
 
 
-async def test_write_mode_registers_all_sixteen_tools() -> None:
+async def test_write_mode_registers_all_eight_tools() -> None:
     server = make_server()
 
     names = {tool.name for tool in await server.list_tools()}
 
     assert names == ALL_TOOLS
-    assert len(names) == 16
+    assert len(names) == 8
 
 
 async def test_read_only_mode_registers_only_the_four_read_tools() -> None:
@@ -969,26 +1000,19 @@ async def test_every_tool_description_names_its_operation_id() -> None:
     server = make_server()
     tools = {tool.name: tool for tool in await server.list_tools()}
     expected = {
-        "firewall_rule_list_ipv4": "getAllFirewallRulesIpv4",
-        "firewall_rule_list_ipv6": "getAllFirewallRulesIpv6",
-        "firewall_rule_get_ipv4": "getFirewallRuleIpv4",
-        "firewall_rule_get_ipv6": "getFirewallRuleIpv6",
-        "firewall_rule_create_ipv4": "createFirewallRuleIpv4",
-        "firewall_rule_create_ipv6": "createFirewallRuleIpv6",
-        "firewall_rule_update_ipv4": "updateFirewallRuleIpv4",
-        "firewall_rule_update_ipv6": "updateFirewallRuleIpv6",
-        "firewall_rule_delete_ipv4": "deleteFirewallRuleIpv4",
-        "firewall_rule_delete_ipv6": "deleteFirewallRuleIpv6",
-        "firewall_rule_move_ipv4": "moveFirewallRuleIpv4",
-        "firewall_rule_move_ipv6": "moveFirewallRuleIpv6",
-        "firewall_rule_set_enabled_ipv4": "updateFirewallRuleIpv4",
-        "firewall_rule_set_enabled_ipv6": "updateFirewallRuleIpv6",
-        "firewall_rule_clone_ipv4": "getFirewallRuleIpv4",
-        "firewall_rule_clone_ipv6": "getFirewallRuleIpv6",
+        "firewall_rule_list": ("getAllFirewallRulesIpv4", "getAllFirewallRulesIpv6"),
+        "firewall_rule_get": ("getFirewallRuleIpv4", "getFirewallRuleIpv6"),
+        "firewall_rule_create": ("createFirewallRuleIpv4", "createFirewallRuleIpv6"),
+        "firewall_rule_update": ("updateFirewallRuleIpv4", "updateFirewallRuleIpv6"),
+        "firewall_rule_delete": ("deleteFirewallRuleIpv4", "deleteFirewallRuleIpv6"),
+        "firewall_rule_move": ("moveFirewallRuleIpv4", "moveFirewallRuleIpv6"),
+        "firewall_rule_set_enabled": ("updateFirewallRuleIpv4", "updateFirewallRuleIpv6"),
+        "firewall_rule_clone": ("getFirewallRuleIpv4", "getFirewallRuleIpv6"),
     }
 
-    for name, operation_id in expected.items():
-        assert operation_id in tools[name].description
+    for name, operation_ids in expected.items():
+        for operation_id in operation_ids:
+            assert operation_id in tools[name].description
         assert tools[name].description.strip() != ""
 
 
@@ -999,9 +1023,8 @@ async def test_read_tools_carry_no_write_hints() -> None:
     for name in READ_TOOLS:
         wire = tools[name].annotations.model_dump(by_alias=True, exclude_none=True)
         assert wire["readOnlyHint"] is True
-        # The appliance is external to the MCP process: the foundation default (True)
-        # classifies the interaction domain conservatively.
-        assert wire["openWorldHint"] is True
+        # A rule base is the appliance's own configuration: a closed interaction domain.
+        assert wire["openWorldHint"] is False
         assert "destructiveHint" not in wire
         assert "idempotentHint" not in wire
 
@@ -1009,18 +1032,18 @@ async def test_read_tools_carry_no_write_hints() -> None:
 @pytest.mark.parametrize(
     ("name", "destructive", "idempotent"),
     [
-        ("firewall_rule_create_ipv4", False, False),
-        ("firewall_rule_create_ipv6", False, False),
-        ("firewall_rule_update_ipv4", True, True),
-        ("firewall_rule_update_ipv6", True, True),
-        ("firewall_rule_delete_ipv4", True, True),
-        ("firewall_rule_delete_ipv6", True, True),
-        ("firewall_rule_move_ipv4", True, True),
-        ("firewall_rule_move_ipv6", True, True),
-        ("firewall_rule_set_enabled_ipv4", True, True),
-        ("firewall_rule_set_enabled_ipv6", True, True),
-        ("firewall_rule_clone_ipv4", False, False),
-        ("firewall_rule_clone_ipv6", False, False),
+        ("firewall_rule_create", False, False),
+        ("firewall_rule_create", False, False),
+        ("firewall_rule_update", True, True),
+        ("firewall_rule_update", True, True),
+        ("firewall_rule_delete", True, True),
+        ("firewall_rule_delete", True, True),
+        ("firewall_rule_move", True, True),
+        ("firewall_rule_move", True, True),
+        ("firewall_rule_set_enabled", True, True),
+        ("firewall_rule_set_enabled", True, True),
+        ("firewall_rule_clone", False, False),
+        ("firewall_rule_clone", False, False),
     ],
 )
 async def test_mutation_tools_declare_their_risk_and_idempotence(
@@ -1034,14 +1057,12 @@ async def test_mutation_tools_declare_their_risk_and_idempotence(
     assert wire["readOnlyHint"] is False
     assert wire["destructiveHint"] is destructive
     assert wire["idempotentHint"] is idempotent
-    assert wire["openWorldHint"] is True
+    assert wire["openWorldHint"] is False
 
 
 async def test_create_input_schema_is_closed_and_requires_position() -> None:
     server = make_server()
-    tool = next(
-        tool for tool in await server.list_tools() if tool.name == "firewall_rule_create_ipv4"
-    )
+    tool = next(tool for tool in await server.list_tools() if tool.name == "firewall_rule_create")
 
     schema = tool.input_schema["$defs"]["CreateFirewallRuleIpv4Input"]
 
@@ -1056,7 +1077,7 @@ async def test_output_schemas_are_object_rooted_and_typed() -> None:
     server = make_server()
     tools = {tool.name: tool for tool in await server.list_tools()}
 
-    for name in ("firewall_rule_get_ipv4", "firewall_rule_get_ipv6"):
+    for name in ("firewall_rule_get", "firewall_rule_get"):
         output = tools[name].output_schema
         assert output is not None
         assert output["type"] == "object"
@@ -1064,12 +1085,12 @@ async def test_output_schemas_are_object_rooted_and_typed() -> None:
         assert "ipFamily" in output["properties"]
         assert "position" in output["properties"]
 
-    listing = tools["firewall_rule_list_ipv4"].output_schema
+    listing = tools["firewall_rule_list"].output_schema
     assert listing is not None
     assert listing["type"] == "object"
     assert "items" in listing["properties"]
     assert "wafRulesSkipped" in listing["properties"]
-    assert "position" in listing["$defs"]["FirewallRuleIpv4Output"]["properties"]
+    assert "position" in listing["$defs"]["FirewallRuleOutput"]["properties"]
 
 
 # -- Model contract --------------------------------------------------------------------
@@ -1114,6 +1135,7 @@ def test_ipv6_create_rejects_an_ipv4_network_member() -> None:
         CreateFirewallRuleIpv6Input(
             **{
                 **MINIMAL_CREATE,
+                "ip_family": "ipv6",
                 "name": "v6-rule",
                 "sourceNetworks": {"ipv4Addresses": [{"name": "LAN"}]},
             }
@@ -1152,16 +1174,16 @@ def test_object_name_or_id_rejects_unsafe_identifiers(value: str) -> None:
 
 def test_list_input_validates_the_page_bounds() -> None:
     with pytest.raises(ValidationError):
-        ListFirewallRulesInput(page=0)
+        ListFirewallRulesInput(ip_family="ipv4", page=0)
     with pytest.raises(ValidationError):
-        ListFirewallRulesInput(pageSize=0)
+        ListFirewallRulesInput(ip_family="ipv4", pageSize=0)
     with pytest.raises(ValidationError):
-        ListFirewallRulesInput(pageSize=101)
+        ListFirewallRulesInput(ip_family="ipv4", pageSize=101)
 
 
 def test_list_input_rejects_both_name_filters() -> None:
     with pytest.raises(ValidationError, match="mutually exclusive"):
-        ListFirewallRulesInput(nameContains="a", nameNotEquals="b")
+        ListFirewallRulesInput(ip_family="ipv4", nameContains="a", nameNotEquals="b")
 
 
 def test_any_selection_rejects_extra_members() -> None:
@@ -1177,36 +1199,39 @@ def test_network_selection_requires_at_least_one_member() -> None:
 
 def test_update_model_rejects_null_for_a_member_that_cannot_be_removed() -> None:
     with pytest.raises(ValidationError, match="cannot be null"):
-        UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", action=None)
+        UpdateFirewallRuleIpv4Input(ip_family="ipv4", idOrName="allow-lan-to-wan", action=None)
 
 
 def test_update_allows_null_for_a_removable_member() -> None:
-    model = UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", description=None)
+    model = UpdateFirewallRuleIpv4Input(
+        ip_family="ipv4", idOrName="allow-lan-to-wan", description=None
+    )
 
     assert model.model_dump(by_alias=True, exclude_unset=True) == {
+        "ip_family": "ipv4",
         "idOrName": "allow-lan-to-wan",
         "description": None,
     }
 
 
 def test_update_excludes_members_the_caller_did_not_set() -> None:
-    model = UpdateFirewallRuleIpv4Input(idOrName="allow-lan-to-wan", enabled=True)
+    model = UpdateFirewallRuleIpv4Input(ip_family="ipv4", idOrName="allow-lan-to-wan", enabled=True)
 
-    assert model.model_dump(by_alias=True, exclude_unset=True, exclude={"id_or_name"}) == {
-        "enabled": True
-    }
+    assert model.model_dump(
+        by_alias=True, exclude_unset=True, exclude={"id_or_name", "ip_family"}
+    ) == {"enabled": True}
 
 
 def test_move_input_requires_a_name() -> None:
     with pytest.raises(ValidationError):
-        MoveFirewallRuleInput(position="top")
-    assert MoveFirewallRuleInput(name="allow-lan-to-wan", position="top").name == (
-        "allow-lan-to-wan"
-    )
+        MoveFirewallRuleInput(ip_family="ipv4", position="top")
+    assert MoveFirewallRuleInput(
+        ip_family="ipv4", name="allow-lan-to-wan", position="top"
+    ).name == ("allow-lan-to-wan")
 
 
 def test_output_projects_any_and_selected_matches() -> None:
-    rule = FirewallRuleIpv4Output.model_validate(ipv4_rule())
+    rule = FirewallRuleOutput.model_validate(ipv4_rule())
 
     assert rule.sourceZones is not None
     assert rule.sourceZones.any is False
@@ -1219,14 +1244,14 @@ def test_output_projects_any_and_selected_matches() -> None:
 
 
 def test_output_ignores_unknown_server_members() -> None:
-    rule = FirewallRuleIpv4Output.model_validate(ipv4_rule(unexpectedMember={"x": 1}))
+    rule = FirewallRuleOutput.model_validate(ipv4_rule(unexpectedMember={"x": 1}))
 
     assert rule.name == "allow-lan-to-wan"
     assert "unexpectedMember" not in rule.model_dump()
 
 
 def test_ipv6_output_keeps_the_ipv6_match_members() -> None:
-    rule = FirewallRuleIpv6Output.model_validate(ipv6_rule())
+    rule = FirewallRuleOutput.model_validate(ipv6_rule())
 
     assert rule.ipFamily == "ipv6"
     assert rule.sourceNetworks is not None
@@ -1239,16 +1264,16 @@ def test_output_enabled_is_none_only_when_the_appliance_omits_it() -> None:
     payload = ipv4_rule()
     payload.pop("enabled")
 
-    assert FirewallRuleIpv4Output.model_validate(payload).enabled is None
+    assert FirewallRuleOutput.model_validate(payload).enabled is None
 
 
 def test_output_position_is_null_unless_the_list_derives_it() -> None:
-    assert FirewallRuleIpv4Output.model_validate(ipv4_rule()).position is None
-    assert FirewallRuleIpv6Output.model_validate(ipv6_rule()).position is None
+    assert FirewallRuleOutput.model_validate(ipv4_rule()).position is None
+    assert FirewallRuleOutput.model_validate(ipv6_rule()).position is None
 
 
 def test_list_output_preserves_the_pages_metadata() -> None:
-    output = ListFirewallRulesIpv4Output(
+    output = ListFirewallRulesOutput(
         items=[],
         pages=Pages(current=2, size=10, maxSize=100, total=47, items=10),
         wafRulesSkipped=3,
@@ -1273,8 +1298,16 @@ def _properties(schema: dict[str, Any]) -> set[str]:
 
 
 def _wire_names(model: type[BaseModel]) -> set[str]:
-    """The Sophos wire names the model serializes to (the contract's property names)."""
-    return {field.serialization_alias or name for name, field in model.model_fields.items()}
+    """The Sophos wire names the model serializes to (the contract's property names).
+
+    ``ip_family`` is the MCP-only family selector: the adapter strips it before the body
+    is sent, so it is not a wire member and the contract comparison excludes it.
+    """
+    return {
+        field.serialization_alias or name
+        for name, field in model.model_fields.items()
+        if name != "ip_family"
+    }
 
 
 def _resolve(node: dict[str, Any]) -> dict[str, Any]:
@@ -1352,6 +1385,7 @@ def test_nested_input_models_publish_snake_case_and_serialize_to_the_wire_names(
     camelCase spelling stays accepted on input, so an existing caller keeps working.
     """
     request = CreateFirewallRuleIpv4Input(
+        ip_family="ipv4",
         name="allow-lan-to-wan",
         source_zones={"zones": [{"name": "LAN"}]},
         destination_zones={"any": True},
@@ -1466,7 +1500,7 @@ def test_nested_input_models_publish_snake_case_and_serialize_to_the_wire_names(
 
 def test_list_input_defaults_to_ten() -> None:
     """M11: a firewall rule is large, so the default page must stay small."""
-    parsed = ListFirewallRulesInput()
+    parsed = ListFirewallRulesInput(ip_family="ipv4")
 
     assert (parsed.page, parsed.page_size, parsed.page_total) == (1, 10, False)
     description = ListFirewallRulesInput.model_json_schema()["properties"]["page_size"][
@@ -1474,14 +1508,14 @@ def test_list_input_defaults_to_ten() -> None:
     ]
     assert "Defaults to 10" in description
     # The bounds are unchanged: this is a default, not a schema break.
-    assert ListFirewallRulesInput(page_size=100).page_size == 100
+    assert ListFirewallRulesInput(ip_family="ipv4", page_size=100).page_size == 100
 
 
 async def test_list_descriptions_state_the_page_size_and_the_duplicated_payload() -> None:
     """M11/L7: the size of a full page and the SDK's double payload are documented."""
     tools = {tool.name: tool for tool in await make_server().list_tools()}
 
-    for name in ("firewall_rule_list_ipv4", "firewall_rule_list_ipv6"):
+    for name in ("firewall_rule_list", "firewall_rule_list"):
         description = tools[name].description
         assert "page_size defaults to 10" in description, name
         assert "~70 KB" in description, name
