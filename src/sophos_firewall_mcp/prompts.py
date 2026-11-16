@@ -35,7 +35,25 @@ if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the mcp import out of
 
     from sophos_firewall_mcp.context import AppContext
 
-__all__ = ["PROMPT_NAMES", "PROMPT_TOOLS", "available_prompts", "register_prompts"]
+__all__ = [
+    "PROMPT_NAMES",
+    "PROMPT_TOOLS",
+    "PromptArgumentError",
+    "available_prompts",
+    "register_prompts",
+]
+
+
+class PromptArgumentError(ValueError):
+    """A prompt argument combination the caller can fix.
+
+    Raised by a prompt renderer for a request the caller can correct, such as a port
+    without a TCP/UDP protocol. The server maps it to JSON-RPC ``-32602`` (invalid
+    params); any other exception from a renderer is a programming error and stays
+    ``-32603`` (internal error). It subclasses ``ValueError`` because that is what the
+    SDK's prompt path raises and wraps, so existing callers keep working.
+    """
+
 
 #: The seven audit checks, in the order the audit tool documents them.
 AUDIT_CHECKS: tuple[str, ...] = (
@@ -168,7 +186,7 @@ def _explain_message(
     """The flow-explanation instruction, with the caller's endpoints folded in."""
     kind = endpoint_type or "ip"
     if port is not None and protocol not in ("tcp", "udp"):
-        raise ValueError("port requires protocol 'tcp' or 'udp'")
+        raise PromptArgumentError("port requires protocol 'tcp' or 'udp'")
     service_payload: dict[str, object] = {"name": service}
     if protocol:
         service_payload["protocol"] = protocol
