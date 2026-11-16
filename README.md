@@ -20,7 +20,7 @@ Bearer API key.
 > **0.7.0 is the current release.** It is a breaking release with two changes: the 40 IPv4/IPv6 tool
 > pairs collapse into one tool per concept behind a **required `ip_family`** argument, and tool
 > arguments are published **flat** instead of inside a `request` wrapper. The surface drops from 152
-> tools to 112 and the catalog from 807,900 to 622,787 bytes. The
+> tools to 112 and the catalog from 807,920 to 622,787 bytes. The
 > [migration table](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md) maps every removed
 > tool name to its replacement. 0.6.0 unified the published *output* field names on camelCase (the
 > Sophos wire names); 0.5.0 unified every published *input* parameter on snake_case; 0.4.0 was the
@@ -259,8 +259,8 @@ The catalog is static for the process lifetime, so:
   without loading the tool catalog.
 
 The payload is dominated by the output schemas. 0.7.0 removed **185,113 bytes** from the catalog
-(807,900 → 622,787, −22.9%) and 40 tools: the IPv4/IPv6 collapse behind `ip_family` removed 152,421
-bytes (807,900 → 655,479), and publishing flat arguments removed a further 32,692 bytes (655,479 →
+(807,920 → 622,787, −22.9%) and 40 tools: the IPv4/IPv6 collapse behind `ip_family` removed 152,886
+bytes (807,920 → 655,034), and publishing flat arguments removed a further 32,247 bytes (655,034 →
 622,787). That is on top of the earlier catalog trim that removed 2,783 auto-generated property
 `title` keys and compacted 1,646 nullable unions.
 

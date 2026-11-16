@@ -3,7 +3,7 @@ name: Live appliance verification (opt-in)
 # Read-only verification against a real Sophos Firewall. This workflow never runs on a
 # push or a pull request: it is dispatched by hand, uses the `live-lab` environment (add
 # required reviewers there), and only reads. The lab key is read-only and the suite forces
-# SOPHOS_READ_ONLY_MODE=true, so the 54 mutation tools are never registered.
+# SOPHOS_READ_ONLY_MODE=true, so the 38 mutation tools are never registered.
 #
 # Required repository secrets: SOPHOS_HOST, SOPHOS_PORT and one of SOPHOS_API_KEY /
 # SOPHOS_API_KEY_FILE -- the same precondition `tests/live/conftest.py` applies.
