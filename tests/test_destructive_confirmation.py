@@ -31,6 +31,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import time
+
 import httpx
 import pytest
 import respx
@@ -53,7 +55,8 @@ from mcp.types import (
 from pydantic import BaseModel
 
 from sophos_firewall_mcp.config import Settings
-from sophos_firewall_mcp.mrtr import reset_consumed_states
+from sophos_firewall_mcp import mrtr
+from sophos_firewall_mcp.mrtr import consumed_state_count, reset_consumed_states
 from sophos_firewall_mcp.server import create_server
 from sophos_firewall_mcp.tools import (
     CONFIRMATION_NOTE,
@@ -566,6 +569,147 @@ async def test_a_fresh_confirmation_after_a_consumed_one_is_allowed(router: Any,
             assert isinstance(resumed, types.CallToolResult)
             assert resumed.is_error is False, resumed.content[0].text
             assert route.call_count == expected
+
+
+# -- Flood and cap resistance ----------------------------------------------------------
+
+
+async def test_a_forged_state_does_not_consume_a_slot(router: Any) -> None:
+    """A state the boundary rejects must release its reservation, not fill the cap."""
+    async with Client(make_server()) as client:
+        with pytest.raises(MCPError):
+            await client.session.call_tool(
+                "firewall_rule_delete",
+                GATED["firewall_rule_delete"],
+                allow_input_required=True,
+                input_responses={},
+                request_state="v1.forged-token",
+            )
+
+    assert consumed_state_count() == 0
+    assert router.calls == []
+
+
+async def test_a_flood_of_forged_states_cannot_evict_a_legitimate_one(
+    router: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The reviewer's bypass: forged states must not push the legitimate digest out."""
+    monkeypatch.setattr(mrtr, "MAX_CONSUMED_STATES", 5)
+    name = "firewall_rule_delete"
+    args = GATED[name]
+    route = _mock_delete(router, name)
+
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, args, allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+        key = next(iter(first.input_requests or {}))
+        answer = types.ElicitResult(action="accept", content={"confirm": True})
+
+        resumed = await client.session.call_tool(
+            name,
+            args,
+            allow_input_required=True,
+            input_responses={key: answer},
+            request_state=first.request_state,
+        )
+        assert isinstance(resumed, types.CallToolResult)
+        assert resumed.is_error is False, resumed.content[0].text
+        assert route.call_count == 1
+        assert consumed_state_count() == 1
+
+        # A flood of forged states: each is rejected by the boundary and must not consume
+        # a slot, so the legitimate digest survives.
+        for index in range(20):
+            with pytest.raises(MCPError):
+                await client.session.call_tool(
+                    name,
+                    args,
+                    allow_input_required=True,
+                    input_responses={},
+                    request_state=f"v1.forged-{index}",
+                )
+        assert consumed_state_count() == 1
+
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                name,
+                args,
+                allow_input_required=True,
+                input_responses={key: answer},
+                request_state=first.request_state,
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert "already used" in str(rejected.value)
+    assert route.call_count == 1
+
+
+async def test_the_cap_refuses_a_new_state_instead_of_evicting_a_live_one(
+    router: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """At the cap the guard fails closed: a live entry is never displaced."""
+    monkeypatch.setattr(mrtr, "MAX_CONSUMED_STATES", 2)
+    now = time.time()
+    mrtr._consumed.clear()
+    mrtr._consumed["a" * 64] = now
+    mrtr._consumed["b" * 64] = now
+
+    async with Client(make_server()) as client:
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                "firewall_rule_delete",
+                GATED["firewall_rule_delete"],
+                allow_input_required=True,
+                input_responses={},
+                request_state="v1.some-new-state",
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert "too many confirmations" in str(rejected.value)
+    assert consumed_state_count() == 2
+    assert router.calls == []
+
+
+async def test_a_legitimate_state_whose_handler_failed_stays_consumed(router: Any) -> None:
+    """A handler failure is a returned result, not a boundary rejection: the state is used."""
+    name = "firewall_rule_delete"
+    args = GATED[name]
+    route = router.delete(DELETE_PATHS[name]).mock(
+        return_value=httpx.Response(404, json={"error": "resourceNotFound"})
+    )
+
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, args, allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+        key = next(iter(first.input_requests or {}))
+        answer = types.ElicitResult(action="accept", content={"confirm": True})
+
+        resumed = await client.session.call_tool(
+            name,
+            args,
+            allow_input_required=True,
+            input_responses={key: answer},
+            request_state=first.request_state,
+        )
+        assert isinstance(resumed, types.CallToolResult)
+        assert resumed.is_error is True
+        assert route.call_count == 1
+
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                name,
+                args,
+                allow_input_required=True,
+                input_responses={key: answer},
+                request_state=first.request_state,
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert route.call_count == 1
 
 
 # -- Surface invariants ----------------------------------------------------------------

@@ -14,11 +14,23 @@ the client sent. The first ``tools/call`` carrying a given token is recorded and
 second use of the same token is refused with ``-32602`` before the boundary unseals it and
 before any handler runs.
 
+Two properties keep the guard from being bypassed by a flood of forged states:
+
+* **Only accepted states are remembered.** The digest is reserved synchronously (so two
+  concurrent requests cannot both pass), then committed only if ``call_next`` returns. A
+  state the boundary rejects raises ``MCPError`` and releases the reservation, so a forged
+  token never consumes a slot. A handler failure is returned as ``CallToolResult`` (not
+  raised), so a legitimate state whose handler failed stays consumed -- the confirmation
+  was used.
+* **The cap fails closed.** When the set is full of live entries, a new state is refused
+  with ``-32602`` instead of evicting a live entry. A flood can therefore only deny new
+  confirmations, never displace a legitimate one.
+
 The consumed set is process-local and bounded: entries older than the SDK's request-state
-TTL (600 s) are evicted on every call, and a hard size cap evicts the oldest entries first.
-A multi-worker deployment is already protected by the SDK's per-process ephemeral key -- a
-state minted by one worker is rejected by another -- so a process-local set is consistent
-with the SDK's default security model.
+TTL (600 s) are evicted on every call, and the size cap is exact. A multi-worker deployment
+is already protected by the SDK's per-process ephemeral key -- a state minted by one worker
+is rejected by another -- so a process-local set is consistent with the SDK's default
+security model.
 """
 
 from __future__ import annotations
@@ -36,11 +48,12 @@ from mcp.types import INVALID_PARAMS
 #: than this is rejected by the boundary anyway, so it no longer needs remembering.
 STATE_TTL_SECONDS = 600.0
 
-#: Hard cap on remembered tokens, so a flood cannot grow the set without bound.
+#: Exact cap on remembered tokens. At the cap a new state is refused rather than evicting a
+#: live entry, so a flood cannot displace a legitimate confirmation.
 MAX_CONSUMED_STATES = 10_000
 
-#: Digest of every sealed ``requestState`` already used, oldest first, with its monotonic
-#: first-use time. Process-local by design; see the module docstring.
+#: Digest of every sealed ``requestState`` already used, oldest first, with its first-use
+#: wall-clock time. Process-local by design; see the module docstring.
 _consumed: OrderedDict[str, float] = OrderedDict()
 
 
@@ -54,13 +67,22 @@ def _digest(state: str) -> str:
 
 
 def _evict(now: float) -> None:
-    """Drop expired entries, then the oldest ones while over the size cap."""
+    """Drop entries the SDK boundary would already reject as expired.
+
+    Only expired entries are removed. Live entries are never evicted: the cap is enforced
+    by refusing a new state instead (see :func:`mrtr_replay_guard`).
+    """
     cutoff = now - STATE_TTL_SECONDS
     while _consumed:
         _, seen = next(iter(_consumed.items()))
-        if seen >= cutoff and len(_consumed) <= MAX_CONSUMED_STATES:
+        if seen >= cutoff:
             break
         _consumed.popitem(last=False)
+
+
+def consumed_state_count() -> int:
+    """The number of remembered states. Test and diagnostic use only."""
+    return len(_consumed)
 
 
 def reset_consumed_states() -> None:
@@ -75,14 +97,16 @@ async def mrtr_replay_guard(
 
     Only ``tools/call`` requests that carry a non-empty ``requestState`` are affected: the
     first round of an MRTR flow has no state, and every non-MRTR call passes through
-    untouched. The check-and-record is synchronous, so two concurrent requests carrying the
-    same token cannot both pass it on one event loop.
+    untouched. The check-and-reserve is synchronous, so two concurrent requests carrying
+    the same token cannot both pass it on one event loop.
     """
     state = (ctx.params or {}).get("requestState")
     if ctx.method != "tools/call" or not isinstance(state, str) or not state:
         return await call_next(ctx)
 
-    now = time.monotonic()
+    # Same clock as the SDK boundary (``time.time``), so a wall-clock step cannot make this
+    # guard evict a state the boundary still considers live.
+    now = time.time()
     _evict(now)
     digest = _digest(state)
     if digest in _consumed:
@@ -90,5 +114,19 @@ async def mrtr_replay_guard(
             code=INVALID_PARAMS,
             message="this confirmation was already used; re-issue the call to confirm again",
         )
+    if len(_consumed) >= MAX_CONSUMED_STATES:
+        raise MCPError(
+            code=INVALID_PARAMS,
+            message=("too many confirmations are pending; retry after the oldest one expires"),
+        )
+
+    # Reserve synchronously so a concurrent request cannot also pass, then commit only if
+    # the boundary accepted the state. A boundary rejection raises; a handler failure is
+    # returned as a CallToolResult and keeps the reservation (the confirmation was used).
     _consumed[digest] = now
-    return await call_next(ctx)
+    try:
+        result = await call_next(ctx)
+    except BaseException:
+        _consumed.pop(digest, None)
+        raise
+    return result
