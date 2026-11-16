@@ -615,3 +615,18 @@ def test_a_declared_domain_dependency_is_enforced(monkeypatch: pytest.MonkeyPatc
         "firewall",
         "audit",
     )
+
+
+def test_an_empty_tool_domains_tuple_is_rejected() -> None:
+    """Direct construction must reject an empty selection, like the blank env value.
+
+    ``Settings(tool_domains=())`` would otherwise build a server with no tools at all, which
+    is never what an operator means and is indistinguishable from a misconfiguration.
+    """
+    with pytest.raises(ValidationError) as excinfo:
+        Settings(host="fw.example.com", api_key=KEY, tool_domains=())
+
+    message = str(excinfo.value)
+    assert "at least one domain" in message
+    for name in TOOL_DOMAINS:
+        assert name in message

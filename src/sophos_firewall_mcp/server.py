@@ -100,7 +100,12 @@ from sophos_firewall_mcp.resources import (  # noqa: E402
     SurfaceSummary,
     register_resources,
 )
-from sophos_firewall_mcp.tools import DomainRegistrar, registered_tool_count  # noqa: E402
+from sophos_firewall_mcp.tools import (  # noqa: E402
+    DomainRegistrar,
+    registered_read_only_tool_names,
+    registered_tool_count,
+    registered_tool_names,
+)
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
 from sophos_firewall_mcp.tools.hosts_objects import register_objects_tools  # noqa: E402
@@ -191,10 +196,20 @@ _INSTRUCTIONS_BASE = (
 
 
 def _prompt_sentence(prompt_names: tuple[str, ...]) -> str:
-    """The instructions clause that names the registered prompts."""
+    """The instructions clause that names the registered prompts.
+
+    The complete surface keeps the original wording verbatim, including the "and" before the
+    last name and the word "three": the published instructions are a stable string, and a
+    filtered instance only shortens the list.
+    """
     if not prompt_names:
         return "."
-    listed = ", ".join(f"`{name}`" for name in prompt_names)
+    if len(prompt_names) == 1:
+        listed = f"`{prompt_names[0]}`"
+    else:
+        listed = ", ".join(f"`{name}`" for name in prompt_names[:-1]) + f" and `{prompt_names[-1]}`"
+    if len(prompt_names) == 3:
+        return f"; the prompts {listed} carry the three analysis workflows."
     return f"; the prompts {listed} carry the analysis workflows."
 
 
@@ -261,19 +276,14 @@ def _registered_surface(server: MCPServer[AppContext], domains: tuple[str, ...])
     """The tool surface this process actually registered.
 
     The registry is the ground truth: the resources and the instructions describe what is in
-    it, so a filtered instance cannot claim a tool it did not register. The private
-    ``_tool_manager`` seam is the one :func:`registered_tool_count` already uses; calling that
-    guarded accessor first means a moved seam fails with its actionable message instead of an
-    ``AttributeError`` here.
+    it, so a filtered instance cannot claim a tool it did not register. Both accessors come
+    from :mod:`sophos_firewall_mcp.tools`, which owns the pinned private SDK seam, so this
+    module never touches ``MCPServer._tool_manager`` itself.
     """
-    registered_tool_count(server)
-    tools = server._tool_manager.list_tools()
     return SurfaceSummary(
         domains=domains,
-        tool_names=tuple(tool.name for tool in tools),
-        read_only_tool_names=tuple(
-            tool.name for tool in tools if tool.annotations and tool.annotations.read_only_hint
-        ),
+        tool_names=registered_tool_names(server),
+        read_only_tool_names=registered_read_only_tool_names(server),
     )
 
 

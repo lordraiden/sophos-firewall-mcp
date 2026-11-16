@@ -172,6 +172,11 @@ def validate_tool_domains(domains: Iterable[str]) -> tuple[str, ...]:
             domain needs another domain that is not selected.
     """
     selected = list(domains)
+    if not selected:
+        raise ConfigurationError(
+            f"{_ENV_TOOL_DOMAINS} must name at least one domain; accepted domains are "
+            f"{', '.join(TOOL_DOMAINS)}"
+        )
     unknown = [name for name in selected if name not in TOOL_DOMAINS]
     if unknown:
         raise ConfigurationError(

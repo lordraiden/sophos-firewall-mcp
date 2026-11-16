@@ -12,10 +12,14 @@
 # SOPHOS_VERIFY_SSL=false; prefer SOPHOS_CA_BUNDLE with the appliance CA instead.
 #
 # SOPHOS_TOOL_DOMAINS narrows the published tool surface to the domains this deployment needs
-# (firewall, nat, objects, users, network, audit). The default below is the complete surface, so
-# an unset host variable keeps the full 112-tool catalog; set it on the host to publish a subset,
-# for example SOPHOS_TOOL_DOMAINS=firewall,nat,objects,network,audit. The default is spelled out
-# rather than left empty because an empty value is a startup error, not "unset".
+# (firewall, nat, objects, users, network, audit). It is deliberately NOT listed in the
+# environment map below: unset already means "the complete surface", and a hard-coded default
+# would be a second copy of the domain list that silently narrows the surface when a domain is
+# added. To publish a subset, add the line yourself (or use a compose override file):
+#
+#   SOPHOS_TOOL_DOMAINS: firewall,nat,objects,network,audit
+#
+# An empty value is a startup error, not "unset", so do not pass an empty string.
 
 services:
   sophos-firewall-mcp:
@@ -29,7 +33,6 @@ services:
       SOPHOS_VERIFY_SSL: ${SOPHOS_VERIFY_SSL:-true}
       SOPHOS_CA_BUNDLE: ${SOPHOS_CA_BUNDLE:-}
       SOPHOS_TIMEOUT: ${SOPHOS_TIMEOUT:-30}
-      SOPHOS_TOOL_DOMAINS: ${SOPHOS_TOOL_DOMAINS:-firewall,nat,objects,users,network,audit}
       SOPHOS_READ_ONLY_MODE: ${SOPHOS_READ_ONLY_MODE:-false}
     secrets:
       - sophos_api_key

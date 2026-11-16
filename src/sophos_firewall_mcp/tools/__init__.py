@@ -176,7 +176,9 @@ __all__ = [
     "ToolKind",
     "confirm_destructive",
     "register_tool",
+    "registered_read_only_tool_names",
     "registered_tool_count",
+    "registered_tool_names",
     "tool_error",
 ]
 
@@ -707,6 +709,32 @@ def registered_tool_count(server: MCPServer[AppContext]) -> int:
     reads the same pinned private seam as :func:`_registered_tool`.
     """
     return len(_tool_manager(server).list_tools())
+
+
+def registered_tool_names(server: MCPServer[AppContext]) -> tuple[str, ...]:
+    """The names of the tools registered on ``server`` so far, in registration order.
+
+    The server factory uses it to describe the surface this process actually publishes: the
+    resources, the prompts and the instructions are built from these names, so a filtered
+    instance cannot claim a tool it did not register. It reads the same pinned private seam
+    as :func:`registered_tool_count`, which keeps ``MCPServer._tool_manager`` confined to
+    this module.
+    """
+    return tuple(tool.name for tool in _tool_manager(server).list_tools())
+
+
+def registered_read_only_tool_names(server: MCPServer[AppContext]) -> tuple[str, ...]:
+    """The names of the registered tools whose annotation is ``readOnlyHint=true``.
+
+    Read-only mode removes the mutation tools before they reach the registry, so this is the
+    read-only half of the surface this process publishes, not the catalog's. It reads the
+    same pinned private seam as :func:`registered_tool_count`.
+    """
+    return tuple(
+        tool.name
+        for tool in _tool_manager(server).list_tools()
+        if tool.annotations is not None and tool.annotations.read_only_hint
+    )
 
 
 def _flatten_arguments(server: MCPServer[AppContext], name: str) -> Tool | None:

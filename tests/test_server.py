@@ -76,6 +76,28 @@ PYPROJECT_PATH = Path(__file__).resolve().parents[1] / "pyproject.toml"
 #: Set by the slow synthetic handler so the cancellation test knows the handler is running.
 _SLOW_STARTED: asyncio.Event | None = None
 
+#: The exact server instructions of the complete default surface, pinned as a literal.
+#:
+#: ``INSTRUCTIONS`` is assembled from a base string plus a prompt clause, so comparing the
+#: published value to the constant compares the constant to itself and cannot detect a
+#: wording change. The literal is the published contract: changing it is a deliberate
+#: decision, not a refactor side effect.
+EXPECTED_INSTRUCTIONS = (
+    "Administers a Sophos Firewall (SFOS) through its Configuration REST API. Tools are "
+    "narrow and typed: they list, read, create, update, move or delete firewall and NAT "
+    "rules, address and service objects, users and live sessions. Read-only tools never "
+    "modify the appliance. When the server runs in read-only mode, mutation tools are "
+    "not registered at all. Every tool that takes arguments takes them flat: the fields "
+    "its `inputSchema` lists are the fields the call sends, with no wrapper object. A tool "
+    "whose request is a union of shapes publishes a root `oneOf` instead, and its "
+    "discriminator (`ip_family` or `type`) selects the variant; `mac_address_create` "
+    "publishes `anyOf` because the API declares no discriminator. Every "
+    "successful result carries the same payload twice, as `content` text and as "
+    "`structuredContent`; read one of them, not both. Read `sophos://conventions` before "
+    "the first call; the prompts `audit_firewall`, `explain_flow` and "
+    "`find_unused_objects` carry the three analysis workflows."
+)
+
 
 # -- Synthetic domain models (module level so the SDK can resolve the annotations) -----
 
@@ -277,7 +299,7 @@ def test_create_server_builds_the_stdio_server():
     server = create_server(make_settings())
 
     assert server.name == SERVER_NAME
-    assert server.instructions == INSTRUCTIONS
+    assert server.instructions == EXPECTED_INSTRUCTIONS
     # subscriptions=False unregisters subscriptions/listen: the catalog is static.
     #
     # This reaches into `_lowlevel_server` deliberately: the SDK exposes no public way to
@@ -1925,6 +1947,8 @@ async def test_the_conventions_resource_lists_only_registered_no_argument_tools(
     assert "`dns_settings_get`" not in text
     assert "8 of the 8 tools take arguments" not in text
     assert "7 of the 8 tools take arguments" in text
+    # One no-argument tool: the sentence has to agree with it.
+    assert "The other 1 takes an empty `arguments` object" in text
 
 
 @pytest.mark.parametrize(
@@ -1960,10 +1984,15 @@ async def test_the_instructions_name_the_enabled_domains_and_prompts():
 
 
 async def test_the_complete_surface_keeps_the_unchanged_instructions():
+    """The full surface publishes the previous instructions verbatim, not a paraphrase."""
     server = create_server(make_settings())
 
-    assert server.instructions == INSTRUCTIONS
-    assert "the prompts `audit_firewall`, `explain_flow`, `find_unused_objects`" in INSTRUCTIONS
+    assert INSTRUCTIONS == EXPECTED_INSTRUCTIONS
+    assert server.instructions == EXPECTED_INSTRUCTIONS
+    assert "the prompts `audit_firewall`, `explain_flow` and `find_unused_objects`" in (
+        EXPECTED_INSTRUCTIONS
+    )
+    assert "carry the three analysis workflows." in EXPECTED_INSTRUCTIONS
 
 
 @pytest.mark.parametrize(

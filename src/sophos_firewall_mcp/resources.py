@@ -513,11 +513,19 @@ def _conventions_document(surface: SurfaceSummary) -> str:
     no_argument = tuple(name for name in NO_ARGUMENT_TOOLS if name in surface.tool_names)
     if no_argument:
         no_argument_block = "\n".join(f"- `{name}`" for name in no_argument)
-        argument_sentence = (
-            f"{surface.tool_count - len(no_argument)} of the {surface.tool_count} tools take "
-            f"arguments. The other {len(no_argument)} take an empty `arguments` object because "
-            "they declare no parameters:"
-        )
+        other = len(no_argument)
+        if other == 1:
+            argument_sentence = (
+                f"{surface.tool_count - 1} of the {surface.tool_count} tools take arguments. "
+                "The other 1 takes an empty `arguments` object because it declares no "
+                "parameters:"
+            )
+        else:
+            argument_sentence = (
+                f"{surface.tool_count - other} of the {surface.tool_count} tools take "
+                f"arguments. The other {other} take an empty `arguments` object because they "
+                "declare no parameters:"
+            )
     else:
         no_argument_block = ""
         argument_sentence = f"All {surface.tool_count} tools take arguments."
