@@ -97,6 +97,7 @@ from pydantic import ValidationError  # noqa: E402
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
 from sophos_firewall_mcp.config import ConfigurationError, Settings, TOOL_DOMAINS  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
+from sophos_firewall_mcp.models.common import trim_published_output_schema  # noqa: E402
 from sophos_firewall_mcp.mrtr import mrtr_replay_guard  # noqa: E402
 from sophos_firewall_mcp.prompts import (  # noqa: E402
     PromptArgumentError,
@@ -111,6 +112,7 @@ from sophos_firewall_mcp.tools import (  # noqa: E402
     DomainRegistrar,
     registered_read_only_tool_names,
     registered_tool_names,
+    trim_registered_output_schemas,
 )
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
@@ -563,6 +565,10 @@ def create_server(
     server.middleware.insert(0, mrtr_replay_guard)
     for register in registrars:
         register(server, read_only=read_only)
+    # The published output schemas are trimmed once, after every domain has registered:
+    # the trim is per tool and the registry is fixed for the process lifetime. The tool
+    # package owns the registry access, so this module never touches the private seam.
+    trim_registered_output_schemas(server, trim_published_output_schema)
     # The surface is read back from the registry, not assumed from the selection: the
     # resources, the prompts and the instructions then describe the tools this process
     # actually publishes, so a filtered instance cannot claim one it did not register.

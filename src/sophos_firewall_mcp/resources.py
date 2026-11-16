@@ -523,8 +523,7 @@ def _conventions_document(surface: SurfaceSummary) -> str:
         else:
             argument_sentence = (
                 f"{surface.tool_count - other} of the {surface.tool_count} tools take "
-                f"arguments. The other {other} take an empty `arguments` object because they "
-                "declare no parameters:"
+                f"arguments; the other {other} declare no parameters:"
             )
     else:
         no_argument_block = ""
@@ -555,11 +554,10 @@ def _conventions_document(surface: SurfaceSummary) -> str:
     any_of = "mac_address_create" in surface.tool_names
     if union_tools:
         union_sentence = (
-            "A tool whose request is a union of shapes ("
+            "A union request ("
             + ", ".join(f"`{name}`" for name in union_tools)
-            + " and the other create/update tools that exist for both IP families) publishes a "
-            "root `oneOf` instead of one flat object, because each variant has its own required "
-            "fields"
+            + " and the other create/update tools) publishes a root `oneOf`, because each "
+            "variant has its own required fields"
         )
         if any_of:
             union_sentence += (
@@ -581,9 +579,9 @@ def _conventions_document(surface: SurfaceSummary) -> str:
 
 ## Flat arguments
 
-Every tool that takes arguments publishes those arguments at the top level of `arguments`,
-exactly as the MCP specification's own examples do. There is no wrapper object to unwrap:
-the fields the tool's `inputSchema` lists are the fields the call sends.
+Every tool that takes arguments publishes them at the top level of `arguments`. There
+is no wrapper object: the fields the tool's `inputSchema` lists are the fields the call
+sends.
 {example_block}
 {argument_sentence}
 
@@ -614,17 +612,20 @@ and omitting it means both.
 
 ## One page per call
 
-A paginated list publishes `page`, `page_size` and `page_total` as top-level arguments. `page` is
-1-based, `page_size` defaults to 10 and is capped at 100, and `page_total=true` adds
-`pages.total` and `pages.items` to the result. There is no cursor: call the next page
-explicitly when you need it.
+A paginated list publishes `page`, `page_size` and `page_total`. `page` is 1-based,
+`page_size` defaults to 10 and is capped at 100, and `page_total=true` adds `pages.total`
+and `pages.items`. There is no cursor: call the next page explicitly.
 
 ## Read one of `content` / `structuredContent`
 
-Every successful result carries the payload twice: a pretty-printed JSON text block in
-`content` and the same object in `structuredContent`. Read `structuredContent` when the
-client supports it and fall back to `content` otherwise; never parse both, because a single
-list page is 28-70 KB.
+Every successful result carries the payload twice: a JSON text block in `content` and
+the same object in `structuredContent`. Read `structuredContent` when the client supports
+it, else `content`; never parse both.
+
+## Catalog size and discovery
+
+`tools/list` is one page of 112 tools (~494KB) with no `nextCursor`; call it once per
+session and prefer progressive discovery.
 
 ## Errors
 
@@ -641,8 +642,8 @@ and an error the appliance answered with:
 the firewall rejected the request as invalid; check the field values (HTTP 400) [POST /firewall/rules/ipv4]
 ```
 
-An unknown argument is rejected before the handler runs, with the field path and the rule
-that failed. A 401 means the API key is the problem, not the administrator profile.
+An unknown argument is rejected before the handler runs, naming the field and the rule.
+A 401 means the API key is the problem, not the administrator profile.
 """
 
 
