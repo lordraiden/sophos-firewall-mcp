@@ -116,3 +116,57 @@ All commands were run in this worktree at `12124e7`; nothing below is taken from
 - **The live suite is the only firmware-compatibility evidence path and it is currently broken.**
   Until finding 1 is fixed, the next live run cannot produce evidence, and the "100 skipped" in the
   PR evidence masks that.
+
+---
+
+## Re-check after fixes
+
+**Re-checked HEAD:** `bb4c4c4` (`c97b08c` "fix(mcp): close the phase-8 review findings" + `bb4c4c4`
+"docs: align the README and live workflow with the 0.7.0 numbers"), on top of the reviewed `12124e7`.
+The verdict and findings above are the record of the original review and are left intact. This
+section records the status of each finding on the pushed HEAD.
+
+### Finding status
+
+| # | Severity | Status | Evidence on `bb4c4c4` |
+|---|---|---|---|
+| 1 | High | **Closed** | `tests/live/conftest.py:37` `EXPECTED_LIVE_TOOL_COUNT = 74`; `:11` and `.github/workflows/live.yml:6` say 38 mutations; all four live call sites are flat (`test_live_reads.py:208,242,285,301`); the new non-live `test_the_live_suite_expects_the_read_only_surface` (`tests/test_tool_surface.py:189-206`) pins `EXPECTED_LIVE_TOOL_COUNT`, `LIVE_READ_TOOLS` and the published 74-tool read-only surface. `assert_read_only_surface` now passes (`EXPECTED_LIVE_TOOL_COUNT = 74 actual = 74`); a flat `firewall_rule_list` call with the live-test argument shape succeeds against a mocked appliance (`is_error False`). |
+| 2 | Medium | **Closed** | `ADR-001:433-434` "145 operations / 112 MCP tools"; `:455` Total 145/112; per-domain table 8/6/27/10/6/2/11/9/28/2/3 = 112, matching `API-COVERAGE.md` §4.1 row for row; the composite names are `firewall_rule_set_enabled` / `firewall_rule_clone`; `:183` and `:298` also say 112. |
+| 3 | Low | **Closed** | `server.py:147-149` and `CHANGELOG.md:38` state the `mac_address_create` `anyOf` exception; `test_the_instructions_state_the_anyof_exception` (`tests/test_tool_surface.py:265-269`) pins it. |
+| 4 | Low | **Closed** | Union errors are now one readable line: `firewall_rule_create` + `ip_family:"ipv9"` → `ip_family must be one of 'ipv4', 'ipv6'`; missing discriminator → `ip_family is required; accepted values are 'ipv4', 'ipv6'`; a valid discriminator reports only the selected variant (`address_create` + `type:"ipv4Address"` → `ipv4_address is required`); `mac_address_create` → `mac_address is required or mac_addresses is required`. Four tests at `tests/test_tool_surface.py:217-263`. |
+| 5 | Low | **Closed** | `tests/test_tool_surface.py:5-6` now says "145 operationIds mapped to 107 one-to-one tools) plus the five declared composites". |
+| 6 | Low | **Partially closed** | The CHANGELOG, the release notes and most of the README now use the reproducible `807,920 / 655,034 / 622,787` with the measurement method (`CHANGELOG.md:62-66`, `RELEASE-0.7.0.md:23-24,38`). Two stale derived numbers remain: `README.md:261` still says "removed **185,113 bytes**" while its own operands `807,920 → 622,787` give **185,133** (the release notes correctly say −185,133), and `MIGRATION-0.7.md:12` still says "drops from **807,900** to 622,787". See findings 8 and 9. |
+| 7 | Low | **Closed** | `CHANGELOG.md:28-31`, `RELEASE-0.7.0.md:28-33` and `:264-266` now distinguish the unchanged output **payload** from the wider output **schema** (40 of 80 pairs), and tell a client that generates types to regenerate them. |
+
+### Commands and results (all run in this worktree at `bb4c4c4`)
+
+- `uv run --no-sync pytest -q` → **1237 passed, 100 skipped** (198.34 s). The +6 tests are the new
+  live-suite guard, the four union-error tests and the `anyOf` instruction test.
+- `uv run --no-sync pytest -m live -q` → **100 skipped, 1237 deselected** (no lab credentials; the
+  suite is opt-in, so this is expected — the new non-live guard is what now protects it).
+- `uv run --no-sync mypy src` → `Success: no issues found in 28 source files`.
+- `uv run --no-sync flake8 src tests scripts` → clean.
+- `uv run --no-sync black --check src tests scripts` → `54 files would be left unchanged`.
+- `uv run --no-sync python scripts/generate_coverage.py --check` → `docs/API-COVERAGE.md is up to date`.
+- `uv lock --check` → `Resolved 55 packages`.
+- Direct checks: `assert_read_only_surface` passes (74 == 74); the live-test constants are
+  `EXPECTED_LIVE_TOOL_COUNT=74`, `LIVE_READ_TOOLS=74` unique, `MERGED_READ_TOOLS=24`,
+  `LIVE_READ_CALLS=98`; the union-error messages above were produced by calling the tools through the
+  in-memory `Client`; a flat `firewall_rule_list` call with the live-test shape returned
+  `is_error False` against a respx-mocked appliance.
+
+### New findings
+
+| # | Severity | File:line | Finding | Evidence | Fix |
+|---|---|---|---|---|---|
+| 8 | Low | `README.md:261` | **The README's derived catalog total is stale after the number fix.** It says "0.7.0 removed **185,113 bytes** from the catalog (807,920 → 622,787, −22.9%)", but `807,920 − 622,787 = 185,133`. The release notes (`RELEASE-0.7.0.md:24`) correctly say −185,133. | `README.md:261`; arithmetic `807,920 − 622,787 = 185,133`; `RELEASE-0.7.0.md:24` "−185,133". | Change `185,113` to `185,133` in `README.md:261`. |
+| 9 | Low | `docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md:12` | **The migration document still carries the pre-fix catalog number.** It says "the `tools/list` payload drops from **807,900** to 622,787 bytes"; the reproducible pre-0.7 measurement is 807,920. | `MIGRATION-0.7.md:12`; measured `origin/main` STDIO `tools/list` = 807,920; `CHANGELOG.md:62` and `README.md:23` now say 807,920. | Change `807,900` to `807,920` in `MIGRATION-0.7.md:12`. |
+
+### Re-check verdict
+
+**APPROVE** — the High and Medium findings are closed, and the runtime surface is unchanged by the
+fixes (the only `src/` changes are the `INSTRUCTIONS` sentence and the union-error rendering, both
+covered by new tests). Two **Low** documentation nits remain (findings 8 and 9: two stale derived
+numbers in `README.md` and `MIGRATION-0.7.md`); they do not block integration and are a two-line
+follow-up. The live suite is no longer broken, and the new non-live guard means the `live` marker can
+no longer hide a surface drift.
