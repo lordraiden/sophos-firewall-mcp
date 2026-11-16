@@ -21,7 +21,11 @@ Two properties keep the guard from being bypassed by a flood of forged states:
   state the boundary rejects raises ``MCPError`` and releases the reservation, so a forged
   token never consumes a slot. A handler failure is returned as ``CallToolResult`` (not
   raised), so a legitimate state whose handler failed stays consumed -- the confirmation
-  was used.
+  was used. The release is keyed on *any* exception from ``call_next``, which cannot
+  distinguish a boundary rejection (correct to release) from a post-acceptance exception.
+  That is unreachable with the current handlers -- a handler failure is returned as
+  ``CallToolResult`` and no handler raises after a side effect -- but a future handler that
+  raises after a side effect must not rely on this guard alone.
 * **The cap fails closed.** When the set is full of live entries, a new state is refused
   with ``-32602`` instead of evicting a live entry. A flood can therefore only deny new
   confirmations, never displace a legitimate one.
@@ -99,6 +103,12 @@ async def mrtr_replay_guard(
     first round of an MRTR flow has no state, and every non-MRTR call passes through
     untouched. The check-and-reserve is synchronous, so two concurrent requests carrying
     the same token cannot both pass it on one event loop.
+
+    The reservation is released on any exception from ``call_next``. That is correct for a
+    boundary rejection (the state was never accepted) but would also release it for a
+    post-acceptance exception. This is unreachable today: handler failures are returned as
+    ``CallToolResult`` and no handler raises after a side effect. A future handler that
+    raises after a side effect must not rely on this guard alone.
     """
     state = (ctx.params or {}).get("requestState")
     if ctx.method != "tools/call" or not isinstance(state, str) or not state:
