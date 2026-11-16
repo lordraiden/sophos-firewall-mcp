@@ -382,6 +382,29 @@ def test_a_protocol_level_rejection_is_a_jsonrpc_error():
     assert response["error"]["code"] == -32601
 
 
+# -- Invocation-rate policy ------------------------------------------------------------
+
+
+async def test_tool_calls_are_not_rate_limited_through_the_mcp_client():
+    """The documented policy is concurrency-only at the tool-invocation layer too.
+
+    The policy is about tool invocations, not HTTP requests, so the HTTP-client test in
+    ``tests/test_client.py`` cannot catch a limiter added at the tool dispatch layer. Fifty
+    ``tools/call`` requests through the real SDK ``Client`` must all succeed.
+    """
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE}/firewall/rules/ipv4").mock(
+            return_value=httpx.Response(
+                200,
+                json={"items": [], "pages": {"current": 1, "size": 50, "maxSize": 100}},
+            )
+        )
+        async with Client(make_server()) as client:
+            for _ in range(50):
+                result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
+                assert result.is_error is False
+
+
 # -- Cancellation ----------------------------------------------------------------------
 
 

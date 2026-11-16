@@ -664,7 +664,9 @@ def test_the_rate_policy_decision_record_cites_the_requirement() -> None:
 
     assert "Rate limit tool invocations" in document
     assert "2026-07-28/server/tools#security-considerations" in document
-    assert "No separate invocation-rate limiter is added" in document
+    assert "does not implement a server-side invocation-rate limiter" in document
+    assert "accepted residual risk" in document
+    assert "discharge the MUST" in document
     assert "Residual risk" in document
 
 

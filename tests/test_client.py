@@ -992,11 +992,13 @@ async def test_a_retry_backoff_does_not_hold_the_semaphore(
         await client.aclose()
 
 
-async def test_sequential_calls_are_not_rate_limited(router: Any) -> None:
-    """The documented policy is concurrency-only: there is no hidden invocation-rate limiter.
+async def test_sequential_http_requests_are_not_rate_limited(router: Any) -> None:
+    """The HTTP client layer has no hidden invocation-rate limiter.
 
-    ``SOPHOS_MAX_CONCURRENCY`` bounds how many requests overlap, not how many a client may issue
-    over time. Fifty sequential calls must all succeed; a hidden limiter would delay or reject some.
+    This guards the transport layer only: ``SOPHOS_MAX_CONCURRENCY`` bounds how many requests
+    overlap, not how many a client may issue over time. The tool-invocation layer the policy is
+    actually about is covered by
+    ``tests/test_mcp_e2e.py::test_tool_calls_are_not_rate_limited_through_the_mcp_client``.
     """
     router.get(f"{BASE}/network/dns/settings").mock(return_value=httpx.Response(200, json={}))
 

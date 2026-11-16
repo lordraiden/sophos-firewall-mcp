@@ -80,23 +80,33 @@ configuration.
 
 ## Decision
 
-**No separate invocation-rate limiter is added.** The server's explicit policy for the MCP
-"Rate limit tool invocations" requirement is:
+**This server does not implement a server-side invocation-rate limiter.** The MCP `2026-07-28`
+Tools specification says servers **MUST** "Rate limit tool invocations"; this server does not, and
+this document records that as an **accepted residual risk** for the local-STDIO,
+one-client-per-process deployment model. It does **not** discharge the MUST, and it is not a claim
+that the requirement is met.
+
+The risk is accepted because the following controls bound the exposure in this deployment:
 
 1. The STDIO transport restricts callers to the one local MCP client that owns the process.
 2. The concurrency semaphore bounds the simultaneous load on the appliance.
 3. The appliance enforces its own rate limits, and the server surfaces those errors.
-4. The client/host owns the model's call rate (timeouts, loop detection, user confirmation), which
-   is where the MCP client-side guidance places that responsibility.
+4. The client/host owns the model's call rate (timeouts, loop detection, user confirmation).
 
-This is a deliberate, recorded judgment, not an oversight: the semaphore is a concurrency bound and
-is never described as a rate limiter.
+Points 1–3 are access-control, concurrency and downstream controls, not server-side invocation-rate
+limiting. Point 4 delegates to the client, and the relevant client-side guidance is a **SHOULD**
+("Implement timeouts for tool calls", "Prompt for user confirmation on sensitive operations"), not a
+MUST. None of the four is the server rate-limiting invocations, so the MUST remains unmet by design.
+
+The semaphore is a concurrency bound and is never described as a rate limiter. This is a deliberate,
+recorded judgment, not an oversight; the conditions under which the acceptance no longer holds are
+listed below.
 
 ## Why not at the HTTP client layer
 
 If a limiter were required, the HTTP client layer would be the wrong place for it. A tool invocation
 is not an HTTP request: the composite tools (`audit_firewall_rules`, `explain_connectivity`,
-`find_object_usage`) perform many bounded internal reads — up to 80 pages per IP family — through
+`find_object_usage`) perform many bounded internal reads — up to 80 pages per tool call — through
 the same `get`/`get_page` primitives as a single-resource tool. A limiter wrapped around `_send`
 would count each of those reads as a separate invocation, so a legitimate composite would consume
 dozens of tokens and be delayed or rejected, while a single-resource tool would consume one. That
@@ -111,7 +121,17 @@ does not require it today.
 
 - **A runaway model loop can issue many sequential calls.** The server will not stop it; the
   semaphore only bounds overlap. The appliance may throttle or return errors, and the client/host
-  may time out. This is the accepted residual risk.
+  may time out. This is the accepted residual risk, and it is the risk the MUST is meant to reduce.
+- **The client-side obligation is a SHOULD, not a MUST.** The MCP client guidance says clients
+  *SHOULD* implement timeouts for tool calls and *SHOULD* prompt for confirmation on sensitive
+  operations. A client that does neither leaves the loop unbounded; the server does not compensate.
+- **Practical ceiling of a runaway loop.** The semaphore allows `C` concurrent requests, so with an
+  appliance round trip of `L` seconds the sustained ceiling is roughly `C / L` requests per second
+  (ignoring client and server overhead). With the default `C = 4` and a 50–200 ms round trip that is
+  about **20–80 requests/second**; a purely sequential loop is about `1 / L`, or **5–20/second**.
+  At the `SOPHOS_MAX_CONCURRENCY` ceiling of 64 the same arithmetic gives roughly **320–1280
+  requests/second**. These are order-of-magnitude estimates, not measurements; they show that the
+  semaphore does not make a sustained loop cheap.
 - **The appliance's own rate limiting is the backstop.** If it is disabled or generous, a sustained
   sequential loop can load the management plane for longer than the semaphore alone would suggest.
 - **A future HTTP transport or shared multi-client process invalidates this decision.** The STDIO
@@ -131,8 +151,11 @@ true:
 
 ## What is tested
 
-- `tests/test_client.py::test_sequential_calls_are_not_rate_limited` proves the documented policy:
-  many sequential calls all succeed, so there is no hidden invocation-rate limiter.
+- `tests/test_client.py::test_sequential_http_requests_are_not_rate_limited` guards the HTTP client
+  layer: many sequential requests all succeed, so there is no hidden limiter there.
+- `tests/test_mcp_e2e.py::test_tool_calls_are_not_rate_limited_through_the_mcp_client` guards the
+  tool-invocation layer the policy is about: 50 `tools/call` requests through the real SDK `Client`
+  all succeed.
 - `tests/test_client.py::test_concurrent_requests_are_bounded_by_the_semaphore` (existing) proves
   the concurrency bound is real and configurable.
 - `tests/test_config.py` asserts the `DEFAULT_MAX_CONCURRENCY` comment describes concurrency, not a

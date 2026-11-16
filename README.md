@@ -590,17 +590,18 @@ The server distinguishes two controls that are easy to conflate:
 overlap; it does not cap how many invocations a client may issue over time. A client can make an
 unbounded number of sequential calls, each of which waits for a slot and then completes.
 
-**Policy: no separate invocation-rate limiter.** The MCP `2026-07-28` Tools specification lists
+**Policy: no server-side invocation-rate limiter.** The MCP `2026-07-28` Tools specification lists
 "Rate limit tool invocations" among the server's Security Considerations
 ([source](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations)).
-This server's explicit decision for its local STDIO deployment is recorded in
-[`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md): the STDIO transport limits access to
-one local client, the concurrency semaphore bounds the load a fan-out can place on the appliance, and
-the appliance enforces its own rate limits. The residual risk — a runaway model loop issuing many
-sequential calls — is owned by the client/host (timeouts, loop detection, user confirmation) and
-bounded by the appliance's own throttling. A deployment that exposes the server over HTTP or shares
-one process across clients must add a tool-invocation limiter at the tool dispatch layer; the decision
-record explains why the HTTP client layer is the wrong place for it.
+This server does not implement that limiter; the decision record
+([`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md)) records it as an **accepted residual
+risk** for the local STDIO, one-client-per-process deployment, not as a discharge of the MUST. The
+exposure is bounded by the STDIO transport (one local client), the concurrency semaphore, and the
+appliance's own rate limits; the residual risk — a runaway model loop issuing many sequential calls —
+is delegated to the client/host (timeouts, loop detection, user confirmation), whose guidance is a
+SHOULD, not a MUST. A deployment that exposes the server over HTTP or shares one process across
+clients must add a tool-invocation limiter at the tool dispatch layer; the decision record explains
+why the HTTP client layer is the wrong place for it.
 
 ## Known limitations and accepted regressions
 
