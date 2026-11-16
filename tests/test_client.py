@@ -992,6 +992,22 @@ async def test_a_retry_backoff_does_not_hold_the_semaphore(
         await client.aclose()
 
 
+async def test_sequential_calls_are_not_rate_limited(router: Any) -> None:
+    """The documented policy is concurrency-only: there is no hidden invocation-rate limiter.
+
+    ``SOPHOS_MAX_CONCURRENCY`` bounds how many requests overlap, not how many a client may issue
+    over time. Fifty sequential calls must all succeed; a hidden limiter would delay or reject some.
+    """
+    router.get(f"{BASE}/network/dns/settings").mock(return_value=httpx.Response(200, json={}))
+
+    client = make_client(SOPHOS_MAX_CONCURRENCY="1")
+    try:
+        for _ in range(50):
+            assert await client.get("/network/dns/settings") == {}
+    finally:
+        await client.aclose()
+
+
 # -- Lifecycle ---------------------------------------------------------------
 
 

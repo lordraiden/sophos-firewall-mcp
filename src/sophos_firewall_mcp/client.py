@@ -17,7 +17,9 @@ Transport policy (ADR-001 §9):
   :class:`~sophos_firewall_mcp.errors.SophosAmbiguousWriteError` instead;
 * at most :attr:`~sophos_firewall_mcp.config.Settings.max_concurrency` requests are in flight at
   once (four by default, ``SOPHOS_MAX_CONCURRENCY`` to change it), so a model that fans out cannot
-  turn one tool call per connection into a burst against the appliance.
+  turn one tool call per connection into a burst against the appliance. This is a **concurrency**
+  bound, not an invocation-rate limit; the server's rate policy is recorded in
+  ``docs/SECURITY-RATE-POLICY.md``.
 """
 
 from __future__ import annotations
@@ -134,6 +136,9 @@ class SophosRestClient:
     ``settings.max_concurrency`` requests are in flight at once, and a request waiting for a slot
     holds no connection. The slot is released when the attempt finishes, including when it raises,
     so a failing request cannot starve the client.
+
+    This is a concurrency bound, not a rate limit: it does not cap how many invocations a client may
+    issue over time. See ``docs/SECURITY-RATE-POLICY.md`` for the server's invocation-rate policy.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -340,7 +345,8 @@ class SophosRestClient:
         if body is not _NO_BODY:
             kwargs["json"] = body
         # The single choke point for every request: the semaphore is held for exactly one attempt,
-        # so a retry waiting on its backoff does not occupy a slot.
+        # so a retry waiting on its backoff does not occupy a slot. This bounds concurrency, not
+        # invocation rate (see docs/SECURITY-RATE-POLICY.md).
         async with self._semaphore:
             return await self._client.request(method, url, headers=request_headers, **kwargs)
 

@@ -279,7 +279,7 @@ Observed: `{"name": "x", "mac_address": "aa:bb:…", "mac_addresses": ["aa:bb:�
 
 #### L8 — No rate limiting beyond the concurrency semaphore
 
-The spec's [Security Considerations](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations) say servers **MUST** *"Rate limit tool invocations"*. The server bounds in-flight requests (`SOPHOS_MAX_CONCURRENCY`, `client.py:148`, `:342-344`) but has no per-tool or per-session rate limit. For a local STDIO server with one client this is arguably satisfied in spirit — the appliance is the rate-limited resource and the semaphore protects it — but record the judgment. If a rate limit is added, make it a documented setting rather than a hidden constant.
+The spec's [Security Considerations](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations) say servers **MUST** *"Rate limit tool invocations"*. The server bounds in-flight requests (`SOPHOS_MAX_CONCURRENCY`, `client.py:148`, `:342-344`) but has no per-tool or per-session rate limit. **Decision recorded (issue #63):** no separate invocation-rate limiter is added for the local STDIO, one-client-per-process deployment. The semaphore is a concurrency bound, not a rate limiter; the rationale, the residual risk and the conditions that would require a limiter are in [`docs/SECURITY-RATE-POLICY.md`](../../../SECURITY-RATE-POLICY.md). If a limiter is added, it belongs at the tool dispatch layer (one `tools/call` is one invocation, however many adapter reads it performs), not at the HTTP client layer.
 
 #### L9 — The elicitation `requestedSchema.description` leaks an internal docstring
 
@@ -385,7 +385,7 @@ The report would be misleading without this section. 0.7.0 is a strong release, 
 ### Optional / record-only
 
 - L1 (unknown tool → `-32602`): SDK-owned; document it.
-- L8 (rate limiting): record the judgment; the semaphore protects the appliance.
+- L8 (rate limiting): decision recorded in `docs/SECURITY-RATE-POLICY.md`; the semaphore is a concurrency bound, not a rate limiter.
 
 ---
 
