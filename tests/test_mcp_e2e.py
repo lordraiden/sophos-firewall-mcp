@@ -342,31 +342,38 @@ async def test_an_unknown_tool_is_invalid_params_over_stdio():
 
 
 @pytest.mark.parametrize(
-    ("name", "arguments"),
+    ("name", "arguments", "message_fragment"),
     [
-        ("nope", None),
-        ("explain_flow", {}),
+        ("nope", None, "Unknown prompt: nope"),
+        ("explain_flow", {}, "Missing required arguments"),
         (
             "explain_flow",
             {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "bogus": "x"},
+            "'bogus' is not an accepted argument",
         ),
         (
             "explain_flow",
             {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "port": "443"},
+            "port requires protocol 'tcp' or 'udp'",
         ),
     ],
     ids=["unknown-prompt", "missing-arguments", "unexpected-argument", "invalid-combination"],
 )
 async def test_an_invalid_prompt_request_is_invalid_params_over_stdio(
-    name: str, arguments: dict[str, str] | None
+    name: str, arguments: dict[str, str] | None, message_fragment: str
 ) -> None:
-    """An unknown prompt, missing arguments or a rejected argument is ``-32602``."""
+    """An unknown prompt, missing arguments or a rejected argument is ``-32602``.
+
+    The message names the rejected argument, so a client can fix the request without
+    reading a traceback.
+    """
     async with asyncio.timeout(90):
         async with Client(stdio_params()) as client:
             with pytest.raises(MCPError) as caught:
                 await client.get_prompt(name, arguments)
 
     assert caught.value.code == INVALID_PARAMS
+    assert message_fragment in caught.value.message
 
 
 async def test_a_valid_prompt_renders_the_same_content_over_stdio():

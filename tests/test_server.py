@@ -1698,29 +1698,32 @@ async def test_explain_flow_requires_its_endpoints():
 
 
 @pytest.mark.parametrize(
-    ("name", "arguments"),
+    ("name", "arguments", "message_fragment"),
     [
-        ("nope", None),
-        ("explain_flow", {}),
+        ("nope", None, "Unknown prompt: nope"),
+        ("explain_flow", {}, "Missing required arguments"),
         (
             "explain_flow",
             {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "bogus": "x"},
+            "'bogus' is not an accepted argument",
         ),
         (
             "explain_flow",
             {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "port": "443"},
+            "port requires protocol 'tcp' or 'udp'",
         ),
     ],
     ids=["unknown-prompt", "missing-arguments", "unexpected-argument", "invalid-combination"],
 )
 async def test_a_caller_fixable_prompt_failure_is_invalid_params(
-    name: str, arguments: dict[str, Any] | None
+    name: str, arguments: dict[str, Any] | None, message_fragment: str
 ) -> None:
     """M4: an unknown prompt or bad arguments is ``-32602``, not ``-32603``.
 
     The spec puts an invalid prompt name and missing or invalid arguments in the invalid
     params class. The SDK maps every ``ValueError`` from ``prompts/get`` to an internal
-    error, so the server's middleware corrects the caller-fixable ones.
+    error, so the server's middleware corrects the caller-fixable ones and names the
+    rejected argument in the message.
     """
     server = create_server(make_settings())
 
@@ -1729,6 +1732,7 @@ async def test_a_caller_fixable_prompt_failure_is_invalid_params(
             await client.get_prompt(name, arguments)
 
     assert caught.value.code == INVALID_PARAMS
+    assert message_fragment in caught.value.message
 
 
 async def test_a_genuine_prompt_renderer_crash_stays_internal_and_is_logged(
@@ -1791,6 +1795,41 @@ def test_only_a_caller_fixable_prompt_failure_is_invalid_params() -> None:
     crash = ValueError("Error rendering prompt explain_flow")
     crash.__cause__ = RuntimeError("boom")
     assert not server_module._prompt_error_is_caller_fixable(crash)
+
+
+def test_a_caller_fixable_prompt_message_names_the_rejected_argument() -> None:
+    """The ``-32602`` message names the prompt and the rejected argument, sanitized."""
+    unexpected = ValidationError.from_exception_data(
+        "explain_flow",
+        [{"type": "unexpected_keyword_argument", "loc": ("bogus",), "input": "x"}],
+    )
+    wrapped_unexpected = ValueError("Error rendering prompt explain_flow")
+    wrapped_unexpected.__cause__ = unexpected
+    assert server_module._prompt_error_message(wrapped_unexpected) == (
+        "explain_flow: 'bogus' is not an accepted argument"
+    )
+
+    mistyped = ValidationError.from_exception_data(
+        "explain_flow", [{"type": "int_parsing", "loc": ("port",), "input": "notanint"}]
+    )
+    wrapped_mistyped = ValueError("Error rendering prompt explain_flow")
+    wrapped_mistyped.__cause__ = mistyped
+    assert server_module._prompt_error_message(wrapped_mistyped).startswith(
+        "explain_flow: 'port': Input should be a valid integer"
+    )
+
+    combination = ValueError("Error rendering prompt explain_flow")
+    combination.__cause__ = prompts_module.PromptArgumentError(
+        "port requires protocol 'tcp' or 'udp'"
+    )
+    assert server_module._prompt_error_message(combination) == (
+        "explain_flow: port requires protocol 'tcp' or 'udp'"
+    )
+
+    # The SDK's own message is kept for the direct cases.
+    assert server_module._prompt_error_message(ValueError("Unknown prompt: nope")) == (
+        "Unknown prompt: nope"
+    )
 
 
 def test_unknown_tool_detection_matches_only_the_sdk_message() -> None:
