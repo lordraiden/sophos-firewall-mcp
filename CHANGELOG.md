@@ -5,6 +5,97 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-11-16
+
+**Patch release: the High finding and the cheap findings of the 0.7.0 MCP standards review are
+closed.** No tool is renamed, no argument is removed and the wire body is unchanged for every call
+that already worked. One input becomes required — `nat_rule_create`'s `position`, which the appliance
+already rejected a create without — and the four gated delete descriptions now state the
+confirmation's real scope instead of promising a question that cannot be asked on the protocol era
+the server advertises. The findings are
+in [`MCP-STANDARDS-REVIEW-0.7.md`](docs/architecture/sophos-rest-api-redesign/MCP-STANDARDS-REVIEW-0.7.md).
+
+### Changed
+
+- **`nat_rule_create` now requires `position`** (behaviour change). The appliance rejects a create
+  without it with `400 invalidRequest` ("Invalid position.") for both families and every
+  match/translation variant, although the OpenAPI document does not list it as required. 0.7.0
+  published it as optional and the adapter omitted it, so every create that did not send `position`
+  failed with a generic `400`. It is now a required input on both variants, like
+  `firewall_rule_create`, and the adapter always sends it: `top`, `bottom`, `after` or `before`, with
+  `after`/`before` still requiring `reference_item`. A caller that omits it gets a clear argument
+  error before any request is sent. This is the only input-contract change in 0.7.1.
+
+### Fixed
+
+- **H1 — the four gated delete descriptions are honest about the confirmation.**
+  `firewall_rule_delete`, `nat_rule_delete`, `network_user_delete` and
+  `network_interface_delete_vlan` now say the confirmation is **best-effort**: it fires on the legacy
+  handshake path, where the transport can carry a server-initiated request, and is skipped on the
+  `2026-07-28` per-request path, where the client's own confirmation UI is the only gate.
+  `confirm_destructive` logs a `WARNING` naming the action and the target when the skip happens, so an
+  operator can see a delete that ran without the question. The MRTR `InputRequiredResult` round trip
+  that would make the gate work on both eras is deferred to 0.8.0.
+- **M1 — `destructiveHint` is consistent for the PATCH-merge updates.** All eleven update tools
+  publish `destructiveHint: true`; the nine object, user and VLAN updates were `false` while the two
+  rule updates were already `true`. A JSON Merge Patch overwrites stored values, so it is not an
+  additive update, and the same operation class is no longer classified two ways.
+- **M2 — one shared `ip_family` description.** Every required `ip_family` publishes the same sentence
+  — *"IP family of the collection: 'ipv4' or 'ipv6'. Required: the two collections are separate, so
+  the family is never inferred."* — on the 32 tools that require it (including the six firewall tools,
+  which published no description at all) and on the 8 union tools that carry it (22 variant
+  definitions). The three audit composites keep their own optional description, where omitting the
+  field means "both families".
+- **M3 — `serverInfo.description` publishes the real tool count.** The description substitutes the
+  number of tools the server actually registered (112, or 74 in read-only mode) instead of the
+  installed distribution's summary, so a stale editable install can no longer publish "152 typed
+  tools" against a 112-tool surface. A drift test compares the published description with
+  `project.description` in `pyproject.toml`.
+- **M4 — `prompts/get` returns `-32602` for a caller-fixable failure.** An unknown prompt, missing or
+  invalid arguments, or a render failure is reported as invalid params instead of an internal error,
+  matching the specification's prompts error handling and the `resources/read` path.
+- **M5 — `elicitation: {}` counts as form-mode support.** The specification defines the empty
+  capabilities object as equivalent to declaring form mode, so the confirmation gate now fires for
+  that client generation instead of treating it as unable to answer. A `url`-only client is still not
+  asked, because it cannot answer a boolean question.
+- **M7 — a bad union selector is reported by name.** `address_create` with `ip_family: "ipv5"` now
+  reports `ip_family must be one of 'ipv4', 'ipv6'` instead of "type is required", because the union
+  error names a selector field the caller actually sent with a value no variant accepts. The
+  `address_create` description also states that `type` selects the variant and must match
+  `ip_family`.
+- **L5 — `annotations.title` is dropped.** The tool-level `title` already wins the specification's
+  display precedence, so the duplicate string is no longer published on any of the 112 tools.
+- **L7 — `INSTRUCTIONS` names the resources and prompts.** A model that reads only `instructions` now
+  learns that `sophos://conventions` exists and that `audit_firewall`, `explain_flow` and
+  `find_unused_objects` carry the three analysis workflows.
+- **L9 — the elicitation schema is plain prose.** The confirmation form's
+  `requestedSchema.description` is user-facing text instead of the internal
+  `_DestructiveConfirmation` docstring.
+- **L10 — the six IPv4-only IPsec tools say so.** `ipsec_connection_list_ipv4`,
+  `ipsec_live_connection_list_ipv4`, `ipsec_policy_based_connection_get_ipv4`,
+  `ipsec_policy_based_connection_list_ipv4`, `ipsec_route_based_connection_get_ipv4` and
+  `ipsec_route_based_connection_list_ipv4` now state "The API has no IPv6 counterpart", so a model
+  does not look for an `_ipv6` sibling that does not exist.
+
+### Known limitations
+
+- **The MRTR round trip is 0.8.0.** The confirmation still cannot fire on the `2026-07-28`
+  per-request path: `mcp` 2.3.0 refuses a standalone server-to-client request there, and the
+  specification's `InputRequiredResult` round trip would change every handler signature. 0.7.1 makes
+  the limitation visible — the descriptions say it and the skip is logged — instead of leaving it
+  silent; the real fix is scheduled for 0.8.0.
+- **Firmware compatibility is limited to the tested build.** The live evidence applies to **SFOS 23.0.0
+  GA-Build371** only. The Configuration REST API exposes no version endpoint, so the server cannot
+  detect the firmware and makes no claim for other SFOS builds, including later 23.0 maintenance
+  builds and SFOS 24.
+- **Live write validation is limited** to the object kinds exercised on the lab appliance; ambiguous
+  write reconciliation, a real `403` denial, bulk delete and interface/VPN mutations remain unverified.
+- **Accepted regressions** are unchanged: no system information, no service status and no log query,
+  because the Configuration REST API exposes no endpoint for them.
+- **Audit tools are configuration analysis, not packet tests**; `explain_connectivity` reports
+  `method: config-analysis` and `not-verifiable` when the configuration lacks the evidence.
+- **Pagination is one page per call**; the server never fetches every page automatically.
+
 ## [0.7.0] - 2026-11-16
 
 **Breaking: the IPv4/IPv6 tool pairs collapse behind a required `ip_family`, and tool arguments are
