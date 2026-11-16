@@ -66,7 +66,14 @@ from sophos_firewall_mcp.models.objects import (
     MacAddressUpdateInput,
     ObjectIdentifierInput,
 )
-from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
+from sophos_firewall_mcp.tools import (
+    ADDITIVE_ANNOTATIONS,
+    DESTRUCTIVE_ANNOTATIONS,
+    DomainAdapter,
+    ToolKind,
+    register_tool,
+    tool_error,
+)
 from sophos_firewall_mcp.tools.services_objects import register_service_objects_tools
 
 __all__ = [
@@ -509,14 +516,6 @@ class _ToolSpec:
     annotations: ToolAnnotations | None = None
 
 
-#: ``destructiveHint`` is true for an update as well as a delete: a JSON Merge Patch
-#: overwrites stored values (an address's IP, a group's member list, a service's ports), so
-#: it is not an additive operation. The spec defines the hint as "may perform destructive
-#: updates", and the two rule tools already classify their PATCH the same way.
-_CREATE = ToolAnnotations(destructive_hint=False, idempotent_hint=False)
-_UPDATE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
-_DELETE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
-
 _TOOL_SPECS: tuple[_ToolSpec, ...] = (
     _ToolSpec(
         name="address_list",
@@ -556,7 +555,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_create,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_update",
@@ -569,7 +568,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_update,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_delete",
@@ -582,7 +581,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_delete,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_list_fqdn",
@@ -615,7 +614,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_create_fqdn,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_update_fqdn",
@@ -627,7 +626,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_update_fqdn,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_delete_fqdn",
@@ -639,7 +638,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_delete_fqdn,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_group_list",
@@ -676,7 +675,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_create,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_group_update",
@@ -689,7 +688,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_update,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_group_delete",
@@ -702,7 +701,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_delete,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_group_list_fqdn",
@@ -736,7 +735,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_create_fqdn,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_group_update_fqdn",
@@ -748,7 +747,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_update_fqdn,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="address_group_delete_fqdn",
@@ -760,7 +759,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_delete_fqdn,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="mac_address_list",
@@ -795,7 +794,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=mac_address_create,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="mac_address_update",
@@ -807,7 +806,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=mac_address_update,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="mac_address_delete",
@@ -819,7 +818,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=mac_address_delete,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="country_group_list",

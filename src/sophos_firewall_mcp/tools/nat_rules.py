@@ -42,7 +42,6 @@ from urllib.parse import quote
 from mcp.server.elicitation import ElicitationResult
 from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
 from pydantic import ValidationError
 
 from sophos_firewall_mcp.context import AppContext
@@ -66,7 +65,9 @@ from sophos_firewall_mcp.models.nat import (
     project_nat_rule_page,
 )
 from sophos_firewall_mcp.tools import (
+    ADDITIVE_ANNOTATIONS,
     CONFIRMATION_NOTE,
+    DESTRUCTIVE_ANNOTATIONS,
     DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
@@ -326,7 +327,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "discriminator. enabled defaults to true and is always sent. The rule is not "
             "moved or enabled by a follow-up call."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
+        annotations=ADDITIVE_ANNOTATIONS,
     )
     async def nat_rule_create(
         request: NatRuleCreateInput, ctx: Context[AppContext]
@@ -347,7 +348,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "sent, omitted fields keep their stored value, and an explicit null removes an "
             "optional property. Provide at least one field besides id_or_name."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def nat_rule_update(
         request: NatRuleUpdateInput, ctx: Context[AppContext]
@@ -367,7 +368,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "and not reversible; the rule is removed from that family's rule base. "
             f"{CONFIRMATION_NOTE} Bulk delete is not exposed."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def nat_rule_delete(
         request: NatRuleDeleteInput,
@@ -394,7 +395,7 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "anchored by reference_item naming the reference rule. Reordering can change "
             "which rule matches first."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def nat_rule_move(
         request: NatRuleMoveInput, ctx: Context[AppContext]

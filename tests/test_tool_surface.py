@@ -77,23 +77,61 @@ EXPECTED_INPUT_PROPERTY_NAME_COUNT = 166
 EXPECTED_OUTPUT_PROPERTY_COUNT = 3518
 EXPECTED_OUTPUT_PROPERTY_NAME_COUNT = 430
 
-#: The eleven JSON Merge Patch update tools. A merge patch overwrites stored values, so
-#: every one of them is destructive; before 0.7.1 only the two rule tools said so.
-PATCH_UPDATE_TOOLS = frozenset(
-    {
-        "address_group_update",
-        "address_group_update_fqdn",
-        "address_update",
-        "address_update_fqdn",
-        "firewall_rule_update",
-        "mac_address_update",
-        "nat_rule_update",
-        "network_interface_update_vlan",
-        "network_user_update",
-        "service_group_update",
-        "service_update",
-    }
-)
+#: The complete mutation surface, pinned tool by tool as
+#: ``(destructiveHint, idempotentHint)``. The table is the contract: a new mutation tool
+#: must be added here deliberately, and a changed hint fails the test. The groups are the
+#: operation classes, not the HTTP verb -- ``firewall_rule_clone`` is a POST that only adds
+#: state, and ``firewall_rule_set_enabled`` is a PATCH that changes existing state.
+EXPECTED_MUTATION_ANNOTATIONS: dict[str, tuple[bool, bool]] = {
+    # Creates and the clone: additive (they only add an object) and not idempotent (a
+    # repeat creates a second object or fails with a duplicate-name conflict).
+    "address_create": (False, False),
+    "address_create_fqdn": (False, False),
+    "address_group_create": (False, False),
+    "address_group_create_fqdn": (False, False),
+    "firewall_rule_clone": (False, False),
+    "firewall_rule_create": (False, False),
+    "mac_address_create": (False, False),
+    "nat_rule_create": (False, False),
+    "network_interface_create_vlan": (False, False),
+    "network_user_create": (False, False),
+    "service_create": (False, False),
+    "service_group_create": (False, False),
+    # JSON Merge Patch updates: destructive (they overwrite stored values) and idempotent
+    # (the same body twice leaves the same state).
+    "address_group_update": (True, True),
+    "address_group_update_fqdn": (True, True),
+    "address_update": (True, True),
+    "address_update_fqdn": (True, True),
+    "firewall_rule_update": (True, True),
+    "mac_address_update": (True, True),
+    "nat_rule_update": (True, True),
+    "network_interface_update_vlan": (True, True),
+    "network_user_update": (True, True),
+    "service_group_update": (True, True),
+    "service_update": (True, True),
+    # Deletes: destructive (they remove stored configuration) and idempotent (a repeat
+    # reports not-found and changes nothing).
+    "address_delete": (True, True),
+    "address_delete_fqdn": (True, True),
+    "address_group_delete": (True, True),
+    "address_group_delete_fqdn": (True, True),
+    "firewall_rule_delete": (True, True),
+    "mac_address_delete": (True, True),
+    "nat_rule_delete": (True, True),
+    "network_interface_delete_vlan": (True, True),
+    "network_user_delete": (True, True),
+    "service_delete": (True, True),
+    "service_group_delete": (True, True),
+    # Moves and the enable/disable flip: destructive (they reorder or change existing
+    # state) and idempotent (the same target twice is a no-op).
+    "firewall_rule_move": (True, True),
+    "firewall_rule_set_enabled": (True, True),
+    "nat_rule_move": (True, True),
+    # The documented exception: destructive but not idempotent, because a live session id
+    # is not stable across calls.
+    "live_user_disconnect": (True, False),
+}
 
 #: The six IPsec tools whose API has no IPv6 counterpart. After the 0.7.0 collapse they are
 #: the only ``_ipv4`` names left, so each description says why there is no pair.
@@ -327,23 +365,101 @@ def test_the_instructions_mention_the_resources_and_prompts() -> None:
         assert name in INSTRUCTIONS
 
 
-async def test_every_patch_update_is_classified_destructive() -> None:
-    """M1: a JSON Merge Patch overwrites stored values, so it is not an additive update.
+async def test_every_mutation_publishes_the_pinned_annotation_pair() -> None:
+    """Pin all 38 mutation pairs: a changed hint is a contract change, not a refactor.
 
-    The spec defines ``destructiveHint`` as "may perform destructive updates"; the same
-    operation class must not be classified two ways, or a client that gates on the hint
-    treats an object update as safe and a rule update as dangerous for no principled
-    reason.
+    ``destructiveHint`` is ``false`` only for an operation that adds state; everything that
+    replaces, removes or reorders existing state is ``true``. ``idempotentHint`` is
+    independent: a delete is destructive and idempotent, a create is additive and not
+    idempotent, and ``live_user_disconnect`` is destructive and not idempotent.
     """
     tools = await tools_by_name()
 
-    assert PATCH_UPDATE_TOOLS <= set(tools)
-    for name in sorted(PATCH_UPDATE_TOOLS):
+    for name, (destructive, idempotent) in EXPECTED_MUTATION_ANNOTATIONS.items():
         annotations = tools[name].annotations
         assert annotations is not None, name
         assert annotations.read_only_hint is False, name
-        assert annotations.destructive_hint is True, name
-        assert annotations.idempotent_hint is True, name
+        assert annotations.destructive_hint is destructive, name
+        assert annotations.idempotent_hint is idempotent, name
+
+
+async def test_the_mutation_annotation_table_covers_the_registered_surface() -> None:
+    """A new mutation cannot appear without an explicit entry in the pinned table.
+
+    The registration helper already rejects a mutation that omits either hint, so this
+    guard catches the other silent failure: a new tool that declares a pair nobody
+    reviewed, or a rename that leaves a stale row behind.
+    """
+    tools = await tools_by_name()
+    registered = mutation_names(tools)
+    pinned = set(EXPECTED_MUTATION_ANNOTATIONS)
+
+    assert registered - pinned == set(), (
+        "new mutation tools must be added to EXPECTED_MUTATION_ANNOTATIONS with an "
+        f"explicit destructiveHint/idempotentHint pair: {sorted(registered - pinned)}"
+    )
+    assert pinned - registered == set(), (
+        "EXPECTED_MUTATION_ANNOTATIONS names tools that are not registered mutations: "
+        f"{sorted(pinned - registered)}"
+    )
+    assert len(EXPECTED_MUTATION_ANNOTATIONS) == EXPECTED_MUTATION_COUNT
+
+
+def test_a_mutation_without_explicit_hints_is_rejected() -> None:
+    """A new mutation cannot silently inherit the SDK's default annotation pair.
+
+    The spec default for ``destructiveHint`` is ``true``, but the server must not rely on
+    a default it does not publish: the registration helper refuses a mutation that omits
+    either write hint, so the omission fails at import time instead of shipping an
+    unreviewed classification.
+    """
+    server = MCPServer[AppContext]("annotation-default-guard")
+
+    with pytest.raises(ValueError, match="must declare destructiveHint"):
+        register_tool(
+            server,
+            read_only=False,
+            kind=ToolKind.MUTATION,
+            name="synthetic_unclassified_mutation",
+            title="Synthetic unclassified mutation",
+            description="A mutation that declares no annotation pair.",
+        )
+
+
+async def test_read_only_tools_publish_no_write_hints() -> None:
+    """The spec says the write hints are meaningful only when ``readOnlyHint`` is false."""
+    tools = await tools_by_name()
+
+    for name, tool in tools.items():
+        annotations = tool.annotations
+        assert annotations is not None, name
+        if annotations.read_only_hint is True:
+            assert annotations.destructive_hint is None, name
+            assert annotations.idempotent_hint is None, name
+
+
+async def test_the_destructive_non_idempotent_exception_is_documented() -> None:
+    """``live_user_disconnect`` is the one destructive mutation that is not idempotent.
+
+    Every other destructive tool converges when repeated: a delete reports not-found, a
+    move to the same anchor is a no-op, and a PATCH with the same body leaves the same
+    state. A disconnect targets a live session id the appliance does not keep stable, so a
+    blind retry can hit a different session; the tool declares ``idempotentHint: false``
+    and its description tells the caller to re-list first.
+    """
+    tools = await tools_by_name()
+    destructive_non_idempotent = {
+        name
+        for name, (destructive, idempotent) in EXPECTED_MUTATION_ANNOTATIONS.items()
+        if destructive and not idempotent
+    }
+
+    assert destructive_non_idempotent == {"live_user_disconnect"}
+    annotations = tools["live_user_disconnect"].annotations
+    assert annotations is not None
+    assert annotations.destructive_hint is True
+    assert annotations.idempotent_hint is False
+    assert "Not idempotent" in tools["live_user_disconnect"].description
 
 
 def _required_ip_family_properties(schema: dict[str, Any]) -> list[dict[str, Any]]:

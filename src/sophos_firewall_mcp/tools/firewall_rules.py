@@ -65,7 +65,6 @@ from urllib.parse import quote
 from mcp.server.elicitation import ElicitationResult
 from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.context import AppContext
@@ -90,7 +89,9 @@ from sophos_firewall_mcp.models.firewall import (
     UpdateFirewallRuleIpv6Input,
 )
 from sophos_firewall_mcp.tools import (
+    ADDITIVE_ANNOTATIONS,
     CONFIRMATION_NOTE,
+    DESTRUCTIVE_ANNOTATIONS,
     DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
@@ -534,7 +535,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "referenceItem naming the anchor rule. ruleType is always firewall: WAF rules "
             "are out of scope. Returns the created rule with its applied enabled state."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
+        annotations=ADDITIVE_ANNOTATIONS,
     )
     async def firewall_rule_create(
         request: CreateFirewallRuleInput, ctx: Context[AppContext]
@@ -554,7 +555,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "and an explicit null on an optional member removes it. The rule is identified "
             "by idOrName. Returns the updated rule."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def firewall_rule_update(
         request: UpdateFirewallRuleInput, ctx: Context[AppContext]
@@ -573,7 +574,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "irreversible: the rule is removed from that family's rule base. "
             f"{CONFIRMATION_NOTE} Returns whether the appliance confirmed the deletion."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def firewall_rule_delete(
         request: DeleteFirewallRuleInput,
@@ -599,7 +600,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "after and before need a referenceItem naming the anchor rule. Reordering "
             "changes which rule matches first."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def firewall_rule_move(
         request: MoveFirewallRuleInput, ctx: Context[AppContext]
@@ -619,7 +620,7 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "missing value can never silently disable a rule. Returns the rule with the "
             "applied enabled state."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def firewall_rule_set_enabled(
         request: SetFirewallRuleEnabledInput, ctx: Context[AppContext]
@@ -640,7 +641,9 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
             "read-only members are not copied. position is required and after/before need a "
             "referenceItem. WAF sources are rejected on the IPv4 rule base."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
+        # A clone only adds a rule: the source is read, never modified, so the operation is
+        # additive. It is not idempotent because a repeat creates a second copy.
+        annotations=ADDITIVE_ANNOTATIONS,
     )
     async def firewall_rule_clone(
         request: CloneFirewallRuleInput, ctx: Context[AppContext]

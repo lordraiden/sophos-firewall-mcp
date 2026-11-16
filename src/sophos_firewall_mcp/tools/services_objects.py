@@ -43,7 +43,14 @@ from sophos_firewall_mcp.models.objects import (
     ServiceListInput,
     ServiceUpdateInput,
 )
-from sophos_firewall_mcp.tools import DomainAdapter, ToolKind, register_tool, tool_error
+from sophos_firewall_mcp.tools import (
+    ADDITIVE_ANNOTATIONS,
+    DESTRUCTIVE_ANNOTATIONS,
+    DomainAdapter,
+    ToolKind,
+    register_tool,
+    tool_error,
+)
 
 __all__ = [
     "SERVICES_PATH",
@@ -261,14 +268,6 @@ class _ToolSpec:
     annotations: ToolAnnotations | None = None
 
 
-#: ``destructiveHint`` is true for an update as well as a delete: a JSON Merge Patch
-#: overwrites stored values (a service's ports, a group's member list), so
-#: it is not an additive operation. The spec defines the hint as "may perform destructive
-#: updates", and the two rule tools already classify their PATCH the same way.
-_CREATE = ToolAnnotations(destructive_hint=False, idempotent_hint=False)
-_UPDATE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
-_DELETE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
-
 _TOOL_SPECS: tuple[_ToolSpec, ...] = (
     _ToolSpec(
         name="service_list",
@@ -312,7 +311,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=service_create,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="service_update",
@@ -325,7 +324,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=service_update,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="service_delete",
@@ -337,7 +336,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=service_delete,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="service_group_list",
@@ -372,7 +371,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=service_group_create,
-        annotations=_CREATE,
+        annotations=ADDITIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="service_group_update",
@@ -384,7 +383,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=service_group_update,
-        annotations=_UPDATE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
     _ToolSpec(
         name="service_group_delete",
@@ -396,7 +395,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         ),
         kind=ToolKind.MUTATION,
         handler=service_group_delete,
-        annotations=_DELETE,
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     ),
 )
 

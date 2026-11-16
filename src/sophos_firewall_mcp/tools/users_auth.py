@@ -59,7 +59,9 @@ from sophos_firewall_mcp.models.users import (
     project_user_page,
 )
 from sophos_firewall_mcp.tools import (
+    ADDITIVE_ANNOTATIONS,
     CONFIRMATION_NOTE,
+    DESTRUCTIVE_ANNOTATIONS,
     DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
@@ -383,7 +385,7 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "created account. Not idempotent: repeating the call creates nothing new but "
             "fails with a conflict because the name already exists."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
+        annotations=ADDITIVE_ANNOTATIONS,
     )
     async def network_user_create(
         request: NetworkUserCreateInput, ctx: Context[AppContext]
@@ -405,7 +407,7 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "never returned. Returns the updated account. Idempotent: sending the same body "
             "twice leaves the same state."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def network_user_update(
         request: NetworkUserUpdateInput, ctx: Context[AppContext]
@@ -427,7 +429,7 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "would target the new account. Returns `deleted` and the identifier the delete was "
             "issued for."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def network_user_delete(
         request: NetworkUserDeleteInput,
@@ -478,6 +480,10 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "retry blindly; list the sessions again first. Returns `disconnected` and the "
             "targeted session id."
         ),
+        # The one destructive mutation that is not idempotent: a live session id is not
+        # stable across calls, so a blind retry can disconnect a different session. The
+        # shared DESTRUCTIVE_ANNOTATIONS pair would claim idempotence, so this tool declares
+        # its own pair; tests/test_tool_surface.py pins the exception.
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=False),
     )
     async def live_user_disconnect(

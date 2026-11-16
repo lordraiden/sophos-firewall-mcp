@@ -177,6 +177,30 @@ gateways, routes, SD-WAN, DHCP, DNS, neighbors, router advertisements, multicast
 The full per-operation inventory, with the reason for every exclusion, is in
 [`docs/API-COVERAGE.md`](docs/API-COVERAGE.md).
 
+### Tool annotations
+
+Every tool publishes MCP `ToolAnnotations`. The hints are advisory metadata for the client —
+they are not an authorization boundary (see [Security model](#security-model)) — but they are
+part of the published contract, so a test pins every mutation's pair.
+
+- **Read-only tools** publish `readOnlyHint: true` and no `destructiveHint`/`idempotentHint`.
+  The spec says the write hints are meaningful only when `readOnlyHint` is false.
+- **Mutation tools** publish `readOnlyHint: false` and declare both write hints explicitly.
+  The server refuses to register a mutation that omits either one, so a new tool cannot
+  silently inherit the spec default (`destructiveHint: true`).
+- `destructiveHint: false` is reserved for operations that only add state: the eleven
+  creates and `firewall_rule_clone`. Everything that replaces, removes or reorders existing
+  state — the eleven JSON Merge Patch updates, the eleven deletes, the two moves,
+  `firewall_rule_set_enabled` and `live_user_disconnect` — publishes `destructiveHint: true`.
+- `idempotentHint` is independent of `destructiveHint`. Deletes, updates, moves and the
+  enable/disable flip are destructive and idempotent; creates and the clone are additive and
+  not idempotent; `live_user_disconnect` is destructive and not idempotent because a live
+  session id is not stable across calls.
+- `openWorldHint` is decided per tool: `false` for everything that reads or writes the one
+  configured appliance, `true` only for the six tools whose result is produced by an entity
+  the appliance does not own (DHCP leases, live sessions, live IPsec peers, the cellular
+  carrier and the vendor's DNS Protection verdict).
+
 ## Calling the tools
 
 ### Flat arguments
