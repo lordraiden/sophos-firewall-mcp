@@ -110,6 +110,17 @@ handler runs. The state is also single-use: :mod:`sophos_firewall_mcp.mrtr` refu
 second use of the same sealed token, so a retry cannot execute the confirmed delete twice
 (:data:`CONFIRMATION_NOTE` is the model-facing summary).
 
+Mutation annotations
+--------------------
+Every mutation tool declares ``destructiveHint`` and ``idempotentHint`` explicitly;
+:func:`_build_annotations` rejects a mutation that omits either, so a new tool cannot
+silently inherit the spec default. The surface uses two shared pairs,
+:data:`ADDITIVE_ANNOTATIONS` for an operation that only adds state (a create or a clone)
+and :data:`DESTRUCTIVE_ANNOTATIONS` for one that replaces, removes or reorders existing
+state (a JSON Merge Patch update, a delete, a move or an enable/disable flip). The two
+hints are independent: ``live_user_disconnect`` is destructive but not idempotent, so it
+declares its own pair. ``tests/test_tool_surface.py`` pins all 38 pairs tool by tool.
+
 Open-world hint
 ---------------
 ``openWorldHint`` describes the tool's interaction domain, not how much its data can be
@@ -332,6 +343,20 @@ OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
     }
 )
 """The closed-by-default exception list for ``openWorldHint``; see the module docstring."""
+
+#: The annotation pair for a mutation that only adds state: a create or a clone. The
+#: operation is additive (``destructiveHint: false``) and not idempotent
+#: (``idempotentHint: false``): repeating it either creates a second object or fails with a
+#: duplicate-name conflict, so it never converges on the same state.
+ADDITIVE_ANNOTATIONS = ToolAnnotations(destructive_hint=False, idempotent_hint=False)
+
+#: The annotation pair for a mutation that replaces, removes or reorders existing state: a
+#: JSON Merge Patch update, a delete, a move or an enable/disable flip. It is destructive
+#: (``destructiveHint: true``) because it overwrites or removes stored configuration, and
+#: idempotent (``idempotentHint: true``) because repeating the same call leaves the same
+#: state. The two hints are independent: a tool whose idempotence differs declares its own
+#: pair (``live_user_disconnect`` is destructive but not idempotent).
+DESTRUCTIVE_ANNOTATIONS = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
 
 
 class DestructiveConfirmation(BaseModel):

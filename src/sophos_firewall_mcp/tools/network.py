@@ -47,7 +47,6 @@ from urllib.parse import quote
 from mcp.server.elicitation import ElicitationResult
 from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.context import AppContext
@@ -55,7 +54,9 @@ from sophos_firewall_mcp.errors import SophosAPIError
 from sophos_firewall_mcp.models import network as models
 from sophos_firewall_mcp.models.common import ListPage
 from sophos_firewall_mcp.tools import (
+    ADDITIVE_ANNOTATIONS,
     CONFIRMATION_NOTE,
+    DESTRUCTIVE_ANNOTATIONS,
     DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
@@ -380,7 +381,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "changed by this server. A created interface is not enabled by this tool; the API "
             "exposes no enable/disable operation for interfaces."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=False),
+        annotations=ADDITIVE_ANNOTATIONS,
     )
     async def network_interface_create_vlan(
         request: models.NetworkInterfaceCreateVlanInput, ctx: Context[AppContext]
@@ -401,7 +402,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "PATCH body has no vlanDetails member), and description is bridge-only, so neither "
             "is exposed."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def network_interface_update_vlan(
         request: models.NetworkInterfaceUpdateVlanInput, ctx: Context[AppContext]
@@ -424,7 +425,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             f"{CONFIRMATION_NOTE} Idempotent: repeating the "
             "delete has no further effect, and an already-absent interface reports not found."
         ),
-        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
+        annotations=DESTRUCTIVE_ANNOTATIONS,
     )
     async def network_interface_delete_vlan(
         request: models.NetworkInterfaceDeleteVlanInput,
