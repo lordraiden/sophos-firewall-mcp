@@ -35,12 +35,17 @@ from mcp.types import (
     ClientCapabilities,
     ElicitationCapability,
     FormElicitationCapability,
+    UrlElicitationCapability,
 )
 from pydantic import BaseModel
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.server import create_server
-from sophos_firewall_mcp.tools import confirm_destructive
+from sophos_firewall_mcp.tools import (
+    CONFIRMATION_NOTE,
+    _DestructiveConfirmation,
+    confirm_destructive,
+)
 
 HOST = "192.0.2.10"
 KEY = "sfos_test_key_0123456789abcdef"
@@ -117,6 +122,16 @@ def _capabilities(*, form: bool = True) -> ClientCapabilities:
     )
 
 
+def _url_only_capabilities() -> ClientCapabilities:
+    """A client that declared ``url`` mode only: it cannot answer a boolean question."""
+    return ClientCapabilities(elicitation=ElicitationCapability(url=UrlElicitationCapability()))
+
+
+def _empty_elicitation_capabilities() -> ClientCapabilities:
+    """The spec's backwards-compatible ``"elicitation": {}`` declaration."""
+    return ClientCapabilities(elicitation=ElicitationCapability())
+
+
 async def test_no_capabilities_keeps_the_previous_behaviour() -> None:
     """A client that declared nothing is never asked and never blocked."""
     ctx = _StubContext(None, AcceptedElicitation(data=_Answer(confirm=True)))
@@ -136,11 +151,22 @@ async def test_a_client_without_the_elicitation_capability_is_not_asked() -> Non
 
 async def test_a_client_without_the_form_mode_is_not_asked() -> None:
     """``url``-only elicitation cannot answer a boolean question."""
-    ctx = _StubContext(_capabilities(form=False), AcceptedElicitation(data=_Answer(confirm=True)))
+    ctx = _StubContext(_url_only_capabilities(), AcceptedElicitation(data=_Answer(confirm=True)))
 
     await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
 
     assert ctx.asked == []
+
+
+async def test_an_empty_elicitation_object_counts_as_form_mode() -> None:
+    """M5: the spec defines ``"elicitation": {}`` as form-mode support, so the gate fires."""
+    ctx = _StubContext(
+        _empty_elicitation_capabilities(), AcceptedElicitation(data=_Answer(confirm=True))
+    )
+
+    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+
+    assert len(ctx.asked) == 1
 
 
 async def test_an_accepted_confirmation_returns() -> None:
@@ -206,13 +232,28 @@ async def test_an_unusable_answer_aborts() -> None:
     assert "not confirmed" in str(caught.value)
 
 
-async def test_a_transport_without_a_back_channel_keeps_the_previous_behaviour() -> None:
-    """The modern per-request path cannot carry a server-initiated request."""
+async def test_a_transport_without_a_back_channel_keeps_the_previous_behaviour(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The modern per-request path cannot carry a server-initiated request.
+
+    H1: the skip is not silent. The delete still proceeds, but the operator gets a
+    ``WARNING`` naming the action and the target, so a delete that ran without the question
+    is visible in the server log.
+    """
     ctx = _StubContext(_capabilities(), NoBackChannelError("elicitation/create"))
 
-    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+    with caplog.at_level("WARNING", logger="sophos_firewall_mcp.tools"):
+        await confirm_destructive(
+            ctx,
+            action="delete the firewall rule",
+            target="'allow-lan-to-wan' from the ipv4 rule base",
+        )
 
     assert len(ctx.asked) == 1
+    assert "confirmation skipped" in caplog.text
+    assert "delete the firewall rule" in caplog.text
+    assert "allow-lan-to-wan" in caplog.text
 
 
 # -- The four handlers, end to end -----------------------------------------------------
@@ -294,19 +335,25 @@ async def test_a_client_without_elicitation_keeps_the_previous_behaviour(
 
 
 @pytest.mark.parametrize("name", sorted(GATED))
-async def test_a_modern_transport_falls_back_instead_of_failing(router: Any, name: str) -> None:
+async def test_a_modern_transport_falls_back_instead_of_failing(
+    router: Any, name: str, caplog: pytest.LogCaptureFixture
+) -> None:
     """The client declares elicitation but the modern path cannot deliver the question.
 
     ``mcp`` 2.3.0 refuses a standalone server-to-client request on the modern per-request
-    path, so the handler must fall back instead of failing the delete.
+    path, so the handler must fall back instead of failing the delete -- and H1 requires
+    the skip to be visible in the server log.
     """
     route = _mock_delete(router, name)
 
-    async with Client(
-        make_server(),
-        elicitation_callback=_elicitation_callback("accept", confirm=True),
-    ) as client:
-        result = await client.call_tool(name, GATED[name])
+    with caplog.at_level("WARNING", logger="sophos_firewall_mcp.tools"):
+        async with Client(
+            make_server(),
+            elicitation_callback=_elicitation_callback("accept", confirm=True),
+        ) as client:
+            result = await client.call_tool(name, GATED[name])
+
+    assert "confirmation skipped" in caplog.text
 
     assert result.is_error is False, result.content[0].text
     assert route.called
@@ -323,3 +370,33 @@ async def test_the_gated_tools_are_the_four_highest_blast_radius_deletes() -> No
         "network_interface_delete_vlan",
         "network_user_delete",
     }
+
+
+async def test_the_gated_descriptions_state_the_modern_path_limitation() -> None:
+    """H1: the description must not promise a confirmation the modern path cannot deliver.
+
+    The server advertises ``2026-07-28``, where ``ctx.elicit`` raises
+    ``NoBackChannelError`` and the delete proceeds. A model that reads "the call first asks
+    the user to confirm" may tell the user it will ask and then delete without asking.
+    """
+    tools = {tool.name: tool for tool in await make_server().list_tools()}
+
+    for name in sorted(GATED):
+        description = tools[name].description
+        assert CONFIRMATION_NOTE in description, name
+        assert "2026-07-28" in description, name
+        assert "When the client supports elicitation the call first asks" not in description, name
+
+
+def test_the_confirmation_schema_description_is_plain_prose() -> None:
+    """L9: the client renders this description in a confirmation dialog.
+
+    It must not leak the implementation note (a Sphinx role, "elicitation schemas are
+    restricted to primitive properties") that belongs in a code comment.
+    """
+    description = _DestructiveConfirmation.model_json_schema().get("description", "")
+
+    assert description
+    assert ":func:" not in description
+    assert "Elicitation schemas" not in description
+    assert "primitive" not in description

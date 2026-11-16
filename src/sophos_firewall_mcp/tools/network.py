@@ -54,6 +54,7 @@ from sophos_firewall_mcp.errors import SophosAPIError
 from sophos_firewall_mcp.models import network as models
 from sophos_firewall_mcp.models.common import ListPage
 from sophos_firewall_mcp.tools import (
+    CONFIRMATION_NOTE,
     DomainAdapter,
     ToolKind,
     confirm_destructive,
@@ -386,7 +387,7 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "PATCH body has no vlanDetails member), and description is bridge-only, so neither "
             "is exposed."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=True),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_interface_update_vlan(
         request: models.NetworkInterfaceUpdateVlanInput, ctx: Context[AppContext]
@@ -405,9 +406,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
             "unless its type is 'vlan'; because deleteNetworkInterface has no request body, "
             "that pre-read is the only enforcement of the VLAN-only rule. Destructive: the "
             "interface and its configuration are removed, and a non-2xx response is reported "
-            "as an error rather than retried. When the client supports elicitation the call "
-            "first asks the user to confirm, naming the interface; a declined or cancelled "
-            "confirmation aborts the call and nothing is deleted. Idempotent: repeating the "
+            "as an error rather than retried. "
+            f"{CONFIRMATION_NOTE} Idempotent: repeating the "
             "delete has no further effect, and an already-absent interface reports not found."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),

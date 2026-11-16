@@ -253,7 +253,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "optional name filters. Each item carries its type (policyBased or routeBased), "
             "gateway mode, profile, gateway settings and protected networks. This is "
             "configuration: use ipsec_live_connection_list_ipv4 for live security "
-            "associations. Read-only."
+            "associations. The API has no IPv6 counterpart. Read-only."
         ),
     )
     async def ipsec_connection_list_ipv4(
@@ -270,7 +270,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="List policy-based IPv4 IPsec connections",
         description=(
             "List the configured policy-based IPv4 site-to-site connections one page at a time, "
-            "with optional name filters. Read-only."
+            "with optional name filters. The API has no IPv6 counterpart. Read-only."
         ),
     )
     async def ipsec_policy_based_connection_list_ipv4(
@@ -285,7 +285,10 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="ipsec_policy_based_connection_get_ipv4",
         title="Get a policy-based IPv4 IPsec connection",
-        description="Read one policy-based IPv4 site-to-site connection by name or UUID. Read-only.",
+        description=(
+            "Read one policy-based IPv4 site-to-site connection by name or UUID. The API has "
+            "no IPv6 counterpart. Read-only."
+        ),
     )
     async def ipsec_policy_based_connection_get_ipv4(
         request: models.VpnPolicyBasedConnectionRefInput, ctx: Context[AppContext]
@@ -301,7 +304,8 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         title="List route-based IPv4 IPsec connections",
         description=(
             "List the configured route-based IPv4 site-to-site connections one page at a time, "
-            "with optional name filters. Each item also carries its tunnel interface. Read-only."
+            "with optional name filters. Each item also carries its tunnel interface. The API "
+            "has no IPv6 counterpart. Read-only."
         ),
     )
     async def ipsec_route_based_connection_list_ipv4(
@@ -316,7 +320,10 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="ipsec_route_based_connection_get_ipv4",
         title="Get a route-based IPv4 IPsec connection",
-        description="Read one route-based IPv4 site-to-site connection by name or UUID. Read-only.",
+        description=(
+            "Read one route-based IPv4 site-to-site connection by name or UUID. The API has no "
+            "IPv6 counterpart. Read-only."
+        ),
     )
     async def ipsec_route_based_connection_get_ipv4(
         request: models.VpnRouteBasedConnectionRefInput, ctx: Context[AppContext]
@@ -337,7 +344,7 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
             "established, not that none is configured. The operation declares no pagination "
             "parameters and the appliance caps the response at 1000 items (pages.size and "
             "pages.maxSize are both 1000), so a list of exactly 1000 items may be truncated "
-            "and there is no way to page past it. Read-only."
+            "and there is no way to page past it. The API has no IPv6 counterpart. Read-only."
         ),
     )
     async def ipsec_live_connection_list_ipv4(

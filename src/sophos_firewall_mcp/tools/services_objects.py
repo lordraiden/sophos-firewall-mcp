@@ -261,8 +261,12 @@ class _ToolSpec:
     annotations: ToolAnnotations | None = None
 
 
+#: ``destructiveHint`` is true for an update as well as a delete: a JSON Merge Patch
+#: overwrites stored values (a service's ports, a group's member list), so
+#: it is not an additive operation. The spec defines the hint as "may perform destructive
+#: updates", and the two rule tools already classify their PATCH the same way.
 _CREATE = ToolAnnotations(destructive_hint=False, idempotent_hint=False)
-_UPDATE = ToolAnnotations(destructive_hint=False, idempotent_hint=True)
+_UPDATE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
 _DELETE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
 
 _TOOL_SPECS: tuple[_ToolSpec, ...] = (

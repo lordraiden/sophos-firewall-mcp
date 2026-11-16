@@ -38,7 +38,12 @@ from mcp.types import ToolAnnotations
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
 from sophos_firewall_mcp.server import INSTRUCTIONS, create_server
-from sophos_firewall_mcp.tools import OPEN_WORLD_TOOLS, ToolKind, register_tool
+from sophos_firewall_mcp.tools import (
+    IP_FAMILY_DESCRIPTION,
+    OPEN_WORLD_TOOLS,
+    ToolKind,
+    register_tool,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 CURATED_PATH = ROOT / "scripts" / "coverage_curated.yaml"
@@ -70,6 +75,37 @@ EXPECTED_INPUT_PROPERTY_NAME_COUNT = 166
 #: of distinct names. A change here means the output schema changed.
 EXPECTED_OUTPUT_PROPERTY_COUNT = 3518
 EXPECTED_OUTPUT_PROPERTY_NAME_COUNT = 430
+
+#: The eleven JSON Merge Patch update tools. A merge patch overwrites stored values, so
+#: every one of them is destructive; before 0.7.1 only the two rule tools said so.
+PATCH_UPDATE_TOOLS = frozenset(
+    {
+        "address_group_update",
+        "address_group_update_fqdn",
+        "address_update",
+        "address_update_fqdn",
+        "firewall_rule_update",
+        "mac_address_update",
+        "nat_rule_update",
+        "network_interface_update_vlan",
+        "network_user_update",
+        "service_group_update",
+        "service_update",
+    }
+)
+
+#: The six IPsec tools whose API has no IPv6 counterpart. After the 0.7.0 collapse they are
+#: the only ``_ipv4`` names left, so each description says why there is no pair.
+IPV4_ONLY_IPSEC_TOOLS = frozenset(
+    {
+        "ipsec_connection_list_ipv4",
+        "ipsec_live_connection_list_ipv4",
+        "ipsec_policy_based_connection_get_ipv4",
+        "ipsec_policy_based_connection_list_ipv4",
+        "ipsec_route_based_connection_get_ipv4",
+        "ipsec_route_based_connection_list_ipv4",
+    }
+)
 
 #: The published input naming convention (M1): lowercase words joined by underscores.
 SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -268,6 +304,113 @@ def test_the_instructions_state_the_anyof_exception() -> None:
     assert "mac_address_create" in INSTRUCTIONS
 
 
+async def test_a_bad_secondary_selector_names_that_field() -> None:
+    """M7: ``address_create`` is discriminated by ``type`` but also pins ``ip_family``.
+
+    A caller that sends only a bad ``ip_family`` must be told about ``ip_family``, not
+    about a ``type`` it never sent.
+    """
+    async with Client(make_server()) as client:
+        result = await client.call_tool("address_create", {"ip_family": "ipv5", "name": "x"})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "ip_family must be one of 'ipv4', 'ipv6'" in text
+    assert "type is required" not in text
+
+
+def test_the_instructions_mention_the_resources_and_prompts() -> None:
+    """L7: a model that reads only ``instructions`` must learn the other two primitives."""
+    assert "sophos://conventions" in INSTRUCTIONS
+    for name in ("audit_firewall", "explain_flow", "find_unused_objects"):
+        assert name in INSTRUCTIONS
+
+
+async def test_every_patch_update_is_classified_destructive() -> None:
+    """M1: a JSON Merge Patch overwrites stored values, so it is not an additive update.
+
+    The spec defines ``destructiveHint`` as "may perform destructive updates"; the same
+    operation class must not be classified two ways, or a client that gates on the hint
+    treats an object update as safe and a rule update as dangerous for no principled
+    reason.
+    """
+    tools = await tools_by_name()
+
+    assert PATCH_UPDATE_TOOLS <= set(tools)
+    for name in sorted(PATCH_UPDATE_TOOLS):
+        annotations = tools[name].annotations
+        assert annotations is not None, name
+        assert annotations.read_only_hint is False, name
+        assert annotations.destructive_hint is True, name
+        assert annotations.idempotent_hint is True, name
+
+
+def _required_ip_family_properties(schema: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every required ``ip_family`` property in ``schema``, at every depth.
+
+    The union variants are reached through ``$defs``: their ``ip_family`` is a ``const``
+    that selects the family, so it is the same argument one level down.
+    """
+    found: list[dict[str, Any]] = []
+
+    def walk(node: Any) -> None:
+        if not isinstance(node, dict):
+            return
+        properties = node.get("properties")
+        if isinstance(properties, dict) and "ip_family" in properties:
+            if "ip_family" in (node.get("required") or ()):
+                found.append(properties["ip_family"])
+        for definition in (node.get("$defs") or {}).values():
+            walk(definition)
+
+    walk(schema)
+    return found
+
+
+async def test_every_required_ip_family_publishes_the_shared_description() -> None:
+    """M2: ``ip_family`` is the same argument on every tool, so it reads the same way.
+
+    The six firewall tools published no description at all and the other tools published
+    thirteen different ones. The published ``inputSchema`` is the model's only description
+    of a parameter, so the description is normalised in one place.
+    """
+    tools = await tools_by_name()
+
+    root_level = 0
+    for name, tool in tools.items():
+        schema = tool.input_schema
+        root_properties = schema.get("properties") or {}
+        if "ip_family" in root_properties and "ip_family" in (schema.get("required") or ()):
+            root_level += 1
+        for property_schema in _required_ip_family_properties(schema):
+            assert property_schema.get("description") == IP_FAMILY_DESCRIPTION, name
+
+    # 32 tools publish a required root-level ``ip_family``; the union tools carry it in
+    # their variants instead, and those are covered by the loop above.
+    assert root_level == 32
+
+
+async def test_the_optional_ip_family_composites_keep_their_own_description() -> None:
+    """M2: the three audit composites mean something different, so they are not normalised."""
+    tools = await tools_by_name()
+
+    for name in ("audit_firewall_rules", "explain_connectivity", "find_object_usage"):
+        properties = tools[name].input_schema["properties"]
+        assert "ip_family" in properties, name
+        assert "ip_family" not in (tools[name].input_schema.get("required") or ()), name
+        description = properties["ip_family"].get("description")
+        assert description and description != IP_FAMILY_DESCRIPTION, name
+
+
+async def test_the_ipv4_only_ipsec_tools_say_so() -> None:
+    """L10: after the 0.7.0 collapse these are the only ``_ipv4`` names left."""
+    tools = await tools_by_name()
+
+    assert IPV4_ONLY_IPSEC_TOOLS <= set(tools)
+    for name in sorted(IPV4_ONLY_IPSEC_TOOLS):
+        assert "no IPv6 counterpart" in tools[name].description, name
+
+
 async def test_every_tool_publishes_an_object_rooted_output() -> None:
     tools = await tools_by_name()
 
@@ -290,7 +433,10 @@ async def test_every_tool_publishes_an_input_schema_and_an_open_world_hint() -> 
 
         annotations = tool.annotations
         assert annotations is not None, name
-        assert annotations.title, name
+        # The tool-level ``title`` is the one the spec's display precedence reads first, so
+        # the annotations do not duplicate it.
+        assert tool.title, name
+        assert annotations.title is None, name
         assert annotations.open_world_hint is (name in OPEN_WORLD_TOOLS), name
 
 

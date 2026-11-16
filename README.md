@@ -17,16 +17,22 @@ It is not the Sophos Central Firewall Management API: the only backend is
 `https://<SOPHOS_HOST>:<SOPHOS_PORT>/api/firewall-config/v1` on the appliance itself, authenticated with a
 Bearer API key.
 
-> **0.7.0 is the current release.** It is a breaking release with two changes: the 40 IPv4/IPv6 tool
-> pairs collapse into one tool per concept behind a **required `ip_family`** argument, and tool
-> arguments are published **flat** instead of inside a `request` wrapper. The surface drops from 152
-> tools to 112 and the catalog from 807,920 to 622,787 bytes. The
+> **0.7.1 is the current release.** It is a patch release that closes the High finding and the cheap
+> findings of the [0.7.0 MCP standards review](docs/architecture/sophos-rest-api-redesign/MCP-STANDARDS-REVIEW-0.7.md):
+> the four gated delete descriptions now state that the confirmation is **best-effort** (it fires on
+> the legacy handshake path and is skipped, with a logged warning, on the `2026-07-28` path), and
+> `nat_rule_create` now requires `position`, which the appliance already rejected a create without.
+> No tool is renamed and no argument is removed. **0.7.0 remains the breaking release:** the 40
+> IPv4/IPv6 tool pairs collapse into one tool per concept behind a **required `ip_family`** argument,
+> and tool arguments are published **flat** instead of inside a `request` wrapper. The surface is 112
+> tools. The
 > [migration table](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md) maps every removed
 > tool name to its replacement. 0.6.0 unified the published *output* field names on camelCase (the
 > Sophos wire names); 0.5.0 unified every published *input* parameter on snake_case; 0.4.0 was the
 > breaking, REST-only migration: the XML transport, the XML credentials, the raw XML tool, the
 > semantic router and FastEmbed are gone, with no compatibility mode. See
-> [`CHANGELOG.md`](CHANGELOG.md), the [0.7.0 release notes](docs/release/RELEASE-0.7.0.md), the
+> [`CHANGELOG.md`](CHANGELOG.md), the [0.7.1 release notes](docs/release/RELEASE-0.7.1.md), the
+> [0.7.0 release notes](docs/release/RELEASE-0.7.0.md), the
 > [0.6.0 release notes](docs/release/RELEASE-0.6.0.md), the
 > [0.5.0 release notes](docs/release/RELEASE-0.5.0.md) and the
 > [0.4.0 release notes](docs/release/RELEASE-0.4.0.md).
@@ -140,10 +146,14 @@ one key across automations.
 take arguments. The Access column shows whether a domain exposes mutation tools; with
 `SOPHOS_READ_ONLY_MODE=true` the server registers **74 tools and 0 mutations**.
 
+The server publishes its identity in `serverInfo`: `name`, `title`, `version`, `websiteUrl` and a
+`description` that names the number of tools it actually registered — 112 here, 74 in read-only mode —
+so the identity cannot drift from `tools/list`.
+
 | Domain | Tools | Access | Coverage |
 |---|---:|---|---|
 | Firewall rules (IPv4/IPv6) | 8 | read + write | List, get, create, update, delete and move, plus `firewall_rule_set_enabled` (PATCH `enabled`) and `firewall_rule_clone` (get + create). The required `ip_family` selects the IPv4 or IPv6 rule base. A created rule is never auto-enabled or repositioned. |
-| NAT rules (IPv4/IPv6) | 6 | read + write | List, get, create, update, delete and move; `ip_family` selects the rule base. |
+| NAT rules (IPv4/IPv6) | 6 | read + write | List, get, create, update, delete and move; `ip_family` selects the rule base. A create requires `position` (`top`, `bottom`, `after` or `before`), because the appliance rejects a create without it. |
 | Addresses and address groups | 27 | read + write | IPv4/IPv6 addresses and groups (one tool each, `ip_family` selects the collection), FQDN addresses and groups (full CRUD), MAC addresses (full CRUD), country groups (read-only). |
 | Services and service groups | 10 | read + write | List, get, create, update, delete. |
 | Network users | 6 | read + write | General user list and network-user CRUD. Passwords are write-only and never returned or logged. |
@@ -223,10 +233,16 @@ A tool that exists for both IP families publishes one required `ip_family` argum
 `ipv6`) instead of two tools. 40 tools take it. It is **required, not defaulted**: a default would
 silently target one family, and for a mutation (delete, update, move, enable/disable, clone) that
 would make a destructive target a guess. The audit composites are the one exception: they are
-read-only and can span both families, so their `ip_family` is optional and omitting it means both.
+read-only and can span all families, so their `ip_family` is optional and omitting it means all of them (`find_object_usage` also accepts `fqdn`).
 The wire body is unchanged for each family; the adapter strips `ip_family` and selects the IPv4 or
 IPv6 path. The 80 tool names this replaces, and the `ip_family` value that reproduces each one, are
 in the [migration table](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md).
+
+Every required `ip_family` publishes the same description in `inputSchema` — *"IP family of the
+collection: 'ipv4' or 'ipv6'. Required: the two collections are separate, so the family is never
+inferred."* — on the 32 tools that require it and on the union variants, so the argument reads the
+same everywhere. The three audit composites keep their own optional description, where omitting the
+field means "all families" (`find_object_usage` also accepts `fqdn`).
 
 ### Read one of `content` / `structuredContent`, not both
 
@@ -238,8 +254,9 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **112 tools in a single response**: **622,787 bytes**, roughly **156k tokens**
-at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO,
+`tools/list` returns all **112 tools in a single response**: **625,824 bytes** on the legacy wire
+line and **626,255 bytes** on the modern one (0.7.1; 0.7.0 measured 622,787 and 623,383 with the
+same harness, so the descriptions added about 3 KB) — roughly **156k tokens** at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO,
 including the trailing newline; the envelope is identical across the protocol versions the server
 negotiates. There is no pagination cursor, so a client
 that injects the whole catalog into the prompt either truncates it — and then cannot call the tools
@@ -329,7 +346,7 @@ Desktop's `claude_desktop_config.json`, or the equivalent in Cursor / Antigravit
         "-e", "SOPHOS_API_KEY",
         "-e", "SOPHOS_VERIFY_SSL",
         "-e", "SOPHOS_READ_ONLY_MODE",
-        "ghcr.io/lordraiden/sophos-firewall-mcp:0.7.0"
+        "ghcr.io/lordraiden/sophos-firewall-mcp:0.7.1"
       ],
       "env": {
         "SOPHOS_HOST": "192.168.1.1",
@@ -403,7 +420,7 @@ The image is published to GHCR as **`ghcr.io/lordraiden/sophos-firewall-mcp`**.
 
 | Tag | Meaning |
 |---|---|
-| `0.7.0`, `0.7` | Stable release tags, published only from an approved release. |
+| `0.7.1`, `0.7` | Stable release tags, published only from an approved release. |
 | `latest` | Moved **only** by an approved release promotion — never by a push to `main`. |
 | `main`, `sha-<short>` | Development builds from `main`. Not a release; no stability guarantee. |
 
@@ -418,7 +435,7 @@ docker run -i --rm \
   -e SOPHOS_API_KEY_FILE=/run/secrets/sophos_api_key \
   -e SOPHOS_VERIFY_SSL=true \
   -v "$PWD/sophos_api_key:/run/secrets/sophos_api_key:ro" \
-  ghcr.io/lordraiden/sophos-firewall-mcp:0.7.0
+  ghcr.io/lordraiden/sophos-firewall-mcp:0.7.1
 ```
 
 `docker-compose.yml` in this repository is a REST-only reference: it passes the same variables, keeps
@@ -463,12 +480,15 @@ administrator profile for any deployment that only needs inspection.
   merged tool takes a required `ip_family` (`ipv4` or `ipv6`). The
   [migration table](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md) maps every removed
   name to its replacement and the `ip_family` value that reproduces the old behaviour.
-- **Elicitation is available to handshake clients only.** The four highest-blast-radius deletes ask
-  the client to confirm when it declared the `elicitation` capability and the transport has a
-  back-channel. `mcp` 2.3.0 refuses a server-initiated request on the modern (`2026-07-28`)
-  per-request path, so the confirmation is silently skipped there and the delete proceeds exactly as
-  before; a non-interactive client is unaffected either way. The confirmation is an additive
-  affordance, never a new precondition.
+- **The delete confirmation is best-effort.** The four highest-blast-radius deletes
+  (`firewall_rule_delete`, `nat_rule_delete`, `network_user_delete`,
+  `network_interface_delete_vlan`) ask the client to confirm when it declared the `elicitation`
+  capability and the transport has a back-channel. `mcp` 2.3.0 refuses a server-initiated request on
+  the modern (`2026-07-28`) per-request path, so the confirmation is skipped there and the delete
+  proceeds exactly as before; the server logs a `WARNING` naming the action and the target when that
+  happens, and the tool descriptions say so. A non-interactive client is unaffected either way. The
+  confirmation is an additive affordance, never a new precondition. The `InputRequiredResult` round
+  trip that would make it work on both eras is scheduled for 0.8.0.
 - **Input parameter naming is uniform as of 0.5.0.** Every published input property, at every depth,
   is snake_case (`page_size`, `name_contains`, `id_or_name`, `rule_type`, `reference_item`, …). The JSON
   body sent to the appliance is unchanged: each field keeps its Sophos wire alias. This was a breaking
@@ -534,6 +554,8 @@ documented in [`docs/live-evidence/README.md`](docs/live-evidence/README.md).
   access and phase reviews.
 - [Live evidence](docs/live-evidence/) — what was verified against a real appliance, and what was
   deferred with a reason.
+- [Release notes 0.7.1](docs/release/RELEASE-0.7.1.md) — the patch release that closes the 0.7.0
+  standards-review findings, its one behaviour change, rollback plan and publication checklist.
 - [Release notes 0.7.0](docs/release/RELEASE-0.7.0.md) — the breaking release, its IPv4/IPv6 collapse
   and flat arguments, rollback plan and publication checklist.
 - [Migration to 0.7.0](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md) — the 80 removed
