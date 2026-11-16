@@ -36,10 +36,11 @@ declares no exception for these operations): the body is serialized with
 
 from __future__ import annotations
 
-from typing import Any, Callable, TypeVar
+from typing import Annotated, Any, Callable, TypeVar
 from urllib.parse import quote
 
-from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.elicitation import ElicitationResult
+from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import ValidationError
@@ -66,14 +67,25 @@ from sophos_firewall_mcp.models.nat import (
 )
 from sophos_firewall_mcp.tools import (
     CONFIRMATION_NOTE,
+    DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
-    confirm_destructive,
+    destructive_confirmation,
     register_tool,
+    require_confirmation,
     tool_error,
 )
 
 __all__ = ["register_nat_tools"]
+
+
+def _nat_rule_delete_target(request: NatRuleDeleteInput) -> str:
+    """The object the delete confirmation names."""
+    return f"{request.id_or_name!r} from the {request.ip_family} NAT rule base"
+
+
+#: The resolver that asks the client to confirm ``nat_rule_delete``.
+_CONFIRM_NAT_RULE_DELETE = destructive_confirmation("delete the NAT rule", _nat_rule_delete_target)
 
 OutputT = TypeVar("OutputT")
 
@@ -358,14 +370,15 @@ def register_nat_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def nat_rule_delete(
-        request: NatRuleDeleteInput, ctx: Context[AppContext]
+        request: NatRuleDeleteInput,
+        confirmation: Annotated[
+            ElicitationResult[DestructiveConfirmation],
+            Resolve(_CONFIRM_NAT_RULE_DELETE),
+        ],
+        ctx: Context[AppContext],
     ) -> NatRuleDeleteOutput:
+        require_confirmation(confirmation, action="delete the NAT rule")
         path = IPV6_RULES_PATH if request.ip_family == "ipv6" else IPV4_RULES_PATH
-        await confirm_destructive(
-            ctx,
-            action="delete the NAT rule",
-            target=f"{request.id_or_name!r} from the {request.ip_family} NAT rule base",
-        )
         return await NatAdapter.from_context(ctx).delete_rule(path, request.id_or_name)
 
     @register_tool(

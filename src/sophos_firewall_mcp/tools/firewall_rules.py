@@ -49,20 +49,21 @@ create a new rule each time. ``open_world_hint`` comes from the per-tool verdict
 :data:`sophos_firewall_mcp.tools.OPEN_WORLD_TOOLS`: a rule base is the appliance's own
 configuration, so every tool here is closed (``false``).
 
-``firewall_rule_delete`` asks the client to confirm before the appliance is touched
-(:func:`sophos_firewall_mcp.tools.confirm_destructive`). The gate is best-effort: it fires
-on the legacy handshake path, where the transport can carry a server-initiated request,
-and is skipped -- with a ``WARNING`` -- on the modern (``2026-07-28``) per-request path,
-where the client's own confirmation UI is the only gate.
+``firewall_rule_delete`` requires an explicit client confirmation before the appliance is
+touched (:func:`sophos_firewall_mcp.tools.destructive_confirmation`). The question is
+delivered as an ``InputRequiredResult`` round trip on the modern (``2026-07-28``) protocol
+and as a standalone elicitation on the legacy handshake; a declined, cancelled or
+unanswerable confirmation aborts the call before any HTTP request is made.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 from urllib.parse import quote
 
-from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.elicitation import ElicitationResult
+from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ValidationError
@@ -90,14 +91,27 @@ from sophos_firewall_mcp.models.firewall import (
 )
 from sophos_firewall_mcp.tools import (
     CONFIRMATION_NOTE,
+    DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
-    confirm_destructive,
+    destructive_confirmation,
     register_tool,
+    require_confirmation,
     tool_error,
 )
 
 __all__ = ["register_firewall_tools"]
+
+
+def _firewall_rule_delete_target(request: DeleteFirewallRuleInput) -> str:
+    """The object the delete confirmation names."""
+    return f"{request.id_or_name!r} from the {request.ip_family} rule base"
+
+
+#: The resolver that asks the client to confirm ``firewall_rule_delete``.
+_CONFIRM_FIREWALL_RULE_DELETE = destructive_confirmation(
+    "delete the firewall rule", _firewall_rule_delete_target
+)
 
 #: Collection path of the IPv4 rules (``getAllFirewallRulesIpv4`` / ``createFirewallRuleIpv4``).
 _IPV4_COLLECTION = "/firewall/rules/ipv4"
@@ -562,13 +576,14 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def firewall_rule_delete(
-        request: DeleteFirewallRuleInput, ctx: Context[AppContext]
+        request: DeleteFirewallRuleInput,
+        confirmation: Annotated[
+            ElicitationResult[DestructiveConfirmation],
+            Resolve(_CONFIRM_FIREWALL_RULE_DELETE),
+        ],
+        ctx: Context[AppContext],
     ) -> DeleteFirewallRuleOutput:
-        await confirm_destructive(
-            ctx,
-            action="delete the firewall rule",
-            target=f"{request.id_or_name!r} from the {request.ip_family} rule base",
-        )
+        require_confirmation(confirmation, action="delete the firewall rule")
         return await FirewallRuleAdapter.from_context(ctx).delete_rule(request)
 
     @register_tool(

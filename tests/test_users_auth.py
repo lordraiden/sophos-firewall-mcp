@@ -19,7 +19,7 @@ import httpx
 import pytest
 import respx
 import yaml
-from mcp import Client
+from mcp import Client, types
 from mcp.server.mcpserver import MCPServer
 from pydantic import SecretStr, ValidationError
 
@@ -166,9 +166,16 @@ def router() -> Any:
         yield mocked
 
 
+async def _accept_confirmation(
+    context: Any, params: types.ElicitRequestParams
+) -> types.ElicitResult:
+    """Answer the destructive-confirmation question with an explicit accept."""
+    return types.ElicitResult(action="accept", content={"confirm": True})
+
+
 async def call(server: MCPServer[AppContext], name: str, request: dict[str, Any]) -> Any:
     """Call one tool through the official SDK client (full schema validation included)."""
-    async with Client(server) as client:
+    async with Client(server, elicitation_callback=_accept_confirmation) as client:
         return await client.call_tool(name, request)
 
 
