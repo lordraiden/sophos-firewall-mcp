@@ -38,14 +38,22 @@ So three more `get`-by-id paths are now verified end to end: `mac_address_get`,
 `address_group_get_ipv6` and `firewall_rule_get_ipv6`. Cleanup was verified: every created object was
 deleted and the collections returned to their baseline.
 
-## 3. New finding — `nat_rule_create` for IPv6 answers a generic 400
+## 3. Finding — `nat_rule_create` requires `position` on both families
 
 `nat_rule_create` with `ip_family: "ipv6"`, `enabled: false`, `any` services/interfaces/networks and
-`translated_source: {"masq": true}` returns **HTTP 400 `invalidRequest`** with no field detail. The IPv4
-equivalent was validated in phase 4. The appliance does not say which field it rejects, and the server
-surfaces only the sanitized message. This is recorded as a defect candidate: either the IPv6 NAT create
-needs a field the tool does not send (for example a linked firewall rule or an explicit translation
-address), or the appliance rejects the `masq` translation for IPv6.
+`translated_source: {"masq": true}` returned **HTTP 400 `invalidRequest`** with no field detail. The
+cause is not IPv6-specific: the appliance **requires `position`** on `POST /nat/rules/ipv4` and
+`POST /nat/rules/ipv6`, and answers `400 {"error":"invalidRequest","message":"Invalid position."}`
+without it. The contract lists `position` in `properties` but not in `required`, so the model followed
+the contract and the appliance did not.
+
+The tool now requires `position` on both families (commit `fc5324a`), so the failure is caught before
+any request instead of surfacing as a sanitized 400. The phase-4 and phase-5 write validations had
+passed `position: bottom`, which is why the omission only appeared in this probe.
+
+Two further appliance constraints were recorded, not server defects: `translatedService` is accepted
+only with exactly one original service and must differ from it, and a non-`any` interface is rejected
+because no interface on this appliance has IPv6 configured.
 
 ## 4. What remains skipped, and why
 
