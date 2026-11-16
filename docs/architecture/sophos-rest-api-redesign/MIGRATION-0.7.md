@@ -9,7 +9,7 @@ the server's own convention: the three audit composites already took an `ip_fami
 
 0.7.0 publishes **one tool per concept** and moves the family axis into a required `ip_family`
 argument. The tool count drops from 152 to 112 (40 pairs collapse; the two firewall composite
-pairs collapse too), and the `tools/list` payload drops from 807,900 to 622,787 bytes.
+pairs collapse too), and the `tools/list` payload drops from 807,920 to 622,787 bytes.
 
 ## The `ip_family` choice
 

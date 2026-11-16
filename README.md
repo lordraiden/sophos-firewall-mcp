@@ -258,7 +258,7 @@ The catalog is static for the process lifetime, so:
   `explain_flow`, `find_unused_objects`), so a client can read the contract and the conventions
   without loading the tool catalog.
 
-The payload is dominated by the output schemas. 0.7.0 removed **185,113 bytes** from the catalog
+The payload is dominated by the output schemas. 0.7.0 removed **185,133 bytes** from the catalog
 (807,920 → 622,787, −22.9%) and 40 tools: the IPv4/IPv6 collapse behind `ip_family` removed 152,886
 bytes (807,920 → 655,034), and publishing flat arguments removed a further 32,247 bytes (655,034 →
 622,787). That is on top of the earlier catalog trim that removed 2,783 auto-generated property
