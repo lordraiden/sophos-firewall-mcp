@@ -93,14 +93,20 @@ jobs:
           uv pip install --python /tmp/clean-install/bin/python dist/*.whl
 
       # A clean install must resolve the one SDK release the private seam was verified
-      # against, and the installed package must still register its tool surface. The
-      # exact tool count is pinned by tests/test_tool_surface.py, not duplicated here.
-      - name: Verify the resolved SDK and the tool surface
+      # against, publish the identity `pyproject.toml` declares, and still register its tool
+      # surface. The exact tool count is pinned by tests/test_tool_surface.py, not
+      # duplicated here; the identity is compared against the checkout's pyproject.toml so a
+      # stale editable install cannot make the suite pass while the wheel differs.
+      - name: Verify the resolved SDK, the published identity and the tool surface
         run: |
           /tmp/clean-install/bin/python - <<'PY'
           import asyncio
           import importlib.metadata
           import sys
+          import tomllib
+          from pathlib import Path
+
+          from mcp import Client
 
           from sophos_firewall_mcp.config import Settings
           from sophos_firewall_mcp.server import create_server
@@ -112,6 +118,18 @@ jobs:
           if installed != expected:
               sys.exit(1)
 
+          # The wheel's metadata must be the checkout's declared metadata. This is the
+          # packaged-release half of the drift check: the in-repo suite reads the editable
+          # install, which can lag behind pyproject.toml.
+          declared = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]
+          metadata = importlib.metadata.metadata("sophos-firewall-mcp-server")
+          print(f"installed version {metadata['Version']} (declared {declared['version']})")
+          print(f"installed summary {metadata['Summary']!r}")
+          if metadata["Version"] != declared["version"]:
+              sys.exit(1)
+          if metadata["Summary"] != declared["description"]:
+              sys.exit(1)
+
           settings = Settings(
               host="192.0.2.10",
               port=4444,
@@ -120,9 +138,21 @@ jobs:
               timeout=5.0,
               read_only_mode=False,
           )
-          server = create_server(settings)
-          tools = asyncio.run(server.list_tools())
-          print(f"registered {len(tools)} tools")
-          if not tools:
-              sys.exit(1)
+
+          async def main() -> int:
+              server = create_server(settings)
+              tools = await server.list_tools()
+              print(f"registered {len(tools)} tools")
+              if not tools:
+                  return 1
+              async with Client(server) as client:
+                  info = client.server_info
+              print(f"serverInfo.description {info.description!r}")
+              if info.description != declared["description"]:
+                  return 1
+              if info.version != declared["version"]:
+                  return 1
+              return 0
+
+          sys.exit(asyncio.run(main()))
           PY
