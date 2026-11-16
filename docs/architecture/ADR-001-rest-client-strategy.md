@@ -492,7 +492,7 @@ have no REST endpoint in this contract; they are not migrated and no placeholder
 | Auth | Bearer API key, inherits the administrator profile's permissions | YAML `securitySchemes`; REFERENCES R01/R04 |
 | PATCH | JSON Merge Patch (RFC 7396) by default; `application/json`; four documented array exceptions (`patchMessages`, `updateCentralFirewallReportingLogComponents`, `updateSyslogServerLogs`, `updateAlertNotificationSettings`) — none in first-release scope | YAML `info.description`; PLAN §5 |
 | Pagination | `page`/`pageSize`/`pageTotal` only; 83 GETs; `pageSize` max 100 on three operations; live evidence: appliance rejects > 100 everywhere and accepts `page=0` (client must validate) | YAML; live evidence 15 Nov 2026 |
-| MCP SDK | `mcp>=2.3.0,<3` (v2.3.0 = latest stable, 2 Oct 2026); `[cli]` extra dev-only | REFERENCES R14/R15 |
+| MCP SDK | `mcp==2.3.0` (exact pin: the private tool-registry seam is verified only on 2.3.0; see `docs/SDK-COMPATIBILITY.md`); `[cli]` extra dev-only | REFERENCES R14/R15 |
 | MCP protocol | `2026-07-28` (SDK also serves 2024-11-05…2025-11-25 via handshake); `subscriptions=False`; no manual handshake | REFERENCES R15a/R35/R39 |
 | MCP transport | STDIO only; stdout is protocol, logs to stderr; no TTY | PLAN §7 |
 | Python / runtime | Python `>=3.11`; CI matrix is 3.11–3.13 today (`.github/workflows/test.yml`), 3.14 is added by #32; `httpx` (current 0.28.1; version pinned by the Lead-owned lockfile); `pydantic>=2`; no new dependencies | `pyproject.toml`; `.github/workflows/test.yml`; POC venv |

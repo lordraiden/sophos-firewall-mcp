@@ -106,7 +106,7 @@ and was not exercised.
 | Item | Requirement |
 |---|---|
 | Python | `>=3.11` (3.11, 3.12, 3.13 and 3.14 are supported) |
-| MCP SDK | `mcp>=2.3.0,<3` (installed as a dependency) |
+| MCP SDK | `mcp==2.3.0` (exact pin; see [SDK compatibility](docs/SDK-COMPATIBILITY.md)) |
 | Network | HTTPS reachability to the appliance Web Admin Console port (SFOS default `4444`) |
 | Credential | A Sophos Firewall **API key** (Bearer token) |
 | TLS | A certificate the client can verify, or a PEM CA bundle via `SOPHOS_CA_BUNDLE` |
@@ -548,6 +548,8 @@ documented in [`docs/live-evidence/README.md`](docs/live-evidence/README.md).
 
 - [API coverage matrix](docs/API-COVERAGE.md) — every operation, its tool, and the reason for every
   exclusion.
+- [SDK compatibility](docs/SDK-COMPATIBILITY.md) — the supported MCP SDK range, why it is an exact
+  pin, and how to widen it.
 - [REST client strategy (ADR-001)](docs/architecture/ADR-001-rest-client-strategy.md) — why the client is
   hand-written HTTPX + Pydantic, and the first-release scope.
 - [Redesign documentation](docs/architecture/sophos-rest-api-redesign/README.md) — plan, references, lab

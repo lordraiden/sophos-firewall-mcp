@@ -282,9 +282,9 @@ def test_create_server_builds_the_stdio_server():
     #
     # This reaches into `_lowlevel_server` deliberately: the SDK exposes no public way to
     # ask whether a request handler is registered, and the assertion is the only direct
-    # check that `subscriptions=False` took effect. The SDK is pinned (mcp>=2.3.0,<3) and
-    # this is the one private access in the suite; if the pin moves, this line is the
-    # tripwire, not a silent regression.
+    # check that `subscriptions=False` took effect. The SDK is pinned (mcp==2.3.0) and
+    # this is the one private access in the server tests; if the pin moves, this line is
+    # the tripwire, not a silent regression.
     assert server._lowlevel_server.get_request_handler("subscriptions/listen") is None
 
 

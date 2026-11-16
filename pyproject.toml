@@ -36,9 +36,16 @@ classifiers = [
     "Topic :: System :: Networking :: Firewalls",
 ]
 dependencies = [
-    # >=2.3 for MCPServer (mcp.server.mcpserver); the CLI extra is development-only and is not
-    # installed in the runtime image.
-    "mcp>=2.3.0,<3",
+    # Exact pin, not a range: the tool-registration seam in sophos_firewall_mcp.tools reads
+    # three attributes that are not public MCP SDK API -- MCPServer._tool_manager,
+    # Tool.fn_metadata.arg_model and Tool.parameters -- to publish flat arguments and a
+    # closed, sanitized argument model for every tool. mcp 2.3.0 exposes no public
+    # equivalent, so a different 2.x release may move those attributes and silently break
+    # argument validation for all 112 tools. 2.3.0 is the only release verified against the
+    # seam (tests/test_sdk_compat.py) and the latest 2.x release on PyPI. Widen this only
+    # after that test passes against the new release and the release is added to the CI
+    # matrix in .github/workflows/test.yml; see docs/SDK-COMPATIBILITY.md.
+    "mcp==2.3.0",
     "httpx>=0.20.0",
     "pydantic>=2.0.0",
 ]

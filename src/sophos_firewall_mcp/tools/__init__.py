@@ -170,6 +170,7 @@ __all__ = [
     "CONFIRMATION_NOTE",
     "IP_FAMILY_DESCRIPTION",
     "OPEN_WORLD_TOOLS",
+    "SUPPORTED_MCP_SDK_VERSION",
     "DomainAdapter",
     "DomainRegistrar",
     "ToolKind",
@@ -277,6 +278,16 @@ _ARGUMENT_RULES: dict[str, str] = {
 #: the parameter, so the flat argument model still hands the validated instance back under
 #: this key (see :func:`_flat_argument_model`).
 _REQUEST_FIELD = "request"
+
+#: The one MCP SDK release the private tool-registry seam below was verified against.
+#:
+#: ``pyproject.toml`` declares ``mcp==2.3.0`` for the same reason: the seam reads
+#: ``MCPServer._tool_manager``, ``Tool.fn_metadata.arg_model`` and ``Tool.parameters``,
+#: none of which is public API, so another release may move them and silently break
+#: argument validation for every tool. ``tests/test_sdk_compat.py`` keeps this constant,
+#: the declared dependency and the installed distribution in agreement; widen the pin only
+#: after that test passes against the new release. See ``docs/SDK-COMPATIBILITY.md``.
+SUPPORTED_MCP_SDK_VERSION = "2.3.0"
 
 ToolHandlerT = TypeVar("ToolHandlerT", bound=Callable[..., Any])
 """A registered tool function: a typed ``async def`` with an optional ``Context``."""
@@ -641,7 +652,10 @@ class _SanitizedArgumentError(ValidationError):
 
 # -- Private SDK seam: closing a registered tool's argument model ----------------------
 #
-# Pinned SDK: mcp 2.3.0 (pyproject.toml declares mcp>=2.3.0,<3; uv.lock pins 2.3.0).
+# Pinned SDK: mcp 2.3.0 (pyproject.toml declares mcp==2.3.0; uv.lock pins 2.3.0).
+# The pin is exact on purpose: the attributes below are not public API, so a different
+# release may move them. tests/test_sdk_compat.py is the executable compatibility
+# contract and docs/SDK-COMPATIBILITY.md records the reason for the restriction.
 #
 # mcp 2.3.0 exposes no public way to close the argument model of a tool that is already
 # registered:
@@ -661,7 +675,8 @@ class _SanitizedArgumentError(ValidationError):
 #   ToolManager.get_tool(name)    public method on that private object
 #   Tool.fn_metadata.arg_model    read by Tool.run -> FuncMetadata.validate_arguments
 #   Tool.parameters               returned as input_schema by MCPServer.list_tools
-# If any of these moves, _registered_tool raises and tests/test_server.py fails.
+# If any of these moves, _registered_tool raises and tests/test_sdk_compat.py fails with
+# a diagnostic naming the attribute that moved.
 def _tool_manager(server: MCPServer[AppContext]) -> ToolManager:
     """Return the SDK's private tool manager through the pinned seam.
 
@@ -672,8 +687,9 @@ def _tool_manager(server: MCPServer[AppContext]) -> ToolManager:
     if manager is None:
         raise RuntimeError(
             "the pinned MCP SDK seam moved: MCPServer._tool_manager is missing (expected "
-            "mcp 2.3.0). Argument validation for every tool depends on it; see the seam "
-            "note in sophos_firewall_mcp.tools."
+            f"mcp {SUPPORTED_MCP_SDK_VERSION}). Argument validation for every tool depends "
+            "on it; see the seam note in sophos_firewall_mcp.tools and "
+            "docs/SDK-COMPATIBILITY.md."
         )
     return cast(ToolManager, manager)
 
