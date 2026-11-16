@@ -546,12 +546,11 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         name="address_create",
         title="Create an address",
         description=(
-            "Create an IPv4 or IPv6 address object, selected by the required `ip_family`. "
-            "`type` selects the shape: a single address, a network (address + `cidr` or "
-            "`prefix_length`), a range (start + end) or a list. Send `type` (the "
-            "discriminator) and the matching `ip_family`; `type` selects the variant. `name` "
-            "is required and must be a valid Sophos object name. A duplicate name returns a "
-            "conflict and nothing is created."
+            "Create an IPv4 or IPv6 address object. `type` selects the shape: a single "
+            "address, a network (address + `cidr` or `prefix_length`), a range (start + "
+            "end) or a list. Send `type` (the discriminator) and the matching `ip_family`; "
+            "`type` selects the variant. `name` is required and must be a valid Sophos "
+            "object name. A duplicate name returns a conflict and nothing is created."
         ),
         kind=ToolKind.MUTATION,
         handler=address_create,
@@ -561,10 +560,10 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         name="address_update",
         title="Update an address",
         description=(
-            "Partially update an IPv4 or IPv6 address object by UUID or name, selected by "
-            "the required `ip_family`. PATCH uses JSON Merge Patch: omitted fields keep "
-            "their stored value and `description: null` clears the description. The object "
-            "`type` cannot be changed and is not accepted. Mutating."
+            "Partially update an IPv4 or IPv6 address object by UUID or name. `ip_family` "
+            "selects the variant; the object `type` cannot be changed and is not accepted. "
+            "PATCH uses JSON Merge Patch: omitted fields keep their stored value and "
+            "`description: null` clears the description. Mutating."
         ),
         kind=ToolKind.MUTATION,
         handler=address_update,
@@ -668,10 +667,11 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         title="Create an address group",
         description=(
             "Create an IPv4 or IPv6 address group from existing address objects of the same "
-            "family, selected by the required `ip_family`. `name` and the family's member "
-            'list (`ipv4Addresses` or `ipv6Addresses`, a list of `{"name": ...}` references, '
-            "possibly empty) are required. Members must already exist and must belong to "
-            "the same family; the appliance rejects an unknown or wrong-family name."
+            "family. `ip_family` selects the variant and the payload has no `type` member. "
+            "`name` and the family's member list (`ipv4_addresses` or `ipv6_addresses`, a "
+            'list of `{"name": ...}` references, possibly empty) are required. Members '
+            "must already exist and must belong to the same family; the appliance rejects "
+            "an unknown or wrong-family name."
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_create,
@@ -681,10 +681,10 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         name="address_group_update",
         title="Update an address group",
         description=(
-            "Partially update an IPv4 or IPv6 address group by UUID or name, selected by the "
-            "required `ip_family`. PATCH uses JSON Merge Patch: omitted fields keep their "
-            "stored value and the family's member list replaces the whole member list. "
-            "Mutating."
+            "Partially update an IPv4 or IPv6 address group by UUID or name. `ip_family` "
+            "selects the variant and the payload has no `type` member. PATCH uses JSON "
+            "Merge Patch: omitted fields keep their stored value and the family's member "
+            "list replaces the whole member list. Mutating."
         ),
         kind=ToolKind.MUTATION,
         handler=address_group_update,
@@ -787,8 +787,8 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         name="mac_address_create",
         title="Create a MAC address object",
         description=(
-            "Create a MAC address object. Provide exactly one of `macAddress` (a single "
-            "address) or `macAddresses` (1-1000 addresses); the create payload has no "
+            "Create a MAC address object. Provide exactly one of `mac_address` (a single "
+            "address) or `mac_addresses` (1-1000 addresses); the create payload has no "
             "`type` member. `name` is required. A duplicate name returns a conflict and "
             "nothing is created."
         ),
@@ -802,7 +802,7 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         description=(
             "Partially update a MAC address object by UUID or name. PATCH uses JSON Merge "
             "Patch: omitted fields keep their stored value. Provide at most one of "
-            "`macAddress` and `macAddresses`. Mutating."
+            "`mac_address` and `mac_addresses`. Mutating."
         ),
         kind=ToolKind.MUTATION,
         handler=mac_address_update,

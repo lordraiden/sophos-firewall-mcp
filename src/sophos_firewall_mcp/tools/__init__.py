@@ -1088,6 +1088,10 @@ def _union_argument_message(
             # future model makes it reachable.
             return "invalid arguments: the arguments do not match an accepted shape"
 
+    exclusive = _mutually_exclusive_message(obj, variants)
+    if exclusive is not None:
+        return exclusive
+
     failures: list[tuple[int, str]] = []
     for variant in variants:
         try:
@@ -1100,6 +1104,38 @@ def _union_argument_message(
     fewest = min(count for count, _ in failures)
     best = [detail for count, detail in failures if count == fewest]
     return _sanitize("invalid arguments: " + " or ".join(best))
+
+
+def _mutually_exclusive_message(obj: Any, variants: tuple[type[BaseModel], ...]) -> str | None:
+    """Name the alternatives when a caller supplies fields from more than one variant.
+
+    An undiscriminated union has no selector, so a caller that sends the identifying
+    required field of two variants is rejected once per variant ("not an accepted
+    argument" each time). The alternatives are mutually exclusive, and one sentence naming
+    them is actionable; the per-variant rejections are not.
+
+    A field identifies a variant when it is required by that variant and is not a field of
+    any other variant. A field shared by every variant (``name``) identifies none, so it
+    never triggers the message.
+    """
+    if not isinstance(obj, dict):
+        return None
+    supplied = set(obj)
+    identifying: list[set[str]] = []
+    for variant in variants:
+        others: set[str] = set()
+        for other in variants:
+            if other is not variant:
+                others.update(other.model_fields)
+        required = {name for name, field in variant.model_fields.items() if field.is_required()}
+        identifying.append(required - others)
+    chosen = [group for group in identifying if group & supplied]
+    if len(chosen) < 2:
+        return None
+    names = sorted(set().union(*chosen))
+    return _sanitize(
+        f"invalid arguments: {' and '.join(names)} are mutually exclusive; provide exactly one"
+    )
 
 
 def _discriminator_values(variants: tuple[type[BaseModel], ...], discriminator: str) -> list[str]:
