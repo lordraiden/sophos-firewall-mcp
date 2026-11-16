@@ -145,6 +145,21 @@ def test_compose_contains_no_literal_api_key() -> None:
     assert "SOPHOS_API_KEY=" not in text
 
 
+def test_env_example_prefers_the_file_based_credential() -> None:
+    """The template must not advertise an inline key as its uncommented default."""
+    values = env_example()
+
+    assert "SOPHOS_API_KEY_FILE" in values
+    assert "SOPHOS_API_KEY" not in values
+
+
+def test_env_example_secret_path_matches_compose_default() -> None:
+    """The host path in the template is the Compose secret source default."""
+    compose_default = interpolation_default(load_compose()["secrets"][SECRET_NAME]["file"])
+
+    assert env_example()["SOPHOS_API_KEY_FILE"] == compose_default
+
+
 # -- Container hardening -----------------------------------------------------
 
 
@@ -185,6 +200,14 @@ def test_readme_documents_the_supported_compose_invocation() -> None:
     assert "docker compose run --rm -T sophos-firewall-mcp" in readme
     assert "`docker compose up` is **not** the supported invocation" in readme
     assert "no `restart` policy" in readme
+
+
+def test_readme_documents_the_socket_bridge_escape_hatch() -> None:
+    """A TCP/SSE bridge is a different deployment and may add its own restart policy."""
+    readme = README_PATH.read_text(encoding="utf-8")
+
+    assert "bridges STDIO over TCP/SSE" in readme
+    assert "`restart: unless-stopped` in an override file" in readme
 
 
 def test_readme_does_not_advertise_a_writable_container_default() -> None:

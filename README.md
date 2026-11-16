@@ -484,6 +484,11 @@ command, for example:
 to the container. The service therefore has no `restart` policy — restarting would only re-spawn a
 server whose stdin has already closed, with no client attached.
 
+A deployment that bridges STDIO over TCP/SSE (for example an MCP gateway) is a different shape: it
+needs a long-running bridge process and a published port, so it should use its own Compose file and
+may add `restart: unless-stopped` in an override file. The shipped file stays a per-session STDIO
+example.
+
 ## Read-only mode
 
 Set `SOPHOS_READ_ONLY_MODE=true` to register only the 74 read-only tools. Mutation tools are not
