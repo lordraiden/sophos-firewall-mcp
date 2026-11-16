@@ -1,19 +1,30 @@
-"""Confirmation before the highest-blast-radius deletes (MCP standards review, L4).
+"""Confirmation before the highest-blast-radius deletes (issue #54, MCP MRTR).
 
 The four deletes that can take a firewall rule, a NAT rule, a network-user account or a
-VLAN interface away ask the client to confirm first, through the SDK's elicitation support
-(``Context.elicit``, ``mcp`` 2.3.0). The affordance is additive: a client that cannot be
-asked -- no ``elicitation`` capability, or a transport with no back-channel for
-server-initiated requests -- keeps the previous behaviour, so a non-interactive client is
-never broken.
+VLAN interface away require an explicit client confirmation before the appliance is
+touched. The confirmation is a ``Resolve``-injected parameter, so the SDK asks the
+question *before* the handler body runs:
+
+* on the modern ``2026-07-28`` protocol the question is an ``InputRequiredResult`` round
+  trip: the client answers and retries the same call with ``inputResponses`` and
+  ``requestState``, and the SDK resumes the handler exactly once;
+* on the legacy handshake the SDK sends the same question as a standalone elicitation.
+
+The gate fails closed. A declined or cancelled answer, an ``accept`` that does not set
+``confirm``, a client that declared no form-mode ``elicitation`` capability, and a
+transport that cannot carry the question all abort the call before any HTTP request is
+made. The SDK seals the resume state and binds it to the tool name, the canonical
+arguments, the authenticated principal and a TTL, so a missing, malformed, expired or
+mismatched state is rejected before the handler runs.
 
 Two layers are covered:
 
-* the :func:`~sophos_firewall_mcp.tools.confirm_destructive` helper in isolation, with a
-  stub context, for every outcome the SDK can report (accept/decline/cancel, no
-  capability, no back-channel, an unusable answer);
-* the four handlers end to end over the in-memory transport, proving that a declined
-  confirmation sends **no** HTTP request at all and that an accepted one does.
+* the :func:`~sophos_firewall_mcp.tools.destructive_confirmation` resolver and
+  :func:`~sophos_firewall_mcp.tools.require_confirmation` in isolation, with a stub
+  context, for every capability and outcome the SDK can report;
+* the four handlers end to end over the in-memory transport, on both protocol eras,
+  proving that a rejected or unanswerable confirmation sends **no** HTTP request and that
+  an accepted one performs the delete only after the question was answered.
 """
 
 from __future__ import annotations
@@ -23,13 +34,15 @@ from typing import Any
 import httpx
 import pytest
 import respx
-from mcp import Client, types
+from mcp import Client, MCPError, types
 from mcp.server.elicitation import (
     AcceptedElicitation,
     CancelledElicitation,
     DeclinedElicitation,
 )
+from mcp.server.mcpserver import Context
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.resolve import Elicit
 from mcp.shared.exceptions import NoBackChannelError
 from mcp.types import (
     ClientCapabilities,
@@ -43,8 +56,9 @@ from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.server import create_server
 from sophos_firewall_mcp.tools import (
     CONFIRMATION_NOTE,
-    _DestructiveConfirmation,
-    confirm_destructive,
+    DestructiveConfirmation,
+    destructive_confirmation,
+    require_confirmation,
 )
 
 HOST = "192.0.2.10"
@@ -71,10 +85,10 @@ DELETE_PATHS: dict[str, str] = {
 INTERFACE_ITEM = f"{BASE}/network/interfaces/network-interfaces/VLAN%2020"
 
 
-class _Answer(BaseModel):
-    """The shape the helper's schema validates an accepted answer into."""
+class _Request(BaseModel):
+    """The request shape the resolver's target function reads."""
 
-    confirm: bool
+    name: str
 
 
 def make_settings() -> Settings:
@@ -98,22 +112,14 @@ def router() -> Any:
         yield mocked
 
 
-# -- The helper in isolation -----------------------------------------------------------
+# -- The resolver and the outcome check, in isolation ----------------------------------
 
 
 class _StubContext:
-    """The two attributes :func:`confirm_destructive` reads, and nothing else."""
+    """The one attribute the resolver reads, and nothing else."""
 
-    def __init__(self, capabilities: ClientCapabilities | None, outcome: Any) -> None:
+    def __init__(self, capabilities: ClientCapabilities | None) -> None:
         self.client_capabilities = capabilities
-        self._outcome = outcome
-        self.asked: list[tuple[str, type[BaseModel]]] = []
-
-    async def elicit(self, message: str, schema: type[BaseModel]) -> Any:
-        self.asked.append((message, schema))
-        if isinstance(self._outcome, BaseException):
-            raise self._outcome
-        return self._outcome
 
 
 def _capabilities(*, form: bool = True) -> ClientCapabilities:
@@ -132,135 +138,116 @@ def _empty_elicitation_capabilities() -> ClientCapabilities:
     return ClientCapabilities(elicitation=ElicitationCapability())
 
 
-async def test_no_capabilities_keeps_the_previous_behaviour() -> None:
-    """A client that declared nothing is never asked and never blocked."""
-    ctx = _StubContext(None, AcceptedElicitation(data=_Answer(confirm=True)))
-
-    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
-
-    assert ctx.asked == []
+def _resolver() -> Any:
+    return destructive_confirmation("delete the firewall rule", lambda request: f"{request.name!r}")
 
 
-async def test_a_client_without_the_elicitation_capability_is_not_asked() -> None:
-    ctx = _StubContext(ClientCapabilities(), AcceptedElicitation(data=_Answer(confirm=True)))
+async def test_no_capabilities_fails_closed() -> None:
+    """A client that declared nothing cannot confirm, so the delete must not proceed."""
+    ctx = _StubContext(None)
 
-    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+    with pytest.raises(ToolError) as caught:
+        await _resolver()(_Request(name="r"), ctx)
 
-    assert ctx.asked == []
+    assert "requires confirmation" in str(caught.value)
+    assert "nothing was changed" in str(caught.value)
 
 
-async def test_a_client_without_the_form_mode_is_not_asked() -> None:
+async def test_a_client_without_the_elicitation_capability_fails_closed() -> None:
+    ctx = _StubContext(ClientCapabilities())
+
+    with pytest.raises(ToolError) as caught:
+        await _resolver()(_Request(name="r"), ctx)
+
+    assert "requires confirmation" in str(caught.value)
+
+
+async def test_a_client_without_the_form_mode_fails_closed() -> None:
     """``url``-only elicitation cannot answer a boolean question."""
-    ctx = _StubContext(_url_only_capabilities(), AcceptedElicitation(data=_Answer(confirm=True)))
+    ctx = _StubContext(_url_only_capabilities())
 
-    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+    with pytest.raises(ToolError) as caught:
+        await _resolver()(_Request(name="r"), ctx)
 
-    assert ctx.asked == []
+    assert "requires confirmation" in str(caught.value)
 
 
 async def test_an_empty_elicitation_object_counts_as_form_mode() -> None:
     """M5: the spec defines ``"elicitation": {}`` as form-mode support, so the gate fires."""
-    ctx = _StubContext(
-        _empty_elicitation_capabilities(), AcceptedElicitation(data=_Answer(confirm=True))
-    )
+    ctx = _StubContext(_empty_elicitation_capabilities())
 
-    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+    marker = await _resolver()(_Request(name="r"), ctx)
 
-    assert len(ctx.asked) == 1
-
-
-async def test_an_accepted_confirmation_returns() -> None:
-    ctx = _StubContext(_capabilities(), AcceptedElicitation(data=_Answer(confirm=True)))
-
-    await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
-
-    assert len(ctx.asked) == 1
+    assert isinstance(marker, Elicit)
 
 
 async def test_the_question_names_the_object_and_the_irreversibility() -> None:
-    ctx = _StubContext(_capabilities(), AcceptedElicitation(data=_Answer(confirm=True)))
+    ctx = _StubContext(_capabilities())
 
-    await confirm_destructive(
-        ctx,
-        action="delete the firewall rule",
-        target="'allow-lan-to-wan' from the ipv4 rule base",
-    )
+    marker = await _resolver()(_Request(name="allow-lan-to-wan"), ctx)
 
-    message, schema = ctx.asked[0]
-    assert "delete the firewall rule" in message
-    assert "'allow-lan-to-wan' from the ipv4 rule base" in message
-    assert "irreversible" in message
+    assert isinstance(marker, Elicit)
+    assert "delete the firewall rule" in marker.message
+    assert "'allow-lan-to-wan'" in marker.message
+    assert "irreversible" in marker.message
     # The schema is the single boolean the client answers with.
-    assert set(schema.model_fields) == {"confirm"}
+    assert set(marker.schema.model_fields) == {"confirm"}
 
 
-async def test_a_rejected_confirmation_aborts() -> None:
-    ctx = _StubContext(_capabilities(), AcceptedElicitation(data=_Answer(confirm=False)))
-
+def test_a_declined_outcome_aborts() -> None:
     with pytest.raises(ToolError) as caught:
-        await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+        require_confirmation(DeclinedElicitation(), action="delete the firewall rule")
 
-    assert "not confirmed" in str(caught.value)
+    assert "declined" in str(caught.value)
     assert "nothing was changed" in str(caught.value)
 
 
-async def test_a_declined_confirmation_aborts() -> None:
-    ctx = _StubContext(_capabilities(), DeclinedElicitation())
-
+def test_a_cancelled_outcome_aborts() -> None:
     with pytest.raises(ToolError) as caught:
-        await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
-
-    assert "declined" in str(caught.value)
-
-
-async def test_a_cancelled_confirmation_aborts() -> None:
-    ctx = _StubContext(_capabilities(), CancelledElicitation())
-
-    with pytest.raises(ToolError) as caught:
-        await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+        require_confirmation(CancelledElicitation(), action="delete the firewall rule")
 
     assert "cancelled" in str(caught.value)
 
 
-async def test_an_unusable_answer_aborts() -> None:
-    """An ``accept`` with no content is not a confirmation."""
-    ctx = _StubContext(_capabilities(), ValueError("Received an accepted elicitation"))
+def test_an_accept_without_confirm_aborts() -> None:
+    """An ``accept`` that does not set ``confirm`` is not a confirmation."""
+    outcome = AcceptedElicitation(data=DestructiveConfirmation(confirm=False))
 
     with pytest.raises(ToolError) as caught:
-        await confirm_destructive(ctx, action="delete the firewall rule", target="'r'")
+        require_confirmation(outcome, action="delete the firewall rule")
 
     assert "not confirmed" in str(caught.value)
 
 
-async def test_a_transport_without_a_back_channel_keeps_the_previous_behaviour(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """The modern per-request path cannot carry a server-initiated request.
+def test_an_accepted_confirmation_returns() -> None:
+    outcome = AcceptedElicitation(data=DestructiveConfirmation(confirm=True))
 
-    H1: the skip is not silent. The delete still proceeds, but the operator gets a
-    ``WARNING`` naming the action and the target, so a delete that ran without the question
-    is visible in the server log.
+    require_confirmation(outcome, action="delete the firewall rule")
+
+
+def test_the_confirmation_schema_description_is_plain_prose() -> None:
+    """L9: the client renders this description in a confirmation dialog.
+
+    It must not leak the implementation note (a Sphinx role, "elicitation schemas are
+    restricted to primitive properties") that belongs in a code comment.
     """
-    ctx = _StubContext(_capabilities(), NoBackChannelError("elicitation/create"))
+    description = DestructiveConfirmation.model_json_schema().get("description", "")
 
-    with caplog.at_level("WARNING", logger="sophos_firewall_mcp.tools"):
-        await confirm_destructive(
-            ctx,
-            action="delete the firewall rule",
-            target="'allow-lan-to-wan' from the ipv4 rule base",
-        )
-
-    assert len(ctx.asked) == 1
-    assert "confirmation skipped" in caplog.text
-    assert "delete the firewall rule" in caplog.text
-    assert "allow-lan-to-wan" in caplog.text
+    assert description
+    assert ":func:" not in description
+    assert "Elicitation schemas" not in description
+    assert "primitive" not in description
 
 
 # -- The four handlers, end to end -----------------------------------------------------
 
 
-def _elicitation_callback(action: str, confirm: bool | None = None) -> Any:
+def _elicitation_callback(
+    action: str, confirm: bool | None = None, seen: list[str] | None = None
+) -> Any:
     async def callback(context: Any, params: types.ElicitRequestParams) -> types.ElicitResult:
+        if seen is not None:
+            seen.append(params.message)
         if action == "accept":
             return types.ElicitResult(action="accept", content={"confirm": confirm})
         return types.ElicitResult(action=action)
@@ -279,8 +266,11 @@ def _mock_delete(router: Any, name: str) -> Any:
     )
 
 
+# -- Legacy handshake ------------------------------------------------------------------
+
+
 @pytest.mark.parametrize("name", sorted(GATED))
-async def test_a_declined_confirmation_sends_no_request(router: Any, name: str) -> None:
+async def test_a_legacy_declined_confirmation_sends_no_request(router: Any, name: str) -> None:
     """The whole point: a declined answer must not reach the appliance."""
     async with Client(
         make_server(), mode="legacy", elicitation_callback=_elicitation_callback("decline")
@@ -293,7 +283,7 @@ async def test_a_declined_confirmation_sends_no_request(router: Any, name: str) 
 
 
 @pytest.mark.parametrize("name", sorted(GATED))
-async def test_a_cancelled_confirmation_sends_no_request(router: Any, name: str) -> None:
+async def test_a_legacy_cancelled_confirmation_sends_no_request(router: Any, name: str) -> None:
     async with Client(
         make_server(), mode="legacy", elicitation_callback=_elicitation_callback("cancel")
     ) as client:
@@ -305,7 +295,7 @@ async def test_a_cancelled_confirmation_sends_no_request(router: Any, name: str)
 
 
 @pytest.mark.parametrize("name", sorted(GATED))
-async def test_an_accepted_confirmation_performs_the_delete(router: Any, name: str) -> None:
+async def test_a_legacy_accepted_confirmation_performs_the_delete(router: Any, name: str) -> None:
     route = _mock_delete(router, name)
 
     async with Client(
@@ -321,42 +311,186 @@ async def test_an_accepted_confirmation_performs_the_delete(router: Any, name: s
 
 
 @pytest.mark.parametrize("name", sorted(GATED))
-async def test_a_client_without_elicitation_keeps_the_previous_behaviour(
-    router: Any, name: str
+async def test_a_legacy_transport_without_a_back_channel_fails_closed(
+    router: Any, name: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """No capability declared: the delete runs exactly as it did before the gate existed."""
-    route = _mock_delete(router, name)
+    """A legacy transport that cannot carry the question must not delete unconfirmed."""
 
-    async with Client(make_server()) as client:
-        result = await client.call_tool(name, GATED[name])
+    async def _no_back_channel(self: Any, message: str, schema: Any) -> Any:
+        raise NoBackChannelError("elicitation/create")
 
-    assert result.is_error is False, result.content[0].text
-    assert route.called
+    monkeypatch.setattr(Context, "elicit", _no_back_channel)
+
+    async with Client(
+        make_server(),
+        mode="legacy",
+        elicitation_callback=_elicitation_callback("accept", confirm=True),
+    ) as client:
+        with pytest.raises(MCPError):
+            await client.call_tool(name, GATED[name])
+
+    assert router.calls == []
+
+
+# -- Modern 2026-07-28 protocol --------------------------------------------------------
 
 
 @pytest.mark.parametrize("name", sorted(GATED))
-async def test_a_modern_transport_falls_back_instead_of_failing(
-    router: Any, name: str, caplog: pytest.LogCaptureFixture
-) -> None:
-    """The client declares elicitation but the modern path cannot deliver the question.
-
-    ``mcp`` 2.3.0 refuses a standalone server-to-client request on the modern per-request
-    path, so the handler must fall back instead of failing the delete -- and H1 requires
-    the skip to be visible in the server log.
-    """
+async def test_a_modern_transport_asks_for_confirmation_and_resumes(router: Any, name: str) -> None:
+    """The modern path must ask, then resume the same call exactly once."""
     route = _mock_delete(router, name)
+    seen: list[str] = []
 
-    with caplog.at_level("WARNING", logger="sophos_firewall_mcp.tools"):
-        async with Client(
-            make_server(),
-            elicitation_callback=_elicitation_callback("accept", confirm=True),
-        ) as client:
-            result = await client.call_tool(name, GATED[name])
-
-    assert "confirmation skipped" in caplog.text
+    async with Client(
+        make_server(),
+        elicitation_callback=_elicitation_callback("accept", confirm=True, seen=seen),
+    ) as client:
+        result = await client.call_tool(name, GATED[name])
 
     assert result.is_error is False, result.content[0].text
+    assert len(seen) == 1, seen
+    assert "Confirm:" in seen[0]
+    assert "irreversible" in seen[0]
     assert route.called
+    assert route.calls.last.request.method == "DELETE"
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_modern_declined_confirmation_sends_no_request(router: Any, name: str) -> None:
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("decline")
+    ) as client:
+        result = await client.call_tool(name, GATED[name])
+
+    assert result.is_error is True
+    assert "declined" in result.content[0].text
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_modern_cancelled_confirmation_sends_no_request(router: Any, name: str) -> None:
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("cancel")
+    ) as client:
+        result = await client.call_tool(name, GATED[name])
+
+    assert result.is_error is True
+    assert "cancelled" in result.content[0].text
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_modern_accept_without_confirm_sends_no_request(router: Any, name: str) -> None:
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=False)
+    ) as client:
+        result = await client.call_tool(name, GATED[name])
+
+    assert result.is_error is True
+    assert "not confirmed" in result.content[0].text
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_client_without_elicitation_fails_closed(router: Any, name: str) -> None:
+    """No capability declared: the delete must not run unconfirmed."""
+    async with Client(make_server()) as client:
+        result = await client.call_tool(name, GATED[name])
+
+    assert result.is_error is True
+    assert "requires confirmation" in result.content[0].text
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_the_first_round_returns_input_required_and_sends_no_request(
+    router: Any, name: str
+) -> None:
+    """The first round is a question, not a write: it must not reach the appliance."""
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        result = await client.session.call_tool(name, GATED[name], allow_input_required=True)
+
+    assert isinstance(result, types.InputRequiredResult)
+    assert result.request_state
+    assert result.input_requests
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_mismatched_target_is_rejected_before_the_handler(router: Any, name: str) -> None:
+    """A resume for a different target must not reuse the confirmation."""
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, GATED[name], allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+
+        other = dict(GATED[name])
+        other["id_or_name"] = "some-other-object"
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                name,
+                other,
+                allow_input_required=True,
+                input_responses={},
+                request_state=first.request_state,
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_malformed_state_is_rejected_before_the_handler(router: Any, name: str) -> None:
+    async with Client(make_server()) as client:
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                name,
+                GATED[name],
+                allow_input_required=True,
+                input_responses={},
+                request_state="v1.not-a-real-token",
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert router.calls == []
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_an_expired_state_is_rejected_before_the_handler(
+    router: Any, name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sealed state carries a TTL; an expired resume must not execute the delete."""
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, GATED[name], allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+
+        class _FutureTime:
+            @staticmethod
+            def time() -> float:
+                # The default request-state TTL is 600 seconds.
+                return 10**12
+
+        monkeypatch.setattr("mcp.server.request_state.time", _FutureTime)
+
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                name,
+                GATED[name],
+                allow_input_required=True,
+                input_responses={},
+                request_state=first.request_state,
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert router.calls == []
+
+
+# -- Surface invariants ----------------------------------------------------------------
 
 
 async def test_the_gated_tools_are_the_four_highest_blast_radius_deletes() -> None:
@@ -372,31 +506,14 @@ async def test_the_gated_tools_are_the_four_highest_blast_radius_deletes() -> No
     }
 
 
-async def test_the_gated_descriptions_state_the_modern_path_limitation() -> None:
-    """H1: the description must not promise a confirmation the modern path cannot deliver.
-
-    The server advertises ``2026-07-28``, where ``ctx.elicit`` raises
-    ``NoBackChannelError`` and the delete proceeds. A model that reads "the call first asks
-    the user to confirm" may tell the user it will ask and then delete without asking.
-    """
+async def test_the_gated_descriptions_state_the_real_behaviour() -> None:
+    """The description must describe the confirmation that actually happens."""
     tools = {tool.name: tool for tool in await make_server().list_tools()}
 
     for name in sorted(GATED):
         description = tools[name].description
         assert CONFIRMATION_NOTE in description, name
         assert "2026-07-28" in description, name
-        assert "When the client supports elicitation the call first asks" not in description, name
-
-
-def test_the_confirmation_schema_description_is_plain_prose() -> None:
-    """L9: the client renders this description in a confirmation dialog.
-
-    It must not leak the implementation note (a Sphinx role, "elicitation schemas are
-    restricted to primitive properties") that belongs in a code comment.
-    """
-    description = _DestructiveConfirmation.model_json_schema().get("description", "")
-
-    assert description
-    assert ":func:" not in description
-    assert "Elicitation schemas" not in description
-    assert "primitive" not in description
+        assert "skipped" not in description, name
+        assert "best-effort" not in description, name
+        assert "proceeds" not in description, name

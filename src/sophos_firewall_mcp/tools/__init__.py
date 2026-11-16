@@ -83,31 +83,30 @@ fields.
 Destructive confirmation
 ------------------------
 The four highest-blast-radius deletes -- ``firewall_rule_delete``, ``nat_rule_delete``,
-``network_user_delete`` and ``network_interface_delete_vlan`` -- ask the client to confirm
-before the appliance is touched, through :func:`confirm_destructive`. The question names
-the object and the rule base, and a declined or cancelled answer aborts the call with a
-:class:`~mcp.server.mcpserver.exceptions.ToolError` so nothing is deleted.
+``network_user_delete`` and ``network_interface_delete_vlan`` -- require an explicit
+client confirmation before the appliance is touched. Each handler declares a
+``Resolve``-injected confirmation parameter (:func:`destructive_confirmation`), so the SDK
+asks the question *before* the handler body runs and the body only executes once the
+client has accepted.
 
-The affordance is additive, never a new precondition. It is skipped -- and the delete
-proceeds exactly as before -- when the client cannot be asked:
+The question is delivered on both protocol eras without emulating a server-initiated
+request the negotiated protocol no longer supports:
 
-* the client declared no ``elicitation`` capability (``ctx.client_capabilities`` is
-  ``None`` or carries no ``form`` mode), which is the normal case for a non-interactive
-  client. The spec's backwards-compatible ``"elicitation": {}`` declaration counts as
-  form-mode support, so it is asked;
-* the transport has no back-channel for server-initiated requests
-  (``mcp.shared.exceptions.NoBackChannelError``). ``mcp`` 2.3.0 refuses a standalone
-  server-to-client request on the modern (``2026-07-28``) per-request path
-  (``mcp/server/runner.py:552-593``, ``_NoServerRequestsDispatchContext``); a client that
-  negotiated a handshake version (``2024-11-05`` .. ``2025-11-25``, the STDIO default)
-  does have one, so ``ctx.elicit`` works there. The modern path would need the
-  ``InputRequiredResult`` round trip that ``mcp`` 2.3.0 only wires for ``Resolve``
-  parameters (``mcp/server/mcpserver/resolve.py:10-30``, ``:96``), which would change
-  every handler signature; that is deliberately out of scope for this release.
+* on the modern ``2026-07-28`` protocol the SDK batches the question into an
+  ``InputRequiredResult``; the client answers and retries the same call with
+  ``inputResponses`` and ``requestState``, and the SDK resumes the handler exactly once;
+* on the legacy handshake (``2024-11-05`` .. ``2025-11-25``) the SDK sends the same
+  question as a standalone elicitation request.
 
-The modern-path skip is logged at ``WARNING`` so an operator can see that a delete ran
-without the question, and the four tool descriptions state the limitation instead of
-promising a confirmation that cannot happen (:data:`CONFIRMATION_NOTE`).
+The confirmation fails closed. A declined or cancelled answer, an ``accept`` that does not
+set ``confirm``, a client that declared no form-mode ``elicitation`` capability, and a
+transport that cannot carry the question all abort the call with a sanitized
+:class:`~mcp.server.mcpserver.exceptions.ToolError` before any HTTP request is made. The
+spec's backwards-compatible ``"elicitation": {}`` declaration counts as form-mode support.
+The SDK seals the resume state and binds it to the tool name, the canonical arguments, the
+authenticated principal and a TTL, so a resumed call can only execute the originally
+confirmed target; a missing, malformed, expired or mismatched state is rejected before the
+handler runs (:data:`CONFIRMATION_NOTE` is the model-facing summary).
 
 Open-world hint
 ---------------
@@ -124,13 +123,13 @@ that set; ``tests/test_tool_surface.py`` pins the mapping so the decision stays 
 
 from __future__ import annotations
 
-import logging
 import re
 import types
 from enum import Enum
 from typing import (
     Annotated,
     Any,
+    Awaitable,
     Callable,
     Protocol,
     Self,
@@ -145,11 +144,12 @@ from mcp.server.elicitation import (
     AcceptedElicitation,
     CancelledElicitation,
     DeclinedElicitation,
+    ElicitationResult,
 )
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.resolve import Elicit
 from mcp.server.mcpserver.tools import Tool, ToolManager
-from mcp.shared.exceptions import NoBackChannelError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 from pydantic.fields import FieldInfo
@@ -171,18 +171,18 @@ __all__ = [
     "IP_FAMILY_DESCRIPTION",
     "OPEN_WORLD_TOOLS",
     "SUPPORTED_MCP_SDK_VERSION",
+    "DestructiveConfirmation",
     "DomainAdapter",
     "DomainRegistrar",
     "ToolKind",
-    "confirm_destructive",
+    "destructive_confirmation",
     "register_tool",
     "registered_read_only_tool_names",
     "registered_tool_count",
     "registered_tool_names",
+    "require_confirmation",
     "tool_error",
 ]
-
-logger = logging.getLogger(__name__)
 
 #: Tool names are lower snake_case and at most 64 characters (MCP tool-name guidance).
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -231,20 +231,19 @@ IP_FAMILY_DESCRIPTION = (
     "separate, so the family is never inferred."
 )
 
-#: The honest confirmation sentence the four gated delete descriptions carry.
+#: The confirmation sentence the four gated delete descriptions carry.
 #:
-#: The gate is best-effort: it fires on the legacy handshake path, where the transport can
-#: carry a server-initiated request, and is skipped on the modern (``2026-07-28``)
-#: per-request path, where ``mcp`` 2.3.0 refuses one. A description that promised the
-#: question unconditionally would be false on the protocol era the server advertises, and
-#: a model that reads it may tell the user it will ask and then delete without asking.
+#: The gate is a precondition, not an affordance: the call asks the client to confirm and
+#: deletes nothing unless the client accepts. The question is delivered as an
+#: ``InputRequiredResult`` round trip on the modern (``2026-07-28``) protocol and as a
+#: standalone elicitation on the legacy handshake; a client that cannot answer fails
+#: closed. The description must not promise a path where the question cannot happen.
 CONFIRMATION_NOTE = (
-    "The call asks the client to confirm first, naming the object, when the client declares "
-    "elicitation support and the transport can carry a server-initiated request (the legacy "
-    "handshake path); a declined or cancelled confirmation aborts the call and nothing is "
-    "deleted. On the 2026-07-28 path, or for a client that declares no elicitation support, "
-    "the server cannot send that question, so the confirmation is skipped and the client's "
-    "own confirmation UI is the only gate."
+    "The call asks the client to confirm first, naming the object, and deletes nothing "
+    "unless the client accepts. On the 2026-07-28 protocol the question is delivered as a "
+    "multi-round-trip input-required result; on the legacy handshake it is a standalone "
+    "elicitation request. A declined or cancelled confirmation, or a client that cannot "
+    "answer, aborts the call with a tool error and nothing is deleted."
 )
 
 #: Model-facing rule for the pydantic error types an argument model can raise. The
@@ -332,7 +331,7 @@ OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
 """The closed-by-default exception list for ``openWorldHint``; see the module docstring."""
 
 
-class _DestructiveConfirmation(BaseModel):
+class DestructiveConfirmation(BaseModel):
     """Confirm the deletion.
 
     Set confirm to true to perform the deletion, or false to abort without changing the
@@ -355,9 +354,9 @@ def _client_can_elicit(ctx: Context[AppContext]) -> bool:
     """Whether the connected client declared the form-mode elicitation capability.
 
     A client that declared nothing (``client_capabilities`` is ``None``) or declared no
-    ``elicitation`` capability cannot be asked, and the caller must keep its previous
-    behaviour rather than fail. The attribute is read defensively because a handler is
-    also called directly in tests with a stub context.
+    ``elicitation`` capability cannot be asked, and the destructive call must fail closed
+    rather than proceed unconfirmed. The attribute is read defensively because a resolver
+    is also called directly in tests with a stub context.
 
     The spec's backwards-compatible declaration ``"elicitation": {}`` is equivalent to
     form-mode support, so an ``ElicitationCapability`` with neither ``form`` nor ``url``
@@ -377,61 +376,77 @@ def _client_can_elicit(ctx: Context[AppContext]) -> bool:
     return getattr(elicitation, "url", None) is None
 
 
-async def confirm_destructive(
-    ctx: Context[AppContext],
-    *,
-    action: str,
-    target: str,
-) -> None:
-    """Ask the client to confirm a high-blast-radius destructive call.
+def _confirmation_message(action: str, target: str) -> str:
+    """The one question every gated delete asks."""
+    return f"Confirm: {action} {target}. This is irreversible and cannot be undone."
 
-    Call this from a mutation handler before the adapter is invoked. It is a no-op when the
-    client cannot be asked (see the module docstring), so a non-interactive client keeps
-    working exactly as it did before the confirmation existed.
+
+def destructive_confirmation(
+    action: str,
+    target: Callable[[Any], str],
+) -> Callable[[Any, Context[AppContext]], Awaitable[Elicit[DestructiveConfirmation]]]:
+    """Build the resolver that asks the client to confirm one destructive call.
+
+    Use the returned resolver as a tool parameter::
+
+        async def firewall_rule_delete(
+            request: DeleteFirewallRuleInput,
+            confirmation: Annotated[
+                ElicitationResult[DestructiveConfirmation], Resolve(_CONFIRM_DELETE)
+            ],
+            ctx: Context[AppContext],
+        ) -> DeleteFirewallRuleOutput:
+            require_confirmation(confirmation, action="delete the firewall rule")
+            ...
+
+    The SDK runs the resolver before the handler body. On the modern ``2026-07-28``
+    protocol the returned :class:`~mcp.server.mcpserver.resolve.Elicit` marker becomes an
+    ``InputRequiredResult`` round trip; on the legacy handshake it becomes a standalone
+    elicitation request. The handler body therefore never runs until the client has
+    answered, and a client that cannot answer fails closed with a ``ToolError``.
 
     Args:
-        ctx: The SDK-injected context of the running tool.
         action: What is about to happen, phrased as a verb and object, e.g.
             ``"delete the firewall rule"``.
-        target: The object it happens to, including the rule base or family, e.g.
+        target: Builds the object description from the validated request, e.g.
             ``"'allow-lan-to-wan' from the ipv4 rule base"``.
 
-    Raises:
-        ToolError: The user declined or cancelled, or the client accepted without a usable
-            answer. Nothing has been sent to the appliance at that point.
+    Returns:
+        An async resolver taking the tool's ``request`` argument and the SDK context.
     """
-    if not _client_can_elicit(ctx):
-        return
 
-    message = f"Confirm: {action} {target}. This is irreversible and cannot be undone."
-    try:
-        result = await ctx.elicit(message, _DestructiveConfirmation)
-    except NoBackChannelError:
-        # The transport cannot carry a server-initiated request (the modern per-request
-        # path). Keep the previous behaviour instead of failing the delete, but say so:
-        # the skip is otherwise invisible to both the model and the operator.
-        logger.warning(
-            "confirmation skipped: %s %s proceeds without asking the client, because the "
-            "transport has no back-channel for a server-initiated request (the 2026-07-28 "
-            "per-request path)",
-            action,
-            target,
+    async def resolve(request: Any, ctx: Context[AppContext]) -> Elicit[DestructiveConfirmation]:
+        if not _client_can_elicit(ctx):
+            raise ToolError(
+                f"{action} requires confirmation, but the client did not declare form-mode "
+                "elicitation support; nothing was changed"
+            )
+        return Elicit(
+            message=_confirmation_message(action, target(request)),
+            schema=DestructiveConfirmation,
         )
-        return
-    except ValueError as exc:
-        # The client answered "accept" with no content or with content that does not match
-        # the schema. That is not a confirmation.
-        raise ToolError(
-            _sanitize(f"{action} was not confirmed: the client returned no usable answer")
-        ) from exc
 
-    if isinstance(result, AcceptedElicitation) and result.data.confirm:
-        return
-    if isinstance(result, DeclinedElicitation):
+    return resolve
+
+
+def require_confirmation(
+    outcome: ElicitationResult[DestructiveConfirmation], *, action: str
+) -> None:
+    """Abort unless the client accepted and confirmed the destructive call.
+
+    Call this first in a gated handler body. The body only runs after the resolver has an
+    outcome, so a decline or cancel reaches this function instead of the adapter; raising
+    here guarantees no HTTP request is made.
+
+    Raises:
+        ToolError: The user declined or cancelled, or accepted without setting ``confirm``.
+    """
+    if isinstance(outcome, DeclinedElicitation):
         raise ToolError(f"{action} was declined by the user; nothing was changed")
-    if isinstance(result, CancelledElicitation):
+    if isinstance(outcome, CancelledElicitation):
         raise ToolError(f"{action} was cancelled by the user; nothing was changed")
-    raise ToolError(f"{action} was not confirmed; nothing was changed")
+    if not isinstance(outcome, AcceptedElicitation) or not outcome.data.confirm:
+        raise ToolError(f"{action} was not confirmed; nothing was changed")
 
 
 class ToolKind(Enum):

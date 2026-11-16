@@ -41,10 +41,11 @@ no tool argument ever reaches the request path unvalidated.
 from __future__ import annotations
 
 import re
-from typing import Any, TypeVar
+from typing import Annotated, Any, TypeVar
 from urllib.parse import quote
 
-from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.elicitation import ElicitationResult
+from mcp.server.mcpserver import Context, MCPServer, Resolve
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ValidationError
@@ -55,16 +56,29 @@ from sophos_firewall_mcp.models import network as models
 from sophos_firewall_mcp.models.common import ListPage
 from sophos_firewall_mcp.tools import (
     CONFIRMATION_NOTE,
+    DestructiveConfirmation,
     DomainAdapter,
     ToolKind,
-    confirm_destructive,
+    destructive_confirmation,
     register_tool,
+    require_confirmation,
     tool_error,
 )
 from sophos_firewall_mcp.tools.system import register_status_tools
 from sophos_firewall_mcp.tools.vpn import register_vpn_tools
 
 __all__ = ["register_network_tools"]
+
+
+def _network_interface_delete_target(request: models.NetworkInterfaceDeleteVlanInput) -> str:
+    """The object the delete confirmation names."""
+    return f"{request.id_or_name!r}"
+
+
+#: The resolver that asks the client to confirm ``network_interface_delete_vlan``.
+_CONFIRM_NETWORK_INTERFACE_DELETE = destructive_confirmation(
+    "delete the VLAN interface", _network_interface_delete_target
+)
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -413,13 +427,14 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_interface_delete_vlan(
-        request: models.NetworkInterfaceDeleteVlanInput, ctx: Context[AppContext]
+        request: models.NetworkInterfaceDeleteVlanInput,
+        confirmation: Annotated[
+            ElicitationResult[DestructiveConfirmation],
+            Resolve(_CONFIRM_NETWORK_INTERFACE_DELETE),
+        ],
+        ctx: Context[AppContext],
     ) -> models.InterfaceDeleteOutput:
-        await confirm_destructive(
-            ctx,
-            action="delete the VLAN interface",
-            target=f"{request.id_or_name!r}",
-        )
+        require_confirmation(confirmation, action="delete the VLAN interface")
         return await NetworkAdapter.from_context(ctx).delete_vlan(request.id_or_name)
 
     # -- Zones -------------------------------------------------------------------------

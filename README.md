@@ -588,15 +588,13 @@ administrator profile or a host-side approval policy.
   merged tool takes a required `ip_family` (`ipv4` or `ipv6`). The
   [migration table](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md) maps every removed
   name to its replacement and the `ip_family` value that reproduces the old behaviour.
-- **The delete confirmation is best-effort.** The four highest-blast-radius deletes
-  (`firewall_rule_delete`, `nat_rule_delete`, `network_user_delete`,
-  `network_interface_delete_vlan`) ask the client to confirm when it declared the `elicitation`
-  capability and the transport has a back-channel. `mcp` 2.3.0 refuses a server-initiated request on
-  the modern (`2026-07-28`) per-request path, so the confirmation is skipped there and the delete
-  proceeds exactly as before; the server logs a `WARNING` naming the action and the target when that
-  happens, and the tool descriptions say so. A non-interactive client is unaffected either way. The
-  confirmation is an additive affordance, never a new precondition. The `InputRequiredResult` round
-  trip that would make it work on both eras is scheduled for 0.8.0.
+- **The four highest-blast-radius deletes require a client confirmation.** `firewall_rule_delete`,
+  `nat_rule_delete`, `network_user_delete` and `network_interface_delete_vlan` ask the client to
+  confirm and delete nothing unless it accepts. On the modern (`2026-07-28`) protocol the question is
+  an `InputRequiredResult` round trip; on the legacy handshake it is a standalone elicitation. A
+  client that declares no form-mode `elicitation` capability, or a transport that cannot carry the
+  question, gets a tool error and nothing is deleted. This is a deliberate precondition, not an
+  additive affordance: a non-interactive client cannot perform these four deletes.
 - **Input parameter naming is uniform as of 0.5.0.** Every published input property, at every depth,
   is snake_case (`page_size`, `name_contains`, `id_or_name`, `rule_type`, `reference_item`, …). The JSON
   body sent to the appliance is unchanged: each field keeps its Sophos wire alias. This was a breaking

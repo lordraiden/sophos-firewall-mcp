@@ -21,7 +21,7 @@ import httpx
 import pytest
 import respx
 import yaml
-from mcp import Client
+from mcp import Client, types
 from pydantic import BaseModel, ValidationError
 
 from sophos_firewall_mcp.config import Settings
@@ -133,11 +133,18 @@ MERGED_TOOLS = {
 }
 
 
+async def _accept_confirmation(
+    context: Any, params: types.ElicitRequestParams
+) -> types.ElicitResult:
+    """Answer the destructive-confirmation question with an explicit accept."""
+    return types.ElicitResult(action="accept", content={"confirm": True})
+
+
 async def call(server: Any, name: str, request: dict[str, Any], *, family: str = "ipv4") -> Any:
     """Call one tool, supplying the required ``ip_family`` for a merged tool."""
     if name in MERGED_TOOLS:
         request = {"ip_family": family, **request}
-    async with Client(server) as client:
+    async with Client(server, elicitation_callback=_accept_confirmation) as client:
         return await client.call_tool(name, request)
 
 
