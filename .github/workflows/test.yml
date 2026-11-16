@@ -51,7 +51,7 @@ jobs:
       # explicitly so the job tests the version the package declares, not whatever a
       # future lock refresh happens to contain.
       - name: Install the declared MCP SDK version
-        run: uv pip install "mcp==${{ matrix.mcp-version }}"
+        run: uv pip install --python .venv/bin/python "mcp==${{ matrix.mcp-version }}"
 
       - name: Verify the installed MCP SDK version
         run: |
@@ -93,7 +93,8 @@ jobs:
           uv pip install --python /tmp/clean-install/bin/python dist/*.whl
 
       # A clean install must resolve the one SDK release the private seam was verified
-      # against, and the installed package must still register the full tool surface.
+      # against, and the installed package must still register its tool surface. The
+      # exact tool count is pinned by tests/test_tool_surface.py, not duplicated here.
       - name: Verify the resolved SDK and the tool surface
         run: |
           /tmp/clean-install/bin/python - <<'PY'
@@ -103,8 +104,9 @@ jobs:
 
           from sophos_firewall_mcp.config import Settings
           from sophos_firewall_mcp.server import create_server
+          from sophos_firewall_mcp.tools import SUPPORTED_MCP_SDK_VERSION
 
-          expected = "2.3.0"
+          expected = SUPPORTED_MCP_SDK_VERSION
           installed = importlib.metadata.version("mcp")
           print(f"resolved mcp {installed} (expected {expected})")
           if installed != expected:
@@ -121,6 +123,6 @@ jobs:
           server = create_server(settings)
           tools = asyncio.run(server.list_tools())
           print(f"registered {len(tools)} tools")
-          if len(tools) != 112:
+          if not tools:
               sys.exit(1)
           PY

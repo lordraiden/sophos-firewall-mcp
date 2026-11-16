@@ -41,23 +41,36 @@ from sophos_firewall_mcp.server import create_server
 from sophos_firewall_mcp.tools import (
     SUPPORTED_MCP_SDK_VERSION,
     ToolKind,
+    _registered_tool,
     register_tool,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT_PATH = ROOT / "pyproject.toml"
 TOOLS_MODULE_PATH = ROOT / "src" / "sophos_firewall_mcp" / "tools" / "__init__.py"
+SERVER_MODULE_PATH = ROOT / "src" / "sophos_firewall_mcp" / "server.py"
 ENV_GUARD_PATH = ROOT / "src" / "sophos_firewall_mcp" / "_env_guard.py"
+DOCS_PATH = ROOT / "docs" / "SDK-COMPATIBILITY.md"
 
-#: The private SDK attributes the seam depends on. A move in any of them breaks argument
-#: handling for every tool, so each is named in a diagnostic rather than a bare assert.
-PRIVATE_SDK_ATTRIBUTES = ("_tool_manager", "fn_metadata", "parameters")
+#: Every private SDK attribute the package depends on. A move in any of them breaks
+#: argument handling or the published server identity, so each is named in a diagnostic
+#: rather than a bare assert.
+PRIVATE_SDK_ATTRIBUTES = ("_tool_manager", "fn_metadata", "parameters", "_lowlevel_server")
 
-#: The functions allowed to touch the private surface: the accessor, its two callers and
-#: the one function that mutates the registered tool.
+#: The private attributes the tool-registration seam in ``tools/__init__.py`` may touch.
+TOOLS_SEAM_ATTRIBUTES = ("_tool_manager", "fn_metadata", "parameters")
+
+#: The private attribute the server factory in ``server.py`` may touch.
+SERVER_SEAM_ATTRIBUTES = ("_lowlevel_server",)
+
+#: The functions allowed to touch the tool-registry surface: the accessor, its two callers
+#: and the one function that mutates the registered tool.
 SEAM_FUNCTIONS = frozenset(
     {"_tool_manager", "_registered_tool", "registered_tool_count", "_flatten_arguments"}
 )
+
+#: The one function allowed to touch the server-identity surface.
+SERVER_SEAM_FUNCTIONS = frozenset({"create_server"})
 
 FLAT_TOOL = "sophos_sdk_compat_echo"
 UNION_TOOL = "sophos_sdk_compat_union"
@@ -287,13 +300,46 @@ def test_the_private_seam_attributes_still_exist() -> None:
         f"it as the input schema."
     )
 
+    lowlevel = getattr(server, "_lowlevel_server", None)
+    assert lowlevel is not None, (
+        f"MCPServer._lowlevel_server is missing in mcp {installed}: the private SDK seam "
+        f"moved (verified against {SUPPORTED_MCP_SDK_VERSION}). server.py assigns its "
+        f"description to publish the tool count in serverInfo."
+    )
+    assert hasattr(lowlevel, "description"), (
+        f"MCPServer._lowlevel_server.description is missing in mcp {installed}: the "
+        f"private SDK seam moved (verified against {SUPPORTED_MCP_SDK_VERSION}). "
+        f"create_server assigns it after every domain has registered."
+    )
+
+
+def _private_attribute_offenders(
+    path: Path, attributes: tuple[str, ...], allowed_functions: frozenset[str]
+) -> list[str]:
+    """Return ``file:function:line`` for each private attribute outside its seam."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    offenders: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in allowed_functions:
+                continue
+            scope = node.name
+        else:
+            scope = "<module>"
+        for child in ast.walk(node):
+            if isinstance(child, ast.Attribute) and child.attr in attributes:
+                offenders.append(f"{path.name}:{scope}:{child.lineno} .{child.attr}")
+            elif isinstance(child, ast.Constant) and child.value in attributes:
+                offenders.append(f"{path.name}:{scope}:{child.lineno} {child.value!r}")
+    return offenders
+
 
 def test_the_private_sdk_surface_is_confined_to_the_seam() -> None:
-    """The private attributes must stay inside the seam, not spread into domain modules."""
-    tree = ast.parse(TOOLS_MODULE_PATH.read_text(encoding="utf-8"))
+    """Each private attribute must stay inside its one seam, not spread across modules."""
+    tools_tree = ast.parse(TOOLS_MODULE_PATH.read_text(encoding="utf-8"))
     defined = {
         node.name
-        for node in ast.walk(tree)
+        for node in ast.walk(tools_tree)
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
     }
     missing = SEAM_FUNCTIONS - defined
@@ -303,22 +349,34 @@ def test_the_private_sdk_surface_is_confined_to_the_seam() -> None:
         f"removed."
     )
 
-    offenders: list[str] = []
-    for function in ast.walk(tree):
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if function.name in SEAM_FUNCTIONS:
-            continue
-        for node in ast.walk(function):
-            if isinstance(node, ast.Attribute) and node.attr in PRIVATE_SDK_ATTRIBUTES:
-                offenders.append(f"{function.name}:{node.lineno} .{node.attr}")
-            elif isinstance(node, ast.Constant) and node.value in PRIVATE_SDK_ATTRIBUTES:
-                offenders.append(f"{function.name}:{node.lineno} {node.value!r}")
+    tools_offenders = _private_attribute_offenders(
+        TOOLS_MODULE_PATH, TOOLS_SEAM_ATTRIBUTES, SEAM_FUNCTIONS
+    )
+    server_offenders = _private_attribute_offenders(
+        SERVER_MODULE_PATH, SERVER_SEAM_ATTRIBUTES, SERVER_SEAM_FUNCTIONS
+    )
 
-    assert not offenders, (
-        f"the private SDK surface {sorted(PRIVATE_SDK_ATTRIBUTES)} must stay inside the "
-        f"seam functions {sorted(SEAM_FUNCTIONS)}; found {offenders}. A private attribute "
-        f"outside the seam turns one SDK move into a hunt instead of a one-line fix."
+    assert not tools_offenders, (
+        f"the private SDK surface {sorted(TOOLS_SEAM_ATTRIBUTES)} must stay inside the "
+        f"seam functions {sorted(SEAM_FUNCTIONS)}; found {tools_offenders}. A private "
+        f"attribute outside the seam turns one SDK move into a hunt instead of a one-line "
+        f"fix."
+    )
+    assert not server_offenders, (
+        f"the private SDK surface {sorted(SERVER_SEAM_ATTRIBUTES)} must stay inside "
+        f"{sorted(SERVER_SEAM_FUNCTIONS)}; found {server_offenders}. The server-identity "
+        f"seam is one assignment in the factory."
+    )
+
+
+@pytest.mark.parametrize("attribute", PRIVATE_SDK_ATTRIBUTES)
+def test_the_private_sdk_inventory_is_documented(attribute: str) -> None:
+    """Every private attribute in the code must be named in the docs inventory."""
+    docs = DOCS_PATH.read_text(encoding="utf-8")
+
+    assert attribute in docs, (
+        f"the private SDK attribute {attribute!r} is missing from "
+        f"docs/SDK-COMPATIBILITY.md; the inventory must match the code."
     )
 
 
@@ -412,17 +470,15 @@ async def test_a_real_tool_invocation_still_works() -> None:
     assert no_arguments.structured_content == {"value": "ok"}
 
 
-@pytest.mark.parametrize("attribute", PRIVATE_SDK_ATTRIBUTES)
-def test_the_seam_diagnostic_names_the_moved_attribute(attribute: str) -> None:
-    """The seam's own failure message must name the attribute and the verified release."""
-    source = TOOLS_MODULE_PATH.read_text(encoding="utf-8")
+def test_the_seam_diagnostic_names_the_moved_attribute(monkeypatch) -> None:
+    """A missing _tool_manager must raise the seam's own message, not an AttributeError."""
+    server = make_server()
+    monkeypatch.delattr(server, "_tool_manager")
 
-    assert attribute in source, (
-        f"the seam no longer mentions {attribute!r}; update the seam note and this test "
-        f"together."
-    )
-    assert SUPPORTED_MCP_SDK_VERSION in source, (
-        f"the seam no longer names the verified SDK release "
-        f"{SUPPORTED_MCP_SDK_VERSION}; the diagnostic cannot tell an operator which "
-        f"release to install."
-    )
+    with pytest.raises(RuntimeError) as moved:
+        _registered_tool(server, FLAT_TOOL)
+
+    message = str(moved.value)
+    assert "MCPServer._tool_manager" in message, message
+    assert f"mcp {SUPPORTED_MCP_SDK_VERSION}" in message, message
+    assert "docs/SDK-COMPATIBILITY.md" in message, message

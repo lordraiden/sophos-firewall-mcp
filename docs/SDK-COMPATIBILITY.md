@@ -8,14 +8,16 @@
 ## Why the dependency is pinned
 
 The server publishes **flat tool arguments** and a **closed, sanitized argument model** for
-every one of its 112 tools. The MCP SDK does not offer either behaviour publicly, so
-`sophos_firewall_mcp.tools` reaches into three attributes that are not public API:
+every one of its 112 tools, and it substitutes the registered tool count into
+`serverInfo.description`. The MCP SDK does not offer either behaviour publicly, so the
+package reaches into four attributes that are not public API:
 
 | Private surface | Used for | Read by |
 |---|---|---|
 | `MCPServer._tool_manager` | the only route to the registered `Tool` objects | `_tool_manager()` |
 | `Tool.fn_metadata.arg_model` | the model a call is validated against | `Tool.run` → `FuncMetadata.validate_arguments` |
 | `Tool.parameters` | the published `inputSchema` | `MCPServer.list_tools` |
+| `MCPServer._lowlevel_server` | `serverInfo.description` substitution after registration | `create_server` (`server.py`) |
 
 A different SDK release may rename, move or remove any of them. The failure would not be a
 clean import error: registration would still succeed, but every tool would silently fall
@@ -37,10 +39,11 @@ mcp 2.3.0 exposes no public equivalent. Verified against the installed 2.3.0 dis
   still goes through `Tool.from_function()`, so the argument-model mutation would still be
   required — and the server factory registers tools after construction.
 
-The private access is therefore confined to one seam in
+The tool-registry access is confined to one seam in
 `src/sophos_firewall_mcp/tools/__init__.py`: `_tool_manager()`, `_registered_tool()`,
-`registered_tool_count()` and `_flatten_arguments()`. `tests/test_sdk_compat.py` parses the
-module and fails if any of the three attributes is touched outside those functions.
+`registered_tool_count()` and `_flatten_arguments()`. The server-identity access is
+confined to `create_server` in `src/sophos_firewall_mcp/server.py`. `tests/test_sdk_compat.py`
+parses both modules and fails if any private attribute is touched outside its seam.
 
 ## What the compatibility test proves
 
@@ -49,8 +52,10 @@ module and fails if any of the three attributes is touched outside those functio
 - `MCPServer._tool_manager` is missing;
 - `Tool.fn_metadata` or `Tool.fn_metadata.arg_model` is missing;
 - `Tool.parameters` is missing;
+- `MCPServer._lowlevel_server` or its `description` is missing;
 - the declared dependency is not the exact verified pin;
-- the installed SDK is not the verified release.
+- the installed SDK is not the verified release;
+- `_env_guard.py` drifts from the pin or the old `mcp>=2` range reappears.
 
 It also proves the behaviour the seam exists for still works end to end:
 
@@ -74,10 +79,11 @@ reappears anywhere in the guard.
 
 The `test` job runs a `python-version` × `mcp-version` matrix. The `mcp-version` list is
 the verified set and must match `pyproject.toml`; each job installs that release
-explicitly (`uv pip install "mcp==<version>"`) and verifies the installed version before
-running the suite, so a lock refresh cannot hide an untested declared version. The
-`clean-install` job builds the wheel, installs it into a throwaway environment and checks
-that a clean install resolves `mcp==2.3.0` and still registers all 112 tools.
+explicitly (`uv pip install --python .venv/bin/python "mcp==<version>"`) and verifies the
+installed version before running the suite, so a lock refresh cannot hide an untested
+declared version. The `clean-install` job builds the wheel, installs it into a throwaway
+environment and checks that a clean install resolves the pinned SDK and still registers a
+non-empty tool surface (the exact count is pinned by `tests/test_tool_surface.py`).
 
 ## Widening the range
 
