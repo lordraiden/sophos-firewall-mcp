@@ -53,6 +53,7 @@ from mcp.types import (
 from pydantic import BaseModel
 
 from sophos_firewall_mcp.config import Settings
+from sophos_firewall_mcp.mrtr import reset_consumed_states
 from sophos_firewall_mcp.server import create_server
 from sophos_firewall_mcp.tools import (
     CONFIRMATION_NOTE,
@@ -110,6 +111,12 @@ def make_server() -> Any:
 def router() -> Any:
     with respx.mock(assert_all_called=False) as mocked:
         yield mocked
+
+
+@pytest.fixture(autouse=True)
+def _fresh_replay_guard() -> None:
+    """Every test starts with an empty single-use set."""
+    reset_consumed_states()
 
 
 # -- The resolver and the outcome check, in isolation ----------------------------------
@@ -306,7 +313,7 @@ async def test_a_legacy_accepted_confirmation_performs_the_delete(router: Any, n
         result = await client.call_tool(name, GATED[name])
 
     assert result.is_error is False, result.content[0].text
-    assert route.called
+    assert route.call_count == 1
     assert route.calls.last.request.method == "DELETE"
 
 
@@ -351,7 +358,7 @@ async def test_a_modern_transport_asks_for_confirmation_and_resumes(router: Any,
     assert len(seen) == 1, seen
     assert "Confirm:" in seen[0]
     assert "irreversible" in seen[0]
-    assert route.called
+    assert route.call_count == 1
     assert route.calls.last.request.method == "DELETE"
 
 
@@ -488,6 +495,77 @@ async def test_an_expired_state_is_rejected_before_the_handler(
 
     assert rejected.value.code == types.INVALID_PARAMS
     assert router.calls == []
+
+
+# -- Single-use request state ----------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_replayed_confirmation_is_rejected_and_deletes_once(router: Any, name: str) -> None:
+    """The same sealed state must not execute the delete twice.
+
+    The first resume is the legitimate one and must be allowed; replaying the same
+    ``requestState`` afterwards must be refused before the handler runs.
+    """
+    route = _mock_delete(router, name)
+
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, GATED[name], allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+        key = next(iter(first.input_requests or {}))
+        answer = types.ElicitResult(action="accept", content={"confirm": True})
+
+        resumed = await client.session.call_tool(
+            name,
+            GATED[name],
+            allow_input_required=True,
+            input_responses={key: answer},
+            request_state=first.request_state,
+        )
+        assert isinstance(resumed, types.CallToolResult)
+        assert resumed.is_error is False, resumed.content[0].text
+        assert route.call_count == 1
+
+        with pytest.raises(MCPError) as rejected:
+            await client.session.call_tool(
+                name,
+                GATED[name],
+                allow_input_required=True,
+                input_responses={key: answer},
+                request_state=first.request_state,
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert "already used" in str(rejected.value)
+    assert route.call_count == 1
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_a_fresh_confirmation_after_a_consumed_one_is_allowed(router: Any, name: str) -> None:
+    """The guard is per-token, not per-target: a new confirmation still works."""
+    route = _mock_delete(router, name)
+
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        for expected in (1, 2):
+            first = await client.session.call_tool(name, GATED[name], allow_input_required=True)
+            assert isinstance(first, types.InputRequiredResult)
+            key = next(iter(first.input_requests or {}))
+            resumed = await client.session.call_tool(
+                name,
+                GATED[name],
+                allow_input_required=True,
+                input_responses={
+                    key: types.ElicitResult(action="accept", content={"confirm": True})
+                },
+                request_state=first.request_state,
+            )
+            assert isinstance(resumed, types.CallToolResult)
+            assert resumed.is_error is False, resumed.content[0].text
+            assert route.call_count == expected
 
 
 # -- Surface invariants ----------------------------------------------------------------

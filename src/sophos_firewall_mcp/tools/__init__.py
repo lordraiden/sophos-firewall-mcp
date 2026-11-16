@@ -106,7 +106,9 @@ spec's backwards-compatible ``"elicitation": {}`` declaration counts as form-mod
 The SDK seals the resume state and binds it to the tool name, the canonical arguments, the
 authenticated principal and a TTL, so a resumed call can only execute the originally
 confirmed target; a missing, malformed, expired or mismatched state is rejected before the
-handler runs (:data:`CONFIRMATION_NOTE` is the model-facing summary).
+handler runs. The state is also single-use: :mod:`sophos_firewall_mcp.mrtr` refuses a
+second use of the same sealed token, so a retry cannot execute the confirmed delete twice
+(:data:`CONFIRMATION_NOTE` is the model-facing summary).
 
 Open-world hint
 ---------------
@@ -242,8 +244,9 @@ CONFIRMATION_NOTE = (
     "The call asks the client to confirm first, naming the object, and deletes nothing "
     "unless the client accepts. On the 2026-07-28 protocol the question is delivered as a "
     "multi-round-trip input-required result; on the legacy handshake it is a standalone "
-    "elicitation request. A declined or cancelled confirmation, or a client that cannot "
-    "answer, aborts the call with a tool error and nothing is deleted."
+    "elicitation request. The confirmation is single-use: replaying the same resume is "
+    "rejected. A declined or cancelled confirmation, or a client that cannot answer, "
+    "aborts the call with a tool error and nothing is deleted."
 )
 
 #: Model-facing rule for the pydantic error types an argument model can raise. The

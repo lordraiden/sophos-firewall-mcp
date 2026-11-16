@@ -96,6 +96,7 @@ from mcp.types import INVALID_PARAMS  # noqa: E402
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
 from sophos_firewall_mcp.config import ConfigurationError, Settings, TOOL_DOMAINS  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
+from sophos_firewall_mcp.mrtr import mrtr_replay_guard  # noqa: E402
 from sophos_firewall_mcp.prompts import available_prompts, register_prompts  # noqa: E402
 from sophos_firewall_mcp.resources import (  # noqa: E402
     SurfaceSummary,
@@ -446,6 +447,11 @@ def create_server(
         cache_hints=_CATALOG_CACHE_HINTS,
         middleware=[_prompt_error_middleware],
     )
+    # The SDK appends its RequestStateBoundary before the user middleware, so a middleware
+    # passed to the constructor runs *inside* the boundary and sees the unsealed state.
+    # The replay guard must see the raw sealed token, so it is prepended: outermost-first,
+    # it runs before the boundary unseals (and before any handler). See mrtr.py.
+    server.middleware.insert(0, mrtr_replay_guard)
     for register in registrars:
         register(server, read_only=read_only)
     # The surface is read back from the registry, not assumed from the selection: the
