@@ -10,7 +10,7 @@ Nothing here performs I/O or knows about a specific domain: the modules are pure
 from __future__ import annotations
 
 import re
-from typing import Annotated, Any, Generic, Literal, TypeVar
+from typing import Annotated, Any, Callable, Generic, Literal, TypeVar
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 from pydantic.json_schema import GetJsonSchemaHandler, JsonSchemaValue
@@ -24,6 +24,7 @@ __all__ = [
     "ObjectRef",
     "OutputModel",
     "Pages",
+    "trim_published_output_schema",
     "validate_object_name",
     "validate_object_name_or_id",
 ]
@@ -170,6 +171,87 @@ def _trim_published_schema(schema: dict[str, Any]) -> None:
     """Apply the two lossless trims to one model's published JSON schema, in place."""
     _strip_property_titles(schema)
     _compact_nullable_unions(schema)
+
+
+#: The output models whose published field annotations stay in the catalog.
+#:
+#: ``Pages`` documents the ``total``/``items`` trap (``total`` counts pages, ``items``
+#: counts items) and ``FirewallRuleOutput`` documents the 1-based evaluation position;
+#: both are distinctions a model needs to interpret a response, and both are pinned by
+#: existing tests. Every other ``$defs`` description and default is dropped from the
+#: published catalog: the same model docstring and field descriptions repeat in every tool
+#: that embeds the model (``ObjectRef`` 64 times, ``Pages`` 33 times), and the tool
+#: description plus the property names, types and enums carry the interpretation.
+_PINNED_DEFS = frozenset({"Pages", "FirewallRuleOutput"})
+
+
+def _walk_schema_nodes(
+    node: Any, visit: Callable[[dict[str, Any]], None], *, skip_defs: bool = False
+) -> None:
+    """Visit every JSON Schema node reachable from ``node``.
+
+    A ``properties`` map is not a schema node: its keys are field names, so a field called
+    ``description`` or ``title`` must not be mistaken for the annotation keyword. Only the
+    values of ``properties`` (and of ``items``, the union branches and ``$defs``) are
+    visited.
+    """
+    if not isinstance(node, dict):
+        return
+    visit(node)
+    for keyword in ("items", "additionalProperties", "not", "contains", "propertyNames"):
+        child = node.get(keyword)
+        if isinstance(child, dict):
+            _walk_schema_nodes(child, visit, skip_defs=skip_defs)
+    for keyword in ("allOf", "anyOf", "oneOf", "prefixItems"):
+        branches = node.get(keyword)
+        if isinstance(branches, list):
+            for branch in branches:
+                _walk_schema_nodes(branch, visit, skip_defs=skip_defs)
+    properties = node.get("properties")
+    if isinstance(properties, dict):
+        for child in properties.values():
+            _walk_schema_nodes(child, visit, skip_defs=skip_defs)
+    if not skip_defs:
+        definitions = node.get("$defs")
+        if isinstance(definitions, dict):
+            for child in definitions.values():
+                _walk_schema_nodes(child, visit, skip_defs=skip_defs)
+
+
+def _drop_annotations(node: dict[str, Any]) -> None:
+    """Remove the ``description`` and ``default`` annotations from one schema node."""
+    node.pop("description", None)
+    node.pop("default", None)
+
+
+def trim_published_output_schema(schema: dict[str, Any]) -> None:
+    """Drop the annotation-only material from one published output schema, in place.
+
+    The catalog is the largest thing a client loads and the output schemas are ~60% of it.
+    Two JSON Schema annotations are the redundant part:
+
+    * ``description`` -- the same model docstring and field descriptions repeat in every
+      tool that embeds the model (``ObjectRef`` 64 times, ``Pages`` 33 times). The tool
+      description and the property names, types and enums carry the interpretation.
+    * ``default`` -- a response always carries the field (or ``null``), so a default is
+      never applied to an output.
+
+    The two models in :data:`_PINNED_DEFS` keep their field descriptions and defaults
+    because they document a distinction a model needs and existing tests pin them.
+
+    Only annotations are removed: ``required``, ``properties``, ``type``, ``enum``,
+    ``const``, ``format``, ``$ref``, ``anyOf``/``oneOf``, ``title`` and every other
+    keyword are untouched, so an instance valid before the trim is valid after it.
+    """
+    _walk_schema_nodes(schema, _drop_annotations, skip_defs=True)
+    for name, definition in (schema.get("$defs") or {}).items():
+        if not isinstance(definition, dict):
+            continue
+        if name in _PINNED_DEFS:
+            # Keep the field annotations; drop only the repeated model docstring.
+            definition.pop("description", None)
+            continue
+        _walk_schema_nodes(definition, _drop_annotations)
 
 
 class OutputModel(BaseModel):

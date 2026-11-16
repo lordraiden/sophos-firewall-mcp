@@ -285,13 +285,37 @@ fall back to the `content` text block otherwise; never parse both.
 
 ## Context cost
 
-`tools/list` returns all **112 tools in a single response**: **625,824 bytes** on the legacy wire
-line and **626,255 bytes** on the modern one (0.7.1; 0.7.0 measured 622,787 and 623,383 with the
-same harness, so the descriptions added about 3 KB) — roughly **156k tokens** at ~4 bytes per token. The size is the raw JSON-RPC `tools/list` response line measured over STDIO,
-including the trailing newline; the envelope is identical across the protocol versions the server
-negotiates. There is no pagination cursor, so a client
-that injects the whole catalog into the prompt either truncates it — and then cannot call the tools
-that were cut — or exhausts the context window before the first call.
+`tools/list` returns all **112 tools in a single response**: **493,965 bytes** on the wire
+(the raw JSON-RPC response line over STDIO, including the trailing newline) — roughly
+**123k tokens** at ~4 bytes per token. The four-way split is:
+
+| Component | Bytes | Share |
+|---|---:|---:|
+| Input schemas | 191,630 | 38.8% |
+| Output schemas | 242,915 | 49.2% |
+| Descriptions | 38,399 | 7.8% |
+| Envelope (names, titles, annotations, JSON-RPC wrapper) | 21,021 | 4.3% |
+
+The output schemas are still the largest part, but the catalog trim removed **133,883
+bytes (−21.3%)** from the pre-trim baseline measured with the same script (627,848
+bytes): the repeated `$defs` model
+docstrings and field descriptions (the same `ObjectRef` definition appeared 64 times and
+`Pages` 33 times) and the response-only `default` annotations are no longer published. The
+trim is annotation-only: every `required`, `enum`, `const`, `type`, `format`, `$ref`,
+nullability and alias is unchanged, and the SDK still validates `structuredContent`
+against the output model. `Pages` and `FirewallRuleOutput` keep their field descriptions
+because they document the `total`/`items` trap and the 1-based position. The measurement
+is reproducible with `scripts/measure_catalog.py`; the full method and the before/after
+table are in [`docs/CATALOG-SIZE.md`](docs/CATALOG-SIZE.md).
+
+There is **no pagination cursor**: the pinned MCP SDK's `MCPServer` accepts
+`PaginatedRequestParams` and ignores it, and exposes no public hook to supply a page. The
+protocol supports `nextCursor` and the SDK's `ListToolsResult` carries it, but the
+`MCPServer` wrapper discards the request cursor, so the server cannot paginate without a
+private override. The limitation and the smallest upstream-compatible path are documented
+in [`docs/CATALOG-SIZE.md`](docs/CATALOG-SIZE.md). A client that injects the whole catalog
+into the prompt either truncates it — and then cannot call the tools that were cut — or
+exhausts the context window before the first call.
 
 The catalog is static for the process lifetime, so:
 
@@ -310,11 +334,10 @@ The catalog is static for the process lifetime, so:
   without loading the tool catalog. A prompt is registered only when every tool its workflow names is
   registered, so a filtered instance publishes only the workflows it can run.
 
-The payload is dominated by the output schemas. 0.7.0 removed **185,133 bytes** from the catalog
-(807,920 → 622,787, −22.9%) and 40 tools: the IPv4/IPv6 collapse behind `ip_family` removed 152,886
-bytes (807,920 → 655,034), and publishing flat arguments removed a further 32,247 bytes (655,034 →
-622,787). That is on top of the earlier catalog trim that removed 2,783 auto-generated property
-`title` keys and compacted 1,646 nullable unions.
+Earlier catalog work: 0.7.0 removed **185,133 bytes** (807,920 → 622,787, −22.9%) and 40
+tools — the IPv4/IPv6 collapse behind `ip_family` removed 152,886 bytes, and publishing
+flat arguments removed a further 32,247 bytes — on top of the earlier trim that removed
+2,783 auto-generated property `title` keys and compacted 1,646 nullable unions.
 
 ## Configuration
 

@@ -614,17 +614,20 @@ and omitting it means both.
 
 ## One page per call
 
-A paginated list publishes `page`, `page_size` and `page_total` as top-level arguments. `page` is
-1-based, `page_size` defaults to 10 and is capped at 100, and `page_total=true` adds
-`pages.total` and `pages.items` to the result. There is no cursor: call the next page
-explicitly when you need it.
+A paginated list publishes `page`, `page_size` and `page_total`. `page` is 1-based,
+`page_size` defaults to 10 and is capped at 100, and `page_total=true` adds `pages.total`
+and `pages.items`. There is no cursor: call the next page explicitly.
 
 ## Read one of `content` / `structuredContent`
 
-Every successful result carries the payload twice: a pretty-printed JSON text block in
-`content` and the same object in `structuredContent`. Read `structuredContent` when the
-client supports it and fall back to `content` otherwise; never parse both, because a single
-list page is 28-70 KB.
+Every successful result carries the payload twice: a JSON text block in `content` and
+the same object in `structuredContent`. Read `structuredContent` when the client supports
+it, else `content`; never parse both.
+
+## Catalog size and discovery
+
+`tools/list` is one page of 112 tools (~494KB) with no `nextCursor`; call it once per
+session and prefer progressive discovery.
 
 ## Errors
 
