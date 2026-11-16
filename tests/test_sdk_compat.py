@@ -316,10 +316,10 @@ def test_the_private_seam_attributes_still_exist() -> None:
         f"moved (verified against {SUPPORTED_MCP_SDK_VERSION}). server.py assigns its "
         f"instructions after registration."
     )
-    assert hasattr(lowlevel, "description"), (
-        f"MCPServer._lowlevel_server.description is missing in mcp {installed}: the "
+    assert hasattr(lowlevel, "instructions"), (
+        f"MCPServer._lowlevel_server.instructions is missing in mcp {installed}: the "
         f"private SDK seam moved (verified against {SUPPORTED_MCP_SDK_VERSION}). "
-        f"create_server passes the package description to the constructor."
+        f"create_server assigns it after every domain has registered."
     )
 
 
