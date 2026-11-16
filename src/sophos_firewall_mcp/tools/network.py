@@ -465,7 +465,10 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         kind=ToolKind.READ,
         name="zone_get",
         title="Get a zone",
-        description="Read one network zone by name or UUID. Read-only.",
+        description=(
+            "Read one network zone by name or UUID. Returns the zone type, its "
+            "description and the firewall services allowed for it. Read-only."
+        ),
     )
     async def zone_get(request: models.ZoneRefInput, ctx: Context[AppContext]) -> models.Zone:
         payload = await NetworkAdapter.from_context(ctx).object(ZONES_PATH, request.id_or_name)
@@ -521,7 +524,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get a WAN gateway",
         description=(
             "Read one IPv4 or IPv6 WAN gateway by name or UUID, selected by the required "
-            "`ip_family`. Read-only."
+            "`ip_family`. Returns the gateway role and weight, its interface and address, "
+            "the backup activation settings and the health-check rules. Read-only."
         ),
     )
     async def wan_gateway_get(
@@ -558,7 +562,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get a custom gateway",
         description=(
             "Read one custom IPv4 or IPv6 gateway by name or UUID, selected by the required "
-            "`ip_family`. Read-only."
+            "`ip_family`. Returns the interface, zone, address and health-check settings. "
+            "Read-only."
         ),
     )
     async def custom_gateway_get(
@@ -598,7 +603,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get a static unicast route",
         description=(
             "Read one IPv4 or IPv6 static unicast route by name or UUID, selected by the "
-            "required `ip_family`. Read-only."
+            "required `ip_family`. Returns the destination and prefix, the gateway, "
+            "interface, metric and administrative distance. Read-only."
         ),
     )
     async def unicast_route_get(
@@ -639,7 +645,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get an SD-WAN route",
         description=(
             "Read one IPv4 or IPv6 SD-WAN route by name or UUID, selected by the required "
-            "`ip_family`. Read-only."
+            "`ip_family`. Returns the service, application and user selectors, the link "
+            "selection, the DSCP marking and the source and destination networks. "
+            "Read-only."
         ),
     )
     async def sdwan_route_get(
@@ -679,7 +687,9 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get a DHCP server",
         description=(
             "Read one IPv4 or IPv6 DHCP server by name or UUID, selected by the required "
-            "`ip_family`. Read-only."
+            "`ip_family`. Returns the enabled state, interface, address pools and client "
+            "reservations, plus the lease lifetimes, DNS/WINS servers and DHCP options. "
+            "Read-only."
         ),
     )
     async def dhcp_server_get(
@@ -809,7 +819,11 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         kind=ToolKind.READ,
         name="dns_host_entry_get",
         title="Get a DNS host entry",
-        description="Read one DNS host entry by name or UUID. Read-only.",
+        description=(
+            "Read one DNS host entry by name or UUID. Returns the domain, the "
+            "reverse-resolution flag and the host records with their TTL, weight and "
+            "publish-on-WAN settings. Read-only."
+        ),
     )
     async def dns_host_entry_get(
         request: models.WideRefInput, ctx: Context[AppContext]
@@ -843,7 +857,10 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         kind=ToolKind.READ,
         name="dns_request_route_get",
         title="Get a DNS request route",
-        description="Read one DNS request route by name or UUID. Read-only.",
+        description=(
+            "Read one DNS request route by name or UUID. Returns the domain and the DNS "
+            "servers it is forwarded to. Read-only."
+        ),
     )
     async def dns_request_route_get(
         request: models.WideRefInput, ctx: Context[AppContext]
@@ -885,7 +902,8 @@ def register_network_tools(server: MCPServer[AppContext], *, read_only: bool) ->
         title="Get a static neighbor",
         description=(
             "Read one static IPv4 or IPv6 neighbor entry by name or UUID, selected by the "
-            "required `ip_family`. Read-only."
+            "required `ip_family`. Returns the IP address, MAC address and interface of "
+            "the entry. Read-only."
         ),
     )
     async def static_neighbor_get(

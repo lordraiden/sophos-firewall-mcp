@@ -197,7 +197,11 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="ipsec_profile_get",
         title="Get an IPsec profile",
-        description="Read one IPsec profile by name or UUID. Read-only.",
+        description=(
+            "Read one IPsec profile by name or UUID. Returns the key-exchange and "
+            "authentication mode, the phase-1 and phase-2 proposals and the "
+            "dead-peer-detection settings. Read-only."
+        ),
     )
     async def ipsec_profile_get(
         request: models.VpnProfileRefInput, ctx: Context[AppContext]
@@ -232,7 +236,11 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="ipsec_failover_group_get",
         title="Get an IPsec failover group",
-        description="Read one IPsec failover group by name or UUID. Read-only.",
+        description=(
+            "Read one IPsec failover group by name or UUID. Returns the member "
+            "connections, the liveness checks and the failback and alert settings. "
+            "Read-only."
+        ),
     )
     async def ipsec_failover_group_get(
         request: models.VpnFailoverGroupRefInput, ctx: Context[AppContext]
@@ -286,8 +294,9 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         name="ipsec_policy_based_connection_get_ipv4",
         title="Get a policy-based IPv4 IPsec connection",
         description=(
-            "Read one policy-based IPv4 site-to-site connection by name or UUID. The API has "
-            "no IPv6 counterpart. Read-only."
+            "Read one policy-based IPv4 site-to-site connection by name or UUID. Returns "
+            "the connection type, gateway type, profile, protected networks and "
+            "activation state. The API has no IPv6 counterpart. Read-only."
         ),
     )
     async def ipsec_policy_based_connection_get_ipv4(
@@ -321,8 +330,9 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         name="ipsec_route_based_connection_get_ipv4",
         title="Get a route-based IPv4 IPsec connection",
         description=(
-            "Read one route-based IPv4 site-to-site connection by name or UUID. The API has no "
-            "IPv6 counterpart. Read-only."
+            "Read one route-based IPv4 site-to-site connection by name or UUID. Returns the "
+            "gateway type, profile, tunnel interface, protected networks and activation "
+            "state. The API has no IPv6 counterpart. Read-only."
         ),
     )
     async def ipsec_route_based_connection_get_ipv4(
@@ -404,7 +414,11 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="sslvpn_remote_access_policy_get",
         title="Get an SSL VPN remote-access policy",
-        description="Read one SSL VPN remote-access policy by name or UUID. Read-only.",
+        description=(
+            "Read one SSL VPN remote-access policy by name or UUID. Returns the policy "
+            "members, the full-tunnel flag, the permitted IPv4 and IPv6 networks and the "
+            "idle-peer-detection settings. Read-only."
+        ),
     )
     async def sslvpn_remote_access_policy_get(
         request: models.VpnRemoteAccessPolicyRefInput, ctx: Context[AppContext]
@@ -440,7 +454,10 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="sslvpn_bookmark_group_get",
         title="Get an SSL VPN bookmark group",
-        description="Read one clientless SSL VPN bookmark group by name or UUID. Read-only.",
+        description=(
+            "Read one clientless SSL VPN bookmark group by name or UUID. Returns the "
+            "group's member bookmarks. Read-only."
+        ),
     )
     async def sslvpn_bookmark_group_get(
         request: models.VpnBookmarkGroupRefInput, ctx: Context[AppContext]
@@ -512,7 +529,11 @@ def register_vpn_tools(server: MCPServer[AppContext], *, read_only: bool) -> Non
         kind=ToolKind.READ,
         name="sslvpn_clientless_policy_get",
         title="Get an SSL VPN clientless policy",
-        description="Read one SSL VPN clientless policy by name or UUID. Read-only.",
+        description=(
+            "Read one SSL VPN clientless policy by name or UUID. Returns the member users "
+            "and groups and the bookmarks and bookmark groups the policy publishes. "
+            "Read-only."
+        ),
     )
     async def sslvpn_clientless_policy_get(
         request: models.VpnClientlessPolicyRefInput, ctx: Context[AppContext]

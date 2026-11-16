@@ -146,6 +146,98 @@ IPV4_ONLY_IPSEC_TOOLS = frozenset(
     }
 )
 
+#: The sixteen getters whose descriptions must say what they return. Pinned as a literal
+#: set so dropping a row from ``EXPECTED_GETTER_RETURN_SENTENCES`` fails the test instead of
+#: silently shrinking the contract.
+GETTER_TOOLS = frozenset(
+    {
+        "zone_get",
+        "ipsec_profile_get",
+        "dns_host_entry_get",
+        "dns_request_route_get",
+        "ipsec_failover_group_get",
+        "sslvpn_clientless_policy_get",
+        "sslvpn_remote_access_policy_get",
+        "sslvpn_bookmark_group_get",
+        "ipsec_route_based_connection_get_ipv4",
+        "ipsec_policy_based_connection_get_ipv4",
+        "dhcp_server_get",
+        "wan_gateway_get",
+        "sdwan_route_get",
+        "custom_gateway_get",
+        "unicast_route_get",
+        "static_neighbor_get",
+    }
+)
+
+#: The one sentence each getter adds to describe the object it returns, based on its output
+#: DTO. Pinned per tool because it is the model's only summary of the payload; a reworded
+#: sentence is a deliberate contract change, not a refactor.
+EXPECTED_GETTER_RETURN_SENTENCES: dict[str, str] = {
+    "zone_get": (
+        "Returns the zone type, its description and the firewall services allowed for it."
+    ),
+    "ipsec_profile_get": (
+        "Returns the key-exchange and authentication mode, the phase-1 and phase-2 "
+        "proposals and the dead-peer-detection settings."
+    ),
+    "dns_host_entry_get": (
+        "Returns the domain, the reverse-resolution flag and the host records with their "
+        "TTL, weight and publish-on-WAN settings."
+    ),
+    "dns_request_route_get": "Returns the domain and the DNS servers it is forwarded to.",
+    "ipsec_failover_group_get": (
+        "Returns the member connections, the liveness checks and the failback and alert "
+        "settings."
+    ),
+    "sslvpn_clientless_policy_get": (
+        "Returns the member users and groups and the bookmarks and bookmark groups the "
+        "policy publishes."
+    ),
+    "sslvpn_remote_access_policy_get": (
+        "Returns the policy members, the full-tunnel flag, the permitted IPv4 and IPv6 "
+        "networks and the idle-peer-detection settings."
+    ),
+    "sslvpn_bookmark_group_get": "Returns the group's member bookmarks.",
+    "ipsec_route_based_connection_get_ipv4": (
+        "Returns the gateway type, profile, tunnel interface, protected networks and "
+        "activation state."
+    ),
+    "ipsec_policy_based_connection_get_ipv4": (
+        "Returns the connection type, gateway type, profile, protected networks and "
+        "activation state."
+    ),
+    "dhcp_server_get": (
+        "Returns the enabled state, interface, address pools and client reservations, plus "
+        "the lease lifetimes, DNS/WINS servers and DHCP options."
+    ),
+    "wan_gateway_get": (
+        "Returns the gateway role and weight, its interface and address, the backup "
+        "activation settings and the health-check rules."
+    ),
+    "sdwan_route_get": (
+        "Returns the service, application and user selectors, the link selection, the DSCP "
+        "marking and the source and destination networks."
+    ),
+    "custom_gateway_get": "Returns the interface, zone, address and health-check settings.",
+    "unicast_route_get": (
+        "Returns the destination and prefix, the gateway, interface, metric and "
+        "administrative distance."
+    ),
+    "static_neighbor_get": "Returns the IP address, MAC address and interface of the entry.",
+}
+
+#: The four address and address-group create/update tools. Only ``address_create`` is
+#: discriminated by ``type``; the other three are discriminated by ``ip_family`` (their
+#: published schemas have no ``type`` property), so their descriptions state that
+#: ``ip_family`` selects the variant and that ``type`` is not part of the payload.
+ADDRESS_UNION_TOOLS = (
+    "address_create",
+    "address_update",
+    "address_group_create",
+    "address_group_update",
+)
+
 #: The published input naming convention (M1): lowercase words joined by underscores.
 SNAKE_CASE_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
@@ -520,6 +612,8 @@ async def test_the_optional_ip_family_composites_keep_their_own_description() ->
         assert "ip_family" not in (tools[name].input_schema.get("required") or ()), name
         description = properties["ip_family"].get("description")
         assert description and description != IP_FAMILY_DESCRIPTION, name
+        # Omission has a meaning on these three, so the description must state it.
+        assert "omit" in description.lower(), name
 
 
 async def test_the_ipv4_only_ipsec_tools_say_so() -> None:
@@ -529,6 +623,102 @@ async def test_the_ipv4_only_ipsec_tools_say_so() -> None:
     assert IPV4_ONLY_IPSEC_TOOLS <= set(tools)
     for name in sorted(IPV4_ONLY_IPSEC_TOOLS):
         assert "no IPv6 counterpart" in tools[name].description, name
+
+
+async def test_the_address_union_descriptions_explain_the_selector() -> None:
+    """A model must learn which field selects the variant without reading ``$defs``.
+
+    ``address_create`` is the one tool in this group discriminated by ``type``; the
+    published schemas for ``address_update``, ``address_group_create`` and
+    ``address_group_update`` have no ``type`` property and are discriminated by
+    ``ip_family``. The descriptions state the actual selector, so a model does not send a
+    ``type`` those three tools do not accept.
+    """
+    tools = await tools_by_name()
+
+    for name in ADDRESS_UNION_TOOLS:
+        description = tools[name].description
+        assert "`ip_family`" in description, name
+        assert "`type`" in description, name
+
+    create = tools["address_create"].description
+    assert "`type` selects the variant" in create
+    assert "matching `ip_family`" in create
+
+    update = tools["address_update"].description
+    assert "`ip_family` selects the variant" in update
+    assert "`type` cannot be changed" in update
+
+    for name in ("address_group_create", "address_group_update"):
+        description = tools[name].description
+        assert "`ip_family` selects the variant" in description, name
+        assert "no `type` member" in description, name
+
+
+async def test_the_sixteen_getters_describe_the_returned_object() -> None:
+    """A getter must say what it returns, not only what it targets.
+
+    The sentence is pinned per tool because it is the model's only summary of the output
+    DTO; a reworded sentence is a deliberate contract change, not a refactor. The table is
+    checked for completeness as well as for content, so dropping a row fails instead of
+    silently shrinking the contract.
+    """
+    tools = await tools_by_name()
+
+    assert len(GETTER_TOOLS) == 16
+    assert set(EXPECTED_GETTER_RETURN_SENTENCES) == GETTER_TOOLS
+    assert GETTER_TOOLS <= set(tools)
+    for name, sentence in EXPECTED_GETTER_RETURN_SENTENCES.items():
+        assert sentence in tools[name].description, name
+
+
+async def test_mac_address_create_reports_one_mutually_exclusive_message() -> None:
+    """Both alternatives at once is one mistake, so it gets one actionable message.
+
+    The union is undiscriminated, so pydantic rejects each variant separately; the
+    argument model collapses that into one sentence naming the two fields.
+    """
+    async with Client(make_server()) as client:
+        result = await client.call_tool(
+            "mac_address_create",
+            {
+                "name": "printer",
+                "mac_address": "00:11:22:33:44:55",
+                "mac_addresses": ["00:11:22:33:44:55"],
+            },
+        )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "mac_address and mac_addresses are mutually exclusive" in text
+    assert "provide exactly one" in text
+    # One message, not one rejection per variant.
+    assert text.count("not an accepted argument") == 0
+
+
+async def test_mac_address_create_description_uses_the_published_argument_names() -> None:
+    """The description must name the arguments the schema publishes (snake_case)."""
+    tools = await tools_by_name()
+    description = tools["mac_address_create"].description
+
+    assert "`mac_address`" in description
+    assert "`mac_addresses`" in description
+    assert "`macAddress`" not in description
+    assert "`macAddresses`" not in description
+
+
+async def test_a_flat_tool_reports_a_bad_ip_family_by_name() -> None:
+    """A flat request model must name ``ip_family`` and its accepted values."""
+    async with Client(make_server()) as client:
+        result = await client.call_tool(
+            "wan_gateway_get", {"ip_family": "ipv5", "id_or_name": "WAN1"}
+        )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "ip_family must be one of" in text
+    assert "'ipv4'" in text
+    assert "'ipv6'" in text
 
 
 async def test_every_tool_publishes_an_object_rooted_output() -> None:
