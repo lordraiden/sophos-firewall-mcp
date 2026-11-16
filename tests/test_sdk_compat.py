@@ -75,6 +75,7 @@ SEAM_FUNCTIONS = frozenset(
         "registered_tool_count",
         "registered_tool_names",
         "registered_read_only_tool_names",
+        "trim_registered_output_schemas",
         "_flatten_arguments",
     }
 )

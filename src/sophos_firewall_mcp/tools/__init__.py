@@ -138,6 +138,7 @@ from __future__ import annotations
 
 import re
 import types
+from copy import deepcopy
 from enum import Enum
 from typing import (
     Annotated,
@@ -194,6 +195,7 @@ __all__ = [
     "registered_tool_count",
     "registered_tool_names",
     "require_confirmation",
+    "trim_registered_output_schemas",
     "tool_error",
 ]
 
@@ -716,12 +718,16 @@ class _SanitizedArgumentError(ValidationError):
 # The only route is the private attribute below, so it is confined to one accessor.
 #
 # Exact private surface this module depends on (mcp 2.3.0):
-#   MCPServer._tool_manager       private attribute, set in MCPServer.__init__
-#   ToolManager.get_tool(name)    public method on that private object
-#   Tool.fn_metadata.arg_model    read by Tool.run -> FuncMetadata.validate_arguments
-#   Tool.parameters               returned as input_schema by MCPServer.list_tools
-# If any of these moves, _registered_tool raises and tests/test_sdk_compat.py fails with
-# a diagnostic naming the attribute that moved.
+#   MCPServer._tool_manager          private attribute, set in MCPServer.__init__
+#   ToolManager.get_tool(name)       public method on that private object
+#   ToolManager.list_tools()         public method on that private object
+#   Tool.fn_metadata.arg_model       read by Tool.run -> FuncMetadata.validate_arguments
+#   Tool.fn_metadata.output_schema   read by MCPServer.list_tools; reassigned by
+#                                    trim_registered_output_schemas
+#   Tool.parameters                  returned as input_schema by MCPServer.list_tools
+#   Tool.output_schema               cached_property over fn_metadata.output_schema
+# If any of these moves, the accessor that reads it raises and tests/test_sdk_compat.py
+# fails with a diagnostic naming the attribute that moved.
 def _tool_manager(server: MCPServer[AppContext]) -> ToolManager:
     """Return the SDK's private tool manager through the pinned seam.
 
@@ -778,6 +784,41 @@ def registered_read_only_tool_names(server: MCPServer[AppContext]) -> tuple[str,
         for tool in _tool_manager(server).list_tools()
         if tool.annotations is not None and tool.annotations.read_only_hint
     )
+
+
+def trim_registered_output_schemas(
+    server: MCPServer[AppContext],
+    trim: Callable[[dict[str, Any]], None],
+) -> int:
+    """Apply ``trim`` to every registered tool's published output schema.
+
+    The SDK derives ``outputSchema`` from the return annotation at registration and reads
+    ``FuncMetadata.output_schema`` live, so reassigning it changes what ``tools/list``
+    publishes without touching the output model the SDK validates results against. The
+    registry is reached through the same pinned private seam as
+    :func:`registered_tool_count`, which keeps ``MCPServer._tool_manager`` confined to
+    this module.
+
+    Args:
+        server: The server whose tools have already registered.
+        trim: A callable that mutates one output schema in place. It receives a deep copy,
+            so the model's own schema is never modified.
+
+    Returns:
+        The number of output schemas trimmed.
+    """
+    trimmed = 0
+    for tool in _tool_manager(server).list_tools():
+        schema = tool.fn_metadata.output_schema
+        if schema is None:
+            continue
+        copy = deepcopy(schema)
+        trim(copy)
+        tool.fn_metadata.output_schema = copy
+        # ``Tool.output_schema`` is a cached_property; drop a value cached before the trim.
+        tool.__dict__.pop("output_schema", None)
+        trimmed += 1
+    return trimmed
 
 
 def _flatten_arguments(server: MCPServer[AppContext], name: str) -> Tool | None:

@@ -72,7 +72,6 @@ true for the complete surface, a read-only deployment and a domain-filtered one 
 
 from __future__ import annotations
 
-import copy
 import importlib.metadata
 import logging
 import sys
@@ -110,10 +109,10 @@ from sophos_firewall_mcp.resources import (  # noqa: E402
     register_resources,
 )
 from sophos_firewall_mcp.tools import (  # noqa: E402
-    SUPPORTED_MCP_SDK_VERSION,
     DomainRegistrar,
     registered_read_only_tool_names,
     registered_tool_names,
+    trim_registered_output_schemas,
 )
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
@@ -281,43 +280,13 @@ def _enabled_domains(registrars: Iterable[DomainRegistrar]) -> tuple[str, ...]:
     )
 
 
-def _trim_published_output_schemas(server: MCPServer[AppContext]) -> None:
-    """Trim every registered tool's published output schema.
-
-    The SDK derives ``outputSchema`` from the return annotation at registration and reads
-    ``FuncMetadata.output_schema`` live, so reassigning it here changes what ``tools/list``
-    publishes without touching the output model the SDK validates results against. The
-    registry is reached through the same pinned private seam the tool package documents
-    (``MCPServer._tool_manager``); the SDK exposes no public setter for a tool's schema.
-
-    Raises:
-        RuntimeError: The pinned SDK seam moved and the registry cannot be reached.
-    """
-    manager = getattr(server, "_tool_manager", None)
-    if manager is None:
-        raise RuntimeError(
-            "the pinned MCP SDK seam moved: MCPServer._tool_manager is missing (expected "
-            f"mcp {SUPPORTED_MCP_SDK_VERSION}); the catalog trim depends on it"
-        )
-    for tool in manager.list_tools():
-        schema = tool.fn_metadata.output_schema
-        if schema is None:
-            continue
-        trimmed = copy.deepcopy(schema)
-        trim_published_output_schema(trimmed)
-        tool.fn_metadata.output_schema = trimmed
-        # ``Tool.output_schema`` is a cached_property; drop a value cached before the trim.
-        tool.__dict__.pop("output_schema", None)
-
-
 def _registered_surface(server: MCPServer[AppContext], domains: tuple[str, ...]) -> SurfaceSummary:
     """The tool surface this process actually registered.
 
     The registry is the ground truth: the resources and the instructions describe what is in
     it, so a filtered instance cannot claim a tool it did not register. Both accessors come
-    from :mod:`sophos_firewall_mcp.tools`, which owns the pinned private SDK seam. The one
-    other reader of that seam is :func:`_trim_published_output_schemas`, which must run
-    after registration and has no public SDK entry point.
+    from :mod:`sophos_firewall_mcp.tools`, which owns the pinned private SDK seam, so this
+    module never touches ``MCPServer._tool_manager`` itself.
     """
     return SurfaceSummary(
         domains=domains,
@@ -597,8 +566,9 @@ def create_server(
     for register in registrars:
         register(server, read_only=read_only)
     # The published output schemas are trimmed once, after every domain has registered:
-    # the trim is per tool and the registry is fixed for the process lifetime.
-    _trim_published_output_schemas(server)
+    # the trim is per tool and the registry is fixed for the process lifetime. The tool
+    # package owns the registry access, so this module never touches the private seam.
+    trim_registered_output_schemas(server, trim_published_output_schema)
     # The surface is read back from the registry, not assumed from the selection: the
     # resources, the prompts and the instructions then describe the tools this process
     # actually publishes, so a filtered instance cannot claim one it did not register.
