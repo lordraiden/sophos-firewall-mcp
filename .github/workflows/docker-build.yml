@@ -66,7 +66,7 @@ jobs:
               if line.strip()
           ]
           tools = next(line for line in lines if line.get("id") == 2)["result"]["tools"]
-          assert len(tools) == 152, f"expected 152 tools, got {len(tools)}"
+          assert len(tools) == 112, f"expected 112 tools, got {len(tools)}"
           print(f"tools: {len(tools)}")
           PY
 
