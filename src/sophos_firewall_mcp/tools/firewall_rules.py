@@ -50,8 +50,10 @@ create a new rule each time. ``open_world_hint`` comes from the per-tool verdict
 configuration, so every tool here is closed (``false``).
 
 ``firewall_rule_delete`` asks the client to confirm before the appliance is touched
-(:func:`sophos_firewall_mcp.tools.confirm_destructive`); a client that cannot be asked
-keeps the previous behaviour.
+(:func:`sophos_firewall_mcp.tools.confirm_destructive`). The gate is best-effort: it fires
+on the legacy handshake path, where the transport can carry a server-initiated request,
+and is skipped -- with a ``WARNING`` -- on the modern (``2026-07-28``) per-request path,
+where the client's own confirmation UI is the only gate.
 """
 
 from __future__ import annotations
@@ -87,6 +89,7 @@ from sophos_firewall_mcp.models.firewall import (
     UpdateFirewallRuleIpv6Input,
 )
 from sophos_firewall_mcp.tools import (
+    CONFIRMATION_NOTE,
     DomainAdapter,
     ToolKind,
     confirm_destructive,
@@ -553,10 +556,8 @@ def register_firewall_tools(server: MCPServer[AppContext], *, read_only: bool) -
         description=(
             "Delete one firewall rule by id or name (deleteFirewallRuleIpv4 or "
             "deleteFirewallRuleIpv6, selected by the required ip_family). Destructive and "
-            "irreversible: the rule is removed from that family's rule base. When the client "
-            "supports elicitation the call first asks the user to confirm, naming the rule; "
-            "a declined or cancelled confirmation aborts the call and nothing is deleted. "
-            "Returns whether the appliance confirmed the deletion."
+            "irreversible: the rule is removed from that family's rule base. "
+            f"{CONFIRMATION_NOTE} Returns whether the appliance confirmed the deletion."
         ),
         annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )

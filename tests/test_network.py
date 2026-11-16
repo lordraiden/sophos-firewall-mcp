@@ -769,7 +769,8 @@ async def test_vlan_writes_declare_their_risk_and_idempotence() -> None:
     assert create.destructive_hint is False
     assert create.idempotent_hint is False
     assert update.read_only_hint is False
-    assert update.destructive_hint is False
+    # A JSON Merge Patch overwrites stored values, so the update is destructive.
+    assert update.destructive_hint is True
     assert update.idempotent_hint is True
     assert delete.read_only_hint is False
     assert delete.destructive_hint is True

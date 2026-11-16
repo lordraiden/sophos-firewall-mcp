@@ -93,7 +93,8 @@ proceeds exactly as before -- when the client cannot be asked:
 
 * the client declared no ``elicitation`` capability (``ctx.client_capabilities`` is
   ``None`` or carries no ``form`` mode), which is the normal case for a non-interactive
-  client;
+  client. The spec's backwards-compatible ``"elicitation": {}`` declaration counts as
+  form-mode support, so it is asked;
 * the transport has no back-channel for server-initiated requests
   (``mcp.shared.exceptions.NoBackChannelError``). ``mcp`` 2.3.0 refuses a standalone
   server-to-client request on the modern (``2026-07-28``) per-request path
@@ -103,6 +104,10 @@ proceeds exactly as before -- when the client cannot be asked:
   ``InputRequiredResult`` round trip that ``mcp`` 2.3.0 only wires for ``Resolve``
   parameters (``mcp/server/mcpserver/resolve.py:10-30``, ``:96``), which would change
   every handler signature; that is deliberately out of scope for this release.
+
+The modern-path skip is logged at ``WARNING`` so an operator can see that a delete ran
+without the question, and the four tool descriptions state the limitation instead of
+promising a confirmation that cannot happen (:data:`CONFIRMATION_NOTE`).
 
 Open-world hint
 ---------------
@@ -119,6 +124,7 @@ that set; ``tests/test_tool_surface.py`` pins the mapping so the decision stays 
 
 from __future__ import annotations
 
+import logging
 import re
 import types
 from enum import Enum
@@ -142,7 +148,7 @@ from mcp.server.elicitation import (
 )
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
-from mcp.server.mcpserver.tools import Tool
+from mcp.server.mcpserver.tools import Tool, ToolManager
 from mcp.shared.exceptions import NoBackChannelError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
@@ -161,14 +167,19 @@ from sophos_firewall_mcp.errors import (
 )
 
 __all__ = [
+    "CONFIRMATION_NOTE",
+    "IP_FAMILY_DESCRIPTION",
     "OPEN_WORLD_TOOLS",
     "DomainAdapter",
     "DomainRegistrar",
     "ToolKind",
     "confirm_destructive",
     "register_tool",
+    "registered_tool_count",
     "tool_error",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: Tool names are lower snake_case and at most 64 characters (MCP tool-name guidance).
 _TOOL_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -199,6 +210,37 @@ _AUTHORIZATION_DETAIL = (
 _AUTH_DETAIL = (
     "authentication or authorization failed; check the API key and the administrator "
     "profile permissions"
+)
+
+#: The one description every required ``ip_family`` argument publishes.
+#:
+#: ``ip_family`` is the single new argument of 0.7.0 and the one a model must get right on
+#: 32 tools, so it is documented once here instead of thirteen different ways across the
+#: domain models (and not at all on the six firewall tools). The published ``inputSchema``
+#: is the model's only description of a parameter, so the description is normalised there
+#: by :func:`_describe_ip_family` rather than repeated in every model.
+#:
+#: The three audit composites keep their own description: their ``ip_family`` is optional
+#: and means something different (both families when omitted, ``fqdn`` on
+#: ``find_object_usage``).
+IP_FAMILY_DESCRIPTION = (
+    "IP family of the collection: 'ipv4' or 'ipv6'. Required: the two collections are "
+    "separate, so the family is never inferred."
+)
+
+#: The honest confirmation sentence the four gated delete descriptions carry.
+#:
+#: The gate is best-effort: it fires on the legacy handshake path, where the transport can
+#: carry a server-initiated request, and is skipped on the modern (``2026-07-28``)
+#: per-request path, where ``mcp`` 2.3.0 refuses one. A description that promised the
+#: question unconditionally would be false on the protocol era the server advertises, and
+#: a model that reads it may tell the user it will ask and then delete without asking.
+CONFIRMATION_NOTE = (
+    "The call asks the client to confirm first, naming the object, when the transport can "
+    "carry a server-initiated request (the legacy handshake path); a declined or cancelled "
+    "confirmation aborts the call and nothing is deleted. On the 2026-07-28 path the server "
+    "cannot send that question, so the confirmation is skipped and the client's own "
+    "confirmation UI is the only gate."
 )
 
 #: Model-facing rule for the pydantic error types an argument model can raise. The
@@ -277,12 +319,16 @@ OPEN_WORLD_TOOLS: frozenset[str] = frozenset(
 
 
 class _DestructiveConfirmation(BaseModel):
-    """The one question :func:`confirm_destructive` asks.
+    """Confirm the deletion.
 
-    Elicitation schemas are restricted to primitive properties, so the answer is a single
-    boolean rather than a free-text acknowledgement.
+    Set confirm to true to perform the deletion, or false to abort without changing the
+    appliance.
     """
 
+    # Elicitation schemas are restricted to primitive properties, so the answer is a single
+    # boolean rather than a free-text acknowledgement. The docstring above is the schema
+    # description the client renders in the confirmation dialog, so it is plain user-facing
+    # prose; this implementation note stays out of it.
     confirm: bool = Field(
         description=(
             "Set true to perform the deletion; set false to abort without changing the "
@@ -298,6 +344,11 @@ def _client_can_elicit(ctx: Context[AppContext]) -> bool:
     ``elicitation`` capability cannot be asked, and the caller must keep its previous
     behaviour rather than fail. The attribute is read defensively because a handler is
     also called directly in tests with a stub context.
+
+    The spec's backwards-compatible declaration ``"elicitation": {}`` is equivalent to
+    form-mode support, so an ``ElicitationCapability`` with neither ``form`` nor ``url``
+    set counts as able to answer. A ``url``-only client cannot answer a boolean question,
+    so it is not asked.
     """
     capabilities = getattr(ctx, "client_capabilities", None)
     if capabilities is None:
@@ -305,7 +356,11 @@ def _client_can_elicit(ctx: Context[AppContext]) -> bool:
     elicitation = getattr(capabilities, "elicitation", None)
     if elicitation is None:
         return False
-    return getattr(elicitation, "form", None) is not None
+    form = getattr(elicitation, "form", None)
+    if form is not None:
+        return True
+    # ``"elicitation": {}``: the spec defines the empty object as form-mode support.
+    return getattr(elicitation, "url", None) is None
 
 
 async def confirm_destructive(
@@ -339,7 +394,15 @@ async def confirm_destructive(
         result = await ctx.elicit(message, _DestructiveConfirmation)
     except NoBackChannelError:
         # The transport cannot carry a server-initiated request (the modern per-request
-        # path). Keep the previous behaviour instead of failing the delete.
+        # path). Keep the previous behaviour instead of failing the delete, but say so:
+        # the skip is otherwise invisible to both the model and the operator.
+        logger.warning(
+            "confirmation skipped: %s %s proceeds without asking the client, because the "
+            "transport has no back-channel for a server-initiated request (the 2026-07-28 "
+            "per-request path)",
+            action,
+            target,
+        )
         return
     except ValueError as exc:
         # The client answered "accept" with no content or with content that does not match
@@ -454,9 +517,11 @@ def register_tool(
             effects and limitations. Must be actionable on its own.
         annotations: Optional annotations. For a mutation tool ``destructive_hint`` and
             ``idempotent_hint`` are mandatory; for a read-only tool write hints are
-            rejected. ``title`` and ``read_only_hint`` are filled in by this helper, and
+            rejected. ``read_only_hint`` is filled in by this helper, and
             ``open_world_hint`` defaults to the per-tool verdict in
-            :data:`OPEN_WORLD_TOOLS` unless the caller sets it explicitly.
+            :data:`OPEN_WORLD_TOOLS` unless the caller sets it explicitly. ``title`` is
+            deliberately not copied into the annotations: the tool-level ``title`` is the
+            one the spec's display precedence reads first, so a second copy is redundant.
 
     Returns:
         A decorator that registers the function and returns it unchanged, so the handler
@@ -475,9 +540,7 @@ def register_tool(
         ValueError: The metadata is invalid or the annotations contradict the kind.
     """
     _check_metadata(name=name, title=title, description=description)
-    resolved_annotations = _build_annotations(
-        kind=kind, annotations=annotations, title=title, name=name
-    )
+    resolved_annotations = _build_annotations(kind=kind, annotations=annotations, name=name)
 
     if kind is ToolKind.MUTATION and read_only:
         # Read-only deployment: the mutation handler is never added to the registry.
@@ -594,8 +657,8 @@ class _SanitizedArgumentError(ValidationError):
 #   Tool.fn_metadata.arg_model    read by Tool.run -> FuncMetadata.validate_arguments
 #   Tool.parameters               returned as input_schema by MCPServer.list_tools
 # If any of these moves, _registered_tool raises and tests/test_server.py fails.
-def _registered_tool(server: MCPServer[AppContext], name: str) -> Tool | None:
-    """Return the SDK's internal ``Tool`` for ``name`` through the pinned private seam.
+def _tool_manager(server: MCPServer[AppContext]) -> ToolManager:
+    """Return the SDK's private tool manager through the pinned seam.
 
     This is the only place in the package that touches ``MCPServer._tool_manager``; see
     the seam note above for the pinned version and the exact attributes it relies on.
@@ -607,7 +670,22 @@ def _registered_tool(server: MCPServer[AppContext], name: str) -> Tool | None:
             "mcp 2.3.0). Argument validation for every tool depends on it; see the seam "
             "note in sophos_firewall_mcp.tools."
         )
-    return cast(Tool | None, manager.get_tool(name))
+    return cast(ToolManager, manager)
+
+
+def _registered_tool(server: MCPServer[AppContext], name: str) -> Tool | None:
+    """Return the SDK's internal ``Tool`` for ``name`` through the pinned private seam."""
+    return cast(Tool | None, _tool_manager(server).get_tool(name))
+
+
+def registered_tool_count(server: MCPServer[AppContext]) -> int:
+    """The number of tools registered on ``server`` so far.
+
+    The server factory uses it to publish a ``serverInfo.description`` whose tool count
+    matches ``tools/list`` instead of the count an older installed summary carries. It
+    reads the same pinned private seam as :func:`_registered_tool`.
+    """
+    return len(_tool_manager(server).list_tools())
 
 
 def _flatten_arguments(server: MCPServer[AppContext], name: str) -> Tool | None:
@@ -673,6 +751,7 @@ def _flatten_arguments(server: MCPServer[AppContext], name: str) -> Tool | None:
             "flat arguments need a model or a union of models"
         )
     schema["title"] = f"{name}Arguments"
+    _describe_ip_family(schema)
     tool.parameters = schema
     return tool
 
@@ -783,6 +862,39 @@ def _union_schema(annotation: Any, discriminator: Any) -> dict[str, Any]:
     return {**schema, "type": "object"}
 
 
+def _describe_ip_family(schema: dict[str, Any]) -> None:
+    """Give every required ``ip_family`` property the one shared description.
+
+    ``ip_family`` is the single new argument of 0.7.0 and the one a model must get right on
+    32 tools, but the domain models declare it thirteen different ways -- and the six
+    firewall tools not at all -- because each was written with its own domain in mind. The
+    model reads the published ``inputSchema``, not the Python field, so the description is
+    normalised here, once, for every tool: a required ``ip_family`` is the same argument
+    everywhere.
+
+    An optional ``ip_family`` (the three audit composites) keeps its own description,
+    because there it means "both families when omitted" rather than "never inferred". The
+    union variants are covered too: their ``ip_family`` is a ``const`` that selects the
+    family, so it is the same argument one level down.
+    """
+    _describe_required_ip_family(schema)
+    for definition in (schema.get("$defs") or {}).values():
+        if isinstance(definition, dict):
+            _describe_required_ip_family(definition)
+
+
+def _describe_required_ip_family(node: dict[str, Any]) -> None:
+    """Set :data:`IP_FAMILY_DESCRIPTION` on ``node``'s required ``ip_family``, if any."""
+    properties = node.get("properties")
+    if not isinstance(properties, dict):
+        return
+    ip_family = properties.get("ip_family")
+    if not isinstance(ip_family, dict):
+        return
+    if "ip_family" in (node.get("required") or ()):
+        ip_family["description"] = IP_FAMILY_DESCRIPTION
+
+
 def _sanitized_argument_model(model: type[ModelT]) -> type[ModelT]:
     """Return a subclass of the SDK's argument model with a closed, sanitized contract."""
 
@@ -857,6 +969,14 @@ def _union_argument_message(
         accepted = _discriminator_values(variants, discriminator)
         value = obj.get(discriminator) if isinstance(obj, dict) else None
         if value is None:
+            # The caller may have sent the *other* selector with a value no variant
+            # accepts: ``address_create`` is discriminated by ``type`` but every variant
+            # also pins ``ip_family``, so ``{"ip_family": "ipv5"}`` is a bad ``ip_family``,
+            # not a missing ``type``. Naming the field the caller actually sent is
+            # actionable; "type is required" names a field it never sent.
+            rejected = _rejected_selector(obj, variants, discriminator)
+            if rejected is not None:
+                return rejected
             return _sanitize(
                 f"invalid arguments: {discriminator} is required; "
                 f"accepted values are {_quoted_values(accepted)}"
@@ -901,6 +1021,31 @@ def _discriminator_values(variants: tuple[type[BaseModel], ...], discriminator: 
             if isinstance(value, str) and value not in values:
                 values.append(value)
     return values
+
+
+def _rejected_selector(
+    obj: Any, variants: tuple[type[BaseModel], ...], discriminator: str
+) -> str | None:
+    """Name a selector field the caller sent with a value no variant accepts.
+
+    A union can be selected by more than one field: the address create union is
+    discriminated by ``type``, but every variant also pins ``ip_family`` to a literal, so
+    ``{"ip_family": "ipv5"}`` is a bad ``ip_family`` rather than a missing ``type``. Only a
+    field that is a literal on every variant is considered, so an ordinary argument with a
+    bad value is left to the selected variant's own error.
+    """
+    if not isinstance(obj, dict):
+        return None
+    for field_name, value in obj.items():
+        if field_name == discriminator:
+            continue
+        accepted = _discriminator_values(variants, field_name)
+        if not accepted or value in accepted:
+            continue
+        return _sanitize(
+            f"invalid arguments: {field_name} must be one of {_quoted_values(accepted)}"
+        )
+    return None
 
 
 def _variant_for_discriminator(
@@ -983,12 +1128,17 @@ def _check_metadata(*, name: str, title: str, description: str) -> None:
 
 
 def _build_annotations(
-    *, kind: ToolKind, annotations: ToolAnnotations | None, title: str, name: str
+    *, kind: ToolKind, annotations: ToolAnnotations | None, name: str
 ) -> ToolAnnotations:
     """Fill in the annotation policy for the tool kind and reject contradictions.
 
     ``openWorldHint`` is resolved per tool: an explicit value on ``annotations`` wins,
     otherwise :data:`OPEN_WORLD_TOOLS` decides, and a tool that is not listed is closed.
+
+    ``title`` is deliberately not copied into the annotations: the spec's display
+    precedence is ``title``, then ``annotations.title``, then ``name``, so the tool-level
+    title already wins and a duplicate costs bytes on every tool without adding
+    information.
     """
     resolved = annotations if annotations is not None else ToolAnnotations()
     open_world = (
@@ -1003,9 +1153,7 @@ def _build_annotations(
                 "read-only tools must not declare destructiveHint or idempotentHint: "
                 "those hints describe write operations"
             )
-        return resolved.model_copy(
-            update={"title": title, "read_only_hint": True, "open_world_hint": open_world}
-        )
+        return resolved.model_copy(update={"read_only_hint": True, "open_world_hint": open_world})
 
     if resolved.read_only_hint is True:
         raise ValueError("a mutation tool cannot declare readOnlyHint=True")
@@ -1015,9 +1163,7 @@ def _build_annotations(
             "create, update, delete, move and disconnect have different risk and "
             "idempotence"
         )
-    return resolved.model_copy(
-        update={"title": title, "read_only_hint": False, "open_world_hint": open_world}
-    )
+    return resolved.model_copy(update={"read_only_hint": False, "open_world_hint": open_world})
 
 
 def _sanitize(text: str, *, limit: int = _MAX_ERROR_LENGTH) -> str:

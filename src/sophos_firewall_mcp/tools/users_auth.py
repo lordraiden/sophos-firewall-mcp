@@ -58,6 +58,7 @@ from sophos_firewall_mcp.models.users import (
     project_user_page,
 )
 from sophos_firewall_mcp.tools import (
+    CONFIRMATION_NOTE,
     DomainAdapter,
     ToolKind,
     confirm_destructive,
@@ -390,7 +391,7 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
             "never returned. Returns the updated account. Idempotent: sending the same body "
             "twice leaves the same state."
         ),
-        annotations=ToolAnnotations(destructive_hint=False, idempotent_hint=True),
+        annotations=ToolAnnotations(destructive_hint=True, idempotent_hint=True),
     )
     async def network_user_update(
         request: NetworkUserUpdateInput, ctx: Context[AppContext]
@@ -405,9 +406,8 @@ def register_users_tools(server: MCPServer[AppContext], *, read_only: bool) -> N
         title="Delete network user",
         description=(
             "Delete a network-user account (`deleteNetworkUser`) by name or UUID. Destructive: "
-            "the account is removed from the appliance. When the client supports elicitation "
-            "the call first asks the user to confirm, naming the account; a declined or "
-            "cancelled confirmation aborts the call and nothing is deleted. Idempotent: "
+            "the account is removed from the appliance. "
+            f"{CONFIRMATION_NOTE} Idempotent: "
             "repeating the delete has no further effect and a second call reports not found. "
             "If the name has been reused in the meantime, re-read before retrying: the retry "
             "would target the new account. Returns `deleted` and the identifier the delete was "

@@ -30,7 +30,7 @@ from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 
-from mcp.types import ToolAnnotations
+from mcp.types import INVALID_PARAMS, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from sophos_firewall_mcp import resources as resources_module
@@ -354,6 +354,19 @@ def declared_project_version() -> str:
     return version
 
 
+def declared_project_description() -> str:
+    """The ``project.description`` declared in ``pyproject.toml``.
+
+    Read the same way as :func:`declared_project_version`, and for the same reason: the
+    installed summary is what the server publishes, so only the declared one can detect
+    that the install is stale.
+    """
+    document = tomllib.loads(PYPROJECT_PATH.read_text(encoding="utf-8"))
+    description = document["project"]["description"]
+    assert isinstance(description, str) and description.strip()
+    return description
+
+
 async def test_server_info_carries_the_package_identity():
     """M2: ``serverInfo`` identifies the build instead of reporting an empty version.
 
@@ -379,6 +392,45 @@ async def test_server_info_carries_the_package_identity():
     assert info.version == declared_version
     assert info.description
     assert info.website_url == "https://github.com/lordraiden/sophos-firewall-mcp"
+
+
+async def test_server_info_description_matches_the_declared_summary():
+    """M3: ``serverInfo.description`` must not drift from ``pyproject.toml``.
+
+    The description is read from the installed distribution metadata, which lags behind
+    ``pyproject.toml`` in a checkout that was never reinstalled: 0.7.0 published "152 typed
+    tools" against 112 registered tools, and the drift test only checked the version. The
+    server substitutes the count it actually registered, so the published description must
+    equal the declared summary exactly.
+    """
+    try:
+        importlib.metadata.version("sophos-firewall-mcp-server")
+    except importlib.metadata.PackageNotFoundError:  # pragma: no cover - installed in CI
+        pytest.skip("the distribution is not installed; the fallback is covered separately")
+
+    server = create_server(make_settings())
+
+    async with Client(server) as client:
+        info = client.server_info
+
+    assert info.description == declared_project_description()
+
+
+def test_the_published_description_substitutes_the_real_tool_count():
+    """M3: a stale installed summary cannot publish a count that contradicts ``tools/list``."""
+    stale = (
+        "MCP server for the Sophos Firewall 23 (SFOS 23.0) Configuration REST API: 152 "
+        "typed tools for firewall, NAT, objects, users, network and audit over STDIO"
+    )
+
+    published = server_module._published_description(stale, 112)
+
+    assert published is not None
+    assert "112 typed tools" in published
+    assert "152" not in published
+    assert server_module._published_description(None, 112) is None
+    # A summary without a count is published unchanged rather than rewritten.
+    assert server_module._published_description("No count here.", 112) == "No count here."
 
 
 async def test_tools_list_advertises_a_cache_hint():
@@ -587,7 +639,6 @@ async def test_tool_annotations_use_the_wire_names_and_expected_values():
     )
     # A synthetic tool is not in OPEN_WORLD_TOOLS, so the closed default applies.
     assert read_wire == {
-        "title": "Echo a name",
         "readOnlyHint": True,
         "openWorldHint": False,
     }
@@ -596,7 +647,6 @@ async def test_tool_annotations_use_the_wire_names_and_expected_values():
         by_alias=True, exclude_none=True
     )
     assert write_wire == {
-        "title": "Synthetic mutation",
         "readOnlyHint": False,
         "destructiveHint": True,
         "idempotentHint": False,
@@ -1576,6 +1626,35 @@ async def test_explain_flow_requires_its_endpoints():
 
     with pytest.raises(ValueError):
         await server.get_prompt("explain_flow", {})
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments"),
+    [
+        ("nope", None),
+        ("explain_flow", {}),
+        (
+            "explain_flow",
+            {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "bogus": "x"},
+        ),
+    ],
+)
+async def test_a_caller_fixable_prompt_failure_is_invalid_params(
+    name: str, arguments: dict[str, Any] | None
+) -> None:
+    """M4: an unknown prompt or bad arguments is ``-32602``, not ``-32603``.
+
+    The spec puts an invalid prompt name and missing or invalid arguments in the invalid
+    params class. The SDK maps every ``ValueError`` from ``prompts/get`` to an internal
+    error, so the server's middleware corrects the caller-fixable ones.
+    """
+    server = create_server(make_settings())
+
+    async with Client(server) as client:
+        with pytest.raises(MCPError) as caught:
+            await client.get_prompt(name, arguments)
+
+    assert caught.value.code == INVALID_PARAMS
 
 
 def rendered_tool_calls(text: str, tool_names: set[str]) -> list[tuple[str, dict[str, Any]]]:

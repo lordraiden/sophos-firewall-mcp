@@ -1262,20 +1262,19 @@ async def test_write_mode_registers_every_tool():
     [
         (
             "user_list",
-            {"title": "List authentication users", "readOnlyHint": True, "openWorldHint": False},
+            {"readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_list",
-            {"title": "List network users", "readOnlyHint": True, "openWorldHint": False},
+            {"readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_get",
-            {"title": "Get network user", "readOnlyHint": True, "openWorldHint": False},
+            {"readOnlyHint": True, "openWorldHint": False},
         ),
         (
             "network_user_create",
             {
-                "title": "Create network user",
                 "readOnlyHint": False,
                 "destructiveHint": False,
                 "idempotentHint": False,
@@ -1285,9 +1284,8 @@ async def test_write_mode_registers_every_tool():
         (
             "network_user_update",
             {
-                "title": "Update network user",
                 "readOnlyHint": False,
-                "destructiveHint": False,
+                "destructiveHint": True,
                 "idempotentHint": True,
                 "openWorldHint": False,
             },
@@ -1295,7 +1293,6 @@ async def test_write_mode_registers_every_tool():
         (
             "network_user_delete",
             {
-                "title": "Delete network user",
                 "readOnlyHint": False,
                 "destructiveHint": True,
                 "idempotentHint": True,
@@ -1304,12 +1301,11 @@ async def test_write_mode_registers_every_tool():
         ),
         (
             "live_user_list",
-            {"title": "List live user sessions", "readOnlyHint": True, "openWorldHint": True},
+            {"readOnlyHint": True, "openWorldHint": True},
         ),
         (
             "live_user_disconnect",
             {
-                "title": "Disconnect live user session",
                 "readOnlyHint": False,
                 "destructiveHint": True,
                 "idempotentHint": False,

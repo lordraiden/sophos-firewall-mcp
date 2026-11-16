@@ -509,8 +509,12 @@ class _ToolSpec:
     annotations: ToolAnnotations | None = None
 
 
+#: ``destructiveHint`` is true for an update as well as a delete: a JSON Merge Patch
+#: overwrites stored values (an address's IP, a group's member list, a service's ports), so
+#: it is not an additive operation. The spec defines the hint as "may perform destructive
+#: updates", and the two rule tools already classify their PATCH the same way.
 _CREATE = ToolAnnotations(destructive_hint=False, idempotent_hint=False)
-_UPDATE = ToolAnnotations(destructive_hint=False, idempotent_hint=True)
+_UPDATE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
 _DELETE = ToolAnnotations(destructive_hint=True, idempotent_hint=True)
 
 _TOOL_SPECS: tuple[_ToolSpec, ...] = (
@@ -545,9 +549,10 @@ _TOOL_SPECS: tuple[_ToolSpec, ...] = (
         description=(
             "Create an IPv4 or IPv6 address object, selected by the required `ip_family`. "
             "`type` selects the shape: a single address, a network (address + `cidr` or "
-            "`prefix_length`), a range (start + end) or a list. `name` is required and must "
-            "be a valid Sophos object name. A duplicate name returns a conflict and nothing "
-            "is created."
+            "`prefix_length`), a range (start + end) or a list. Send `type` (the "
+            "discriminator) and the matching `ip_family`; `type` selects the variant. `name` "
+            "is required and must be a valid Sophos object name. A duplicate name returns a "
+            "conflict and nothing is created."
         ),
         kind=ToolKind.MUTATION,
         handler=address_create,

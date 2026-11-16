@@ -49,10 +49,11 @@ from __future__ import annotations
 
 import importlib.metadata
 import logging
+import re
 import sys
 from collections.abc import AsyncIterator, Iterable, Mapping
 from contextlib import asynccontextmanager
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 # Must precede the mcp import: it is the check that explains a shadowed or too-new `mcp`
 # before the import below dies with a bare ModuleNotFoundError the MCP client cannot see
@@ -63,14 +64,17 @@ verify_local_mcp()
 
 from mcp.server import CacheHint  # noqa: E402
 from mcp.server.caching import CacheableMethod  # noqa: E402
+from mcp.server.context import CallNext, HandlerResult, ServerRequestContext  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
+from mcp.shared.exceptions import MCPError  # noqa: E402
+from mcp.types import INVALID_PARAMS  # noqa: E402
 
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
 from sophos_firewall_mcp.config import ConfigurationError, Settings  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
 from sophos_firewall_mcp.prompts import register_prompts  # noqa: E402
 from sophos_firewall_mcp.resources import register_resources  # noqa: E402
-from sophos_firewall_mcp.tools import DomainRegistrar  # noqa: E402
+from sophos_firewall_mcp.tools import DomainRegistrar, registered_tool_count  # noqa: E402
 from sophos_firewall_mcp.tools.audit import register_audit_tools  # noqa: E402
 from sophos_firewall_mcp.tools.firewall_rules import register_firewall_tools  # noqa: E402
 from sophos_firewall_mcp.tools.hosts_objects import register_objects_tools  # noqa: E402
@@ -148,7 +152,9 @@ INSTRUCTIONS = (
     "discriminator (`ip_family` or `type`) selects the variant; `mac_address_create` "
     "publishes `anyOf` because the API declares no discriminator. Every "
     "successful result carries the same payload twice, as `content` text and as "
-    "`structuredContent`; read one of them, not both."
+    "`structuredContent`; read one of them, not both. Read `sophos://conventions` before "
+    "the first call; the prompts `audit_firewall`, `explain_flow` and "
+    "`find_unused_objects` carry the three analysis workflows."
 )
 
 #: Domain registration functions, in registration order.
@@ -202,6 +208,56 @@ def _package_identity() -> _PackageIdentity:
             website_url = url.strip() or None
             break
     return _PackageIdentity(version=version, description=description, website_url=website_url)
+
+
+#: The phrase in the distribution summary that states how many tools the server publishes.
+#: The number is replaced with the count the server actually registered, so a stale
+#: installed summary can never publish a number that contradicts ``tools/list``.
+_TOOL_COUNT_PATTERN = re.compile(r"\b\d+ typed tools\b")
+
+
+def _published_description(summary: str | None, tool_count: int) -> str | None:
+    """The ``serverInfo.description``: the distribution summary with the real tool count.
+
+    The summary is the single source of truth for the prose, but the count it carries is
+    only correct for the release that wrote it: an editable install that was not refreshed
+    after a tool was added keeps publishing the old number (0.7.0 shipped "152 typed
+    tools" against 112 registered tools). Substituting the count the server actually
+    registered keeps the published description consistent with ``tools/list`` without
+    duplicating the prose in code.
+    """
+    if summary is None:
+        return None
+    return _TOOL_COUNT_PATTERN.sub(f"{tool_count} typed tools", summary)
+
+
+#: The prefixes of the ``ValueError`` messages the SDK raises for a ``prompts/get`` the
+#: caller can fix. ``MCPServer.get_prompt`` wraps every failure in ``ValueError`` and the
+#: runner maps that to ``-32603`` (internal error), but the spec puts an unknown prompt
+#: name and missing or invalid arguments in the ``-32602`` (invalid params) class.
+_PROMPT_ARGUMENT_ERRORS = (
+    "Unknown prompt:",
+    "Missing required arguments:",
+    "Error rendering prompt",
+)
+
+
+async def _prompt_error_middleware(
+    ctx: ServerRequestContext[Any, Any], call_next: CallNext
+) -> HandlerResult:
+    """Report a caller-fixable ``prompts/get`` failure as ``-32602``, not ``-32603``.
+
+    The SDK owns the ``ValueError`` -> internal-error mapping, so the middleware chain is
+    the only place to correct it. A ``ValueError`` from ``prompts/get`` whose message names
+    an unknown prompt, missing arguments or a render failure is the caller's mistake;
+    anything else keeps the SDK's internal-error mapping.
+    """
+    try:
+        return await call_next(ctx)
+    except ValueError as exc:
+        if ctx.method == "prompts/get" and str(exc).startswith(_PROMPT_ARGUMENT_ERRORS):
+            raise MCPError(code=INVALID_PARAMS, message=str(exc)) from exc
+        raise
 
 
 def create_server(
@@ -266,6 +322,7 @@ def create_server(
         lifespan=lifespan,
         subscriptions=False,
         cache_hints=_CATALOG_CACHE_HINTS,
+        middleware=[_prompt_error_middleware],
     )
     for register in domains:
         register(server, read_only=read_only)
@@ -274,6 +331,14 @@ def create_server(
     # modes (a read-only deployment is exactly where an audit prompt is useful).
     register_resources(server, read_only=read_only)
     register_prompts(server)
+    # ``serverInfo`` is built from the low-level server's description, and the tool count is
+    # only known once every domain has registered, so the count is substituted here. The
+    # description is a plain attribute on the low-level server (``MCPServer.description``
+    # exposes it read-only) and the SDK caches the identity dump lazily, on the first
+    # request, so setting it before the server starts is enough.
+    server._lowlevel_server.description = _published_description(
+        identity.description, registered_tool_count(server)
+    )
     return server
 
 
