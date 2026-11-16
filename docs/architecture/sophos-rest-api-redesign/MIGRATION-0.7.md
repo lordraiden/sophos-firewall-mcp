@@ -9,7 +9,7 @@ the server's own convention: the three audit composites already took an `ip_fami
 
 0.7.0 publishes **one tool per concept** and moves the family axis into a required `ip_family`
 argument. The tool count drops from 152 to 112 (40 pairs collapse; the two firewall composite
-pairs collapse too), and the `tools/list` payload drops from 807,900 to 655,479 bytes.
+pairs collapse too), and the `tools/list` payload drops from 807,900 to 622,787 bytes.
 
 ## The `ip_family` choice
 
@@ -137,7 +137,7 @@ behaviour. The six IPv4-only IPsec tools (`ipsec_connection_list_ipv4`,
   the merged model keeps it.
 - **`dhcp_lease_list` now takes an argument.** It was two no-argument tools
   (`dhcp_lease_list_ipv4`/`_ipv6`); it is now one tool whose only argument is `ip_family`. The
-  no-argument tool count drops from 8 to 6.
+  no-argument tool count drops from 8 to 7.
 - **The two firewall composites collapse too.** `firewall_rule_set_enabled_ipv4`/`_ipv6` become
   `firewall_rule_set_enabled`, and `firewall_rule_clone_ipv4`/`_ipv6` become
   `firewall_rule_clone`; both take `ip_family`.
@@ -150,14 +150,14 @@ Before 0.7.0:
 
 ```json
 {"name": "firewall_rule_list_ipv6",
- "arguments": {"request": {"page": 1, "page_size": 10}}}
+ "arguments": {"page": 1, "page_size": 10}}
 ```
 
 From 0.7.0:
 
 ```json
 {"name": "firewall_rule_list",
- "arguments": {"request": {"ip_family": "ipv6", "page": 1, "page_size": 10}}}
+ "arguments": {"ip_family": "ipv6", "page": 1, "page_size": 10}}
 ```
 
 A caller that used both family tools now calls the merged tool twice, once per `ip_family`

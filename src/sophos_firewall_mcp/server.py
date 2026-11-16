@@ -35,7 +35,7 @@ prompt catalogs are static for the process lifetime (the read-only mode is appli
 startup), so the SDK must not advertise ``subscriptions/listen`` or ``listChanged``. The
 same static catalogs are why ``cache_hints`` gives ``tools/list``, ``server/discover``,
 ``resources/list``, ``resources/read`` and ``prompts/list`` a long TTL: the SDK default of
-``0`` means "immediately stale" and makes a client re-fetch a ~894 KB payload on every
+``0`` means "immediately stale" and makes a client re-fetch a ~623 KB payload on every
 turn.
 
 Identity
@@ -111,7 +111,7 @@ _UNKNOWN_VERSION = "0.0.0+unknown"
 #: The tool catalog cannot change while the process runs -- the read-only mode is applied
 #: at startup and ``subscriptions=False`` is passed, so no ``listChanged`` notification is
 #: ever sent. The SDK default is ``0``, which the MCP caching specification defines as
-#: "immediately stale" and which makes a client re-fetch a ~894 KB ``tools/list`` payload
+#: "immediately stale" and which makes a client re-fetch a ~623 KB ``tools/list`` payload
 #: on every turn. One hour matches the ``server/discover`` example in the specification
 #: and is short enough that a client notices a restarted server (a different read-only
 #: mode) within a session.
