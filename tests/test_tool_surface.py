@@ -376,6 +376,9 @@ async def test_every_mutation_publishes_the_pinned_annotation_pair() -> None:
     tools = await tools_by_name()
 
     for name, (destructive, idempotent) in EXPECTED_MUTATION_ANNOTATIONS.items():
+        # A stale row must fail with a diagnostic, not a bare KeyError: the coverage test
+        # reports the same drift, but this test is the one that names the pinned pair.
+        assert name in tools, f"pinned mutation {name!r} is not a registered tool"
         annotations = tools[name].annotations
         assert annotations is not None, name
         assert annotations.read_only_hint is False, name
