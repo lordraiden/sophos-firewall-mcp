@@ -17,13 +17,20 @@ concurrency:
 
 jobs:
   test:
-    name: Tests (Python ${{ matrix.python-version }})
+    name: Tests (Python ${{ matrix.python-version }}, mcp ${{ matrix.mcp-version }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         # The project requires >=3.11 and the MCP SDK supports 3.11-3.14.
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # The MCP SDK releases the private tool-registry seam was verified against.
+        # This list must match the exact pin in pyproject.toml (mcp==2.3.0) and
+        # SUPPORTED_MCP_SDK_VERSION in src/sophos_firewall_mcp/tools/__init__.py.
+        # Add a release here only after tests/test_sdk_compat.py passes on it; the
+        # compatibility test fails the job if the installed release is not the verified
+        # one, so an untested SDK cannot be tested by accident.
+        mcp-version: ["2.3.0"]
 
     steps:
       - name: Checkout
@@ -40,7 +47,80 @@ jobs:
       - name: Install the locked dependency graph
         run: uv sync --locked
 
+      # The lock is not the contract: the declared pin is. Install the matrix release
+      # explicitly so the job tests the version the package declares, not whatever a
+      # future lock refresh happens to contain.
+      - name: Install the declared MCP SDK version
+        run: uv pip install "mcp==${{ matrix.mcp-version }}"
+
+      - name: Verify the installed MCP SDK version
+        run: |
+          uv run --no-sync python - <<'PY'
+          import importlib.metadata
+          import sys
+
+          expected = "${{ matrix.mcp-version }}"
+          installed = importlib.metadata.version("mcp")
+          print(f"mcp {installed} (expected {expected})")
+          sys.exit(0 if installed == expected else 1)
+          PY
+
       # Live tests are skipped by default: they need SOPHOS_HOST/PORT/API_KEY and are
       # opt-in through the dedicated workflow.
       - name: Run the test suite
         run: uv run --no-sync pytest -q
+
+  clean-install:
+    name: Clean wheel install (declared SDK pin)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+          enable-cache: true
+
+      # The published artifact, not the checkout: this is the path a user installs.
+      - name: Build the wheel
+        run: uv build --wheel
+
+      - name: Install the wheel into a throwaway environment
+        run: |
+          uv venv /tmp/clean-install
+          uv pip install --python /tmp/clean-install/bin/python dist/*.whl
+
+      # A clean install must resolve the one SDK release the private seam was verified
+      # against, and the installed package must still register the full tool surface.
+      - name: Verify the resolved SDK and the tool surface
+        run: |
+          /tmp/clean-install/bin/python - <<'PY'
+          import asyncio
+          import importlib.metadata
+          import sys
+
+          from sophos_firewall_mcp.config import Settings
+          from sophos_firewall_mcp.server import create_server
+
+          expected = "2.3.0"
+          installed = importlib.metadata.version("mcp")
+          print(f"resolved mcp {installed} (expected {expected})")
+          if installed != expected:
+              sys.exit(1)
+
+          settings = Settings(
+              host="192.0.2.10",
+              port=4444,
+              api_key="test-api-key",
+              verify_ssl=False,
+              timeout=5.0,
+              read_only_mode=False,
+          )
+          server = create_server(settings)
+          tools = asyncio.run(server.list_tools())
+          print(f"registered {len(tools)} tools")
+          if len(tools) != 112:
+              sys.exit(1)
+          PY

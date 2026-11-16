@@ -67,7 +67,7 @@ def test_a_shadowed_mcp_still_exits_when_mcpserver_is_missing(monkeypatch, tmp_p
 
     err = capsys.readouterr().err
     assert "warning" in err.lower()
-    assert "mcp>=2" in err
+    assert _env_guard.REQUIRED_MCP_REQUIREMENT in err
 
 
 def test_exits_when_mcpserver_is_missing(monkeypatch, capsys):
@@ -80,7 +80,7 @@ def test_exits_when_mcpserver_is_missing(monkeypatch, capsys):
     with pytest.raises(SystemExit) as exc:
         _env_guard.verify_local_mcp()
     assert exc.value.code == 2
-    assert "mcp>=2" in capsys.readouterr().err
+    assert _env_guard.REQUIRED_MCP_REQUIREMENT in capsys.readouterr().err
 
 
 def test_a_local_mcp_does_not_warn(monkeypatch, capsys):
