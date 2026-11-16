@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 **Breaking: the IPv4/IPv6 tool pairs collapse behind a required `ip_family`, and tool arguments are
 published flat.** The surface drops from 152 tools to **112** (107 one-to-one + 5 composites; **74
-read-only / 38 mutations**), and the `tools/list` catalog from 807,900 to **622,787 bytes**. Both
+read-only / 38 mutations**), and the `tools/list` catalog from 807,920 to **622,787 bytes**. Both
 changes break a client that hard-coded a family-specific tool name or wrapped its arguments in
 `request`; the migration table is in
 [`docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md`](docs/architecture/sophos-rest-api-redesign/MIGRATION-0.7.md).
@@ -25,15 +25,18 @@ changes break a client that hard-coded a family-specific tool name or wrapped it
   returned. The three audit composites keep their optional `ip_family` because they are read-only and
   can span both families. The wire body is unchanged: the adapter strips `ip_family` and selects the
   IPv4 or IPv6 path, so `firewall_rule_create` with `ip_family: "ipv4"` sends exactly the body
-  `firewall_rule_create_ipv4` sent before. The output shape is unchanged: a merged output model
-  carries the union of the two family projections.
+  `firewall_rule_create_ipv4` sent before. The output **payload** for a given family is unchanged;
+  the published output **schema** is the union of both families, so 40 of the 80 merged pairs publish
+  a wider schema (e.g. `address_get` publishes 8 address variants instead of 4). A client that
+  generates types from `outputSchema` must regenerate them.
 - **Tool arguments are published flat.** Every tool that takes arguments now publishes the request
   model's own fields at the top level of `inputSchema`; the `request` wrapper is gone from all 112
   tools. 0 tools publish a `request` property, the published input surface drops from 222,419 to
   199,114 bytes (−10.5%), and the wrapper sentence is gone from every description. A tool whose
   request is a union of shapes publishes a root `oneOf` of the closed variants (`address_create`,
   `firewall_rule_create`, …), because flattening a union into one object would lose the per-variant
-  required fields. The handler, its signature and the wire body are untouched; the closed argument
+  required fields; `mac_address_create` publishes `anyOf` because the API declares no discriminator.
+  The handler, its signature and the wire body are untouched; the closed argument
   model (`additionalProperties: false`) and the sanitized errors are unchanged, and an unknown
   argument is still rejected by name.
 
@@ -56,9 +59,11 @@ changes break a client that hard-coded a family-specific tool name or wrapped it
 
 ### Changed
 
-- **The catalog is 22.9% smaller.** `tools/list` is 622,787 bytes (was 807,900), roughly 156k tokens
-  at ~4 bytes per token. The IPv4/IPv6 collapse removed 152,421 bytes (807,900 → 655,479) and 40
-  tools; publishing flat arguments removed a further 32,692 bytes (655,479 → 622,787).
+- **The catalog is 22.9% smaller.** `tools/list` is 622,787 bytes (was 807,920), roughly 156k tokens
+  at ~4 bytes per token. The IPv4/IPv6 collapse removed 152,886 bytes (807,920 → 655,034) and 40
+  tools; publishing flat arguments removed a further 32,247 bytes (655,034 → 622,787). Each number is
+  the raw JSON-RPC `tools/list` response line over STDIO, including the trailing newline, measured on
+  `origin/main` (pre-0.7), `b22731a` (after the collapse, before the flatten) and HEAD respectively.
 - **The surface is 112 tools** (was 152): 107 one-to-one tools covering 145 audited operations, plus 5
   composites that add no endpoint. 74 are read-only and 38 are mutations; 7 take no arguments and 105
   take arguments. `live_user_list` joins the no-argument set: its request model is deliberately empty,

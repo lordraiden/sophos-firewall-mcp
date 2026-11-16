@@ -145,7 +145,8 @@ INSTRUCTIONS = (
     "not registered at all. Every tool that takes arguments takes them flat: the fields "
     "its `inputSchema` lists are the fields the call sends, with no wrapper object. A tool "
     "whose request is a union of shapes publishes a root `oneOf` instead, and its "
-    "discriminator (`ip_family` or `type`) selects the variant. Every "
+    "discriminator (`ip_family` or `type`) selects the variant; `mac_address_create` "
+    "publishes `anyOf` because the API declares no discriminator. Every "
     "successful result carries the same payload twice, as `content` text and as "
     "`structuredContent`; read one of them, not both."
 )

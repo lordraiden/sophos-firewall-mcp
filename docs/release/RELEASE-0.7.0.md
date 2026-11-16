@@ -20,19 +20,23 @@ items 13–16). It makes two breaking changes to the published surface and two a
 - **`openWorldHint` is set per tool** instead of `true` everywhere (item 16, finding L5).
 
 The surface drops from 152 tools to **112** (107 one-to-one + 5 composites): **74 read-only / 38
-mutations**, **7 no-argument / 105 argument tools**. The `tools/list` catalog drops from 807,900 to
-**622,787 bytes** (−185,113, −22.9%), roughly **156k tokens** at ~4 bytes per token. The published
+mutations**, **7 no-argument / 105 argument tools**. The `tools/list` catalog drops from 807,920 to
+**622,787 bytes** (−185,133, −22.9%), roughly **156k tokens** at ~4 bytes per token. The published
 input surface drops from 222,419 to 199,114 bytes (−10.5%), and **0 tools publish a `request`
 property**.
 
 The wire body sent to the appliance is unchanged in both directions: `ip_family` is stripped before
 the request is built, and the flat arguments are the same fields the wrapper carried. The output
-shape is unchanged: a merged output model carries the union of the two family projections.
+**payload** for a given family is unchanged; the published output **schema** is the union of both
+families, so 40 of the 80 merged pairs publish a wider schema (e.g. `address_get` publishes 8 address
+variants instead of 4). A client that generates types from `outputSchema` must regenerate them.
 
 **Measured on this branch** (`feat/mcp-0.7-breaking`): the counts come from the registered surface
 (`create_server(...).list_tools()`), the catalog size from the raw JSON-RPC `tools/list` response line
 over STDIO including the trailing newline, and the input-schema size from `json.dumps` of every
-published `inputSchema`. The migration table is
+published `inputSchema`. The catalog numbers are measured on three trees: `origin/main` (pre-0.7,
+807,920), `b22731a` (after the IPv4/IPv6 collapse, before the flatten, 655,034) and HEAD (622,787).
+The migration table is
 [`MIGRATION-0.7.md`](../architecture/sophos-rest-api-redesign/MIGRATION-0.7.md).
 
 ### 1.2 Breaking changes
@@ -216,8 +220,8 @@ From 0.7.0:
 - **H2 — the `request` wrapper failure mode is gone.** A flat call is now the correct call, so a model
   no longer has to learn a convention that contradicts the MCP specification's own examples.
 - **M5/H1 — the doubled surface is gone.** One tool per concept instead of two, so a model no longer
-  chooses between `_ipv4` and `_ipv6` variants of the same operation, and the catalog is 185,113
-  bytes smaller (807,900 → 622,787).
+  chooses between `_ipv4` and `_ipv6` variants of the same operation, and the catalog is 185,133
+  bytes smaller (807,920 → 622,787).
 - **Argument errors name the field and the rule, without a union tag.** A model-level validator now
   renders its own message (`name_contains and name_not_equals are mutually exclusive`) instead of
   pydantic's `Value error, ` prefix, and a union tag is stripped from the reported location (`bogus is
@@ -257,7 +261,9 @@ The server is stateless: rolling back changes no appliance configuration and no 
    (`firewall_rule_list_ipv4` / `firewall_rule_list_ipv6`, …); 0.6.0 does not accept `ip_family`.
 4. Clients that adopted flat arguments must wrap them in `request` again; 0.6.0 rejects a flat call
    with `request is required`.
-5. No other behaviour changes: the wire body and the output shape are the same in both releases.
+5. No other behaviour changes: the wire body and the output payload for a given family are the same
+   in both releases. The published output schema is wider in 0.7.0 (the union of both families for 40
+   of the 80 merged pairs), so a client that generates types from `outputSchema` must regenerate them.
 
 ## 3. Publication checklist
 

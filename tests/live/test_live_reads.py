@@ -1,11 +1,11 @@
 """Live read-only verification of every read-only tool (issue #32, T34).
 
-One parametrized test per read-only tool: 98 tools across the six domain families. Each
+One parametrized test per read-only tool: 74 tools across the six domain families. Each
 test calls the real tool through the real MCP server against the lab appliance and asserts
 the documented envelope (no error, object-rooted structured content). The result of the run
 is recorded in ``docs/live-evidence/phase-3-live-matrix.md``.
 
-Safety: the server is built with ``read_only_mode=True`` (see ``conftest.py``), so the 54
+Safety: the server is built with ``read_only_mode=True`` (see ``conftest.py``), so the 38
 mutation tools are not registered at all. No ``POST``, ``PATCH`` or ``DELETE`` can be sent
 by this module.
 
@@ -205,7 +205,7 @@ async def _first_item(
     client: Client, list_tool: str, family: str | None = None
 ) -> dict[str, Any] | None:
     request: dict[str, Any] = {} if family is None else {"ip_family": family}
-    result = await client.call_tool(list_tool, {"request": request})
+    result = await client.call_tool(list_tool, request)
     if result.is_error:
         return None
     items = (result.structured_content or {}).get("items") or []
@@ -239,7 +239,7 @@ async def _build_args(
         return {"object_type": "service", "identifier": item["name"]}
 
     if tool_name == "explain_connectivity":
-        zones = await client.call_tool("zone_list", {"request": {}})
+        zones = await client.call_tool("zone_list", {})
         names = [
             zone["name"]
             for zone in (zones.structured_content or {}).get("items") or []
@@ -282,7 +282,7 @@ async def test_live_read_tool(tool_name: str, family: str | None) -> None:
                 f"{tool_name} ({family or 'n/a'}): the appliance holds no object this tool can read"
             )
 
-        result = await client.call_tool(tool_name, {"request": args})
+        result = await client.call_tool(tool_name, args)
 
     assert result.is_error is False, result.content[0].text
     assert isinstance(result.structured_content, dict), tool_name
@@ -298,7 +298,7 @@ async def test_live_pagination_metadata_is_preserved() -> None:
         await assert_read_only_surface(client)
         result = await client.call_tool(
             "firewall_rule_list",
-            {"request": {"ip_family": "ipv4", "page": 1, "pageSize": 10, "pageTotal": True}},
+            {"ip_family": "ipv4", "page": 1, "pageSize": 10, "pageTotal": True},
         )
 
     assert result.is_error is False

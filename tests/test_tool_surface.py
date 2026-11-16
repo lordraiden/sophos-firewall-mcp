@@ -4,8 +4,8 @@ Every other domain test asserts its own subset, so a duplicated, stray or missin
 pass CI unnoticed. These tests build the real server with every domain registered and assert
 the invariants that only the whole surface can prove:
 
-* the registered set is exactly the curated ``tool_map`` (145 operationIds) plus the seven
-  declared composites -- 112 tools with 112 unique names;
+* the registered set is exactly the curated ``tool_map`` (145 operationIds mapped to 107
+  one-to-one tools) plus the five declared composites -- 112 tools with 112 unique names;
 * the full surface declares exactly 38 mutations, and ``SOPHOS_READ_ONLY_MODE`` removes
   exactly those, leaving 74 read-only tools and zero mutations;
 * every tool publishes an object-rooted output schema, a non-empty input schema and the
@@ -30,13 +30,14 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from mcp import Client
 from mcp.server.mcpserver import MCPServer
 
 from mcp.types import ToolAnnotations
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
-from sophos_firewall_mcp.server import create_server
+from sophos_firewall_mcp.server import INSTRUCTIONS, create_server
 from sophos_firewall_mcp.tools import OPEN_WORLD_TOOLS, ToolKind, register_tool
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -183,6 +184,88 @@ async def test_read_only_mode_removes_exactly_the_mutations() -> None:
     assert len(read_only) == EXPECTED_READ_ONLY_TOOL_COUNT
     assert set(read_only) == set(full) - mutations
     assert mutation_names(read_only) == set()
+
+
+async def test_the_live_suite_expects_the_read_only_surface() -> None:
+    """The opt-in live suite must track the read-only surface, not a stale count.
+
+    ``tests/live/`` is skipped without lab credentials, so a stale
+    ``EXPECTED_LIVE_TOOL_COUNT`` or a stale ``LIVE_READ_TOOLS`` would only fail on the next
+    lab run -- the phase-8 review found exactly that (98 expected, 74 published). This test
+    runs in the default suite and pins both to the surface the server actually publishes in
+    read-only mode.
+    """
+    from tests.live.conftest import EXPECTED_LIVE_TOOL_COUNT
+    from tests.live.test_live_reads import LIVE_READ_TOOLS
+
+    read_only = await tools_by_name(read_only=True)
+
+    assert EXPECTED_LIVE_TOOL_COUNT == EXPECTED_READ_ONLY_TOOL_COUNT
+    assert len(read_only) == EXPECTED_LIVE_TOOL_COUNT
+    assert set(LIVE_READ_TOOLS) == set(read_only)
+    assert len(LIVE_READ_TOOLS) == len(set(LIVE_READ_TOOLS)) == EXPECTED_LIVE_TOOL_COUNT
+
+
+# -- Union argument errors (phase-8 review Low 4) --------------------------------------
+#
+# A union request publishes a root ``oneOf``/``anyOf``, so pydantic reports every variant's
+# errors at once: the model saw contradictory rules ("ip_family must be one of 'ipv4' ...
+# ip_family must be one of 'ipv6'") and the 300-character cap truncated the dump mid-word.
+# The union argument model resolves the discriminator first and reports one line.
+
+
+async def test_a_bad_discriminator_is_reported_once_with_the_accepted_values() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool("firewall_rule_create", {"ip_family": "ipv9", "name": "x"})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "ip_family must be one of 'ipv4', 'ipv6'" in text
+    # One discriminator rule, not one per variant, and no required-field noise.
+    assert text.count("ip_family must be one of") == 1
+    assert "source_zones is required" not in text
+
+
+async def test_a_missing_discriminator_names_the_accepted_values() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool("address_create", {"ip_family": "ipv4"})
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "type is required" in text
+    assert "accepted values are 'ipv4Address'" in text
+    assert "ipv4_address is required" not in text
+
+
+async def test_a_valid_discriminator_reports_only_the_selected_variant() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool(
+            "address_create",
+            {"ip_family": "ipv4", "type": "ipv4Address", "name": "x"},
+        )
+
+    assert result.is_error is True
+    text = result.content[0].text
+    assert "ipv4_address is required" in text
+    # The other seven variants' required fields are not enumerated.
+    assert "ipv4_network_address" not in text
+    assert "ipv6_address" not in text
+    assert text.count("is required") == 1
+
+
+async def test_an_undiscriminated_union_offers_the_alternatives() -> None:
+    async with Client(make_server()) as client:
+        result = await client.call_tool("mac_address_create", {"name": "x"})
+
+    assert result.is_error is True
+    assert "mac_address is required or mac_addresses is required" in result.content[0].text
+
+
+def test_the_instructions_state_the_anyof_exception() -> None:
+    """Low 3: the one undiscriminated union publishes ``anyOf``, not ``oneOf``."""
+    assert "`oneOf`" in INSTRUCTIONS
+    assert "`anyOf`" in INSTRUCTIONS
+    assert "mac_address_create" in INSTRUCTIONS
 
 
 async def test_every_tool_publishes_an_object_rooted_output() -> None:

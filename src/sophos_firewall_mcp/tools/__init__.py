@@ -654,7 +654,15 @@ def _flatten_arguments(server: MCPServer[AppContext], name: str) -> Tool | None:
     annotation = request_field.annotation
     variants = _union_variants(annotation)
     if variants:
-        tool.fn_metadata.arg_model = cast(Any, _union_argument_model(annotation, variants))
+        discriminator = request_field.discriminator
+        tool.fn_metadata.arg_model = cast(
+            Any,
+            _union_argument_model(
+                annotation,
+                variants,
+                discriminator if isinstance(discriminator, str) else None,
+            ),
+        )
         schema = _union_schema(annotation, request_field.discriminator)
     elif isinstance(annotation, type) and issubclass(annotation, BaseModel):
         tool.fn_metadata.arg_model = cast(Any, _flat_argument_model(annotation))
@@ -690,7 +698,9 @@ def _flat_argument_model(request_model: type[ModelT]) -> type[ModelT]:
 
 
 def _union_argument_model(
-    annotation: Any, variants: tuple[type[BaseModel], ...]
+    annotation: Any,
+    variants: tuple[type[BaseModel], ...],
+    discriminator: str | None = None,
 ) -> type[BaseModel]:
     """Return an argument model for a tool whose request is a union of models.
 
@@ -701,6 +711,10 @@ def _union_argument_model(
     implements the three attributes ``FuncMetadata`` reads: ``model_validate``,
     ``model_fields`` (for JSON pre-parsing and the accepted-argument hint) and
     ``model_dump_one_level``.
+
+    ``discriminator`` is the union's discriminator field name (``ip_family`` or ``type``),
+    or ``None`` for an undiscriminated union. It lets a failed call be reported as one
+    readable line instead of every variant's errors at once.
     """
     adapter = TypeAdapter(annotation)
     fields: dict[str, FieldInfo] = {}
@@ -725,7 +739,11 @@ def _union_argument_model(
             try:
                 return cls(adapter.validate_python(obj))
             except ValidationError as exc:
-                raise _sanitized_argument_error(exc, cast(Any, cls)) from None
+                raise _sanitized_argument_error(
+                    exc,
+                    cast(Any, cls),
+                    message=_union_argument_message(obj, variants, discriminator),
+                ) from None
 
     return cast(type[BaseModel], UnionArguments)
 
@@ -782,14 +800,18 @@ def _sanitized_argument_model(model: type[ModelT]) -> type[ModelT]:
     return cast(type[ModelT], Sanitized)
 
 
-def _sanitized_argument_error(exc: ValidationError, model: type[BaseModel]) -> ValidationError:
+def _sanitized_argument_error(
+    exc: ValidationError, model: type[BaseModel], *, message: str | None = None
+) -> ValidationError:
     """Build the sanitized ``ValidationError`` the SDK renders for the model."""
     # ``errors()`` carries the same entries ``from_exception_data`` accepts; the extra
     # ``msg``/``url`` keys are ignored by the constructor.
     sanitized = _SanitizedArgumentError.from_exception_data(
         "invalid arguments", cast(Any, exc.errors())
     )
-    sanitized._sanitized_message = _argument_error_message(exc, model)
+    sanitized._sanitized_message = (
+        message if message is not None else _argument_error_message(exc, model)
+    )
     return sanitized
 
 
@@ -801,6 +823,11 @@ def _argument_error_message(exc: ValidationError, model: type[BaseModel]) -> str
     the field path and the rule are kept, plus the accepted names when the caller used an
     unknown one.
     """
+    return _sanitize("invalid arguments: " + "; ".join(_argument_error_details(exc, model)))
+
+
+def _argument_error_details(exc: ValidationError, model: type[BaseModel]) -> list[str]:
+    """Render each pydantic error as one ``<field> <rule>`` detail."""
     details: list[str] = []
     for error in exc.errors():
         location = _display_location(model, error.get("loc", ()))
@@ -811,7 +838,85 @@ def _argument_error_message(exc: ValidationError, model: type[BaseModel]) -> str
             if accepted:
                 detail = f"{detail}; {accepted}"
         details.append(detail)
-    return _sanitize("invalid arguments: " + "; ".join(details))
+    return details
+
+
+def _union_argument_message(
+    obj: Any, variants: tuple[type[BaseModel], ...], discriminator: str | None
+) -> str:
+    """Render a union-request failure as one readable line.
+
+    A discriminated union is resolved by its discriminator first: a missing or unknown
+    value is reported once, with the accepted values, instead of repeating every variant's
+    required-field errors. Once the discriminator selects a variant, only that variant's
+    errors are reported, so the message has the same shape a flat tool produces. An
+    undiscriminated union has no selector, so the variant that got furthest is reported
+    (and, on a tie, the alternatives are joined with "or").
+    """
+    if discriminator is not None:
+        accepted = _discriminator_values(variants, discriminator)
+        value = obj.get(discriminator) if isinstance(obj, dict) else None
+        if value is None:
+            return _sanitize(
+                f"invalid arguments: {discriminator} is required; "
+                f"accepted values are {_quoted_values(accepted)}"
+            )
+        if value not in accepted:
+            return _sanitize(
+                f"invalid arguments: {discriminator} must be one of {_quoted_values(accepted)}"
+            )
+        variant = _variant_for_discriminator(variants, discriminator, value)
+        if variant is not None:
+            try:
+                variant.model_validate(obj)
+            except ValidationError as exc:
+                return _argument_error_message(exc, variant)
+            # Unreachable: the adapter applies the same discriminator and the same variant
+            # validators. Report a neutral line rather than another variant's errors if a
+            # future model makes it reachable.
+            return "invalid arguments: the arguments do not match an accepted shape"
+
+    failures: list[tuple[int, str]] = []
+    for variant in variants:
+        try:
+            variant.model_validate(obj)
+        except ValidationError as exc:
+            details = _argument_error_details(exc, variant)
+            failures.append((len(details), "; ".join(details)))
+    if not failures:
+        return "invalid arguments: the arguments do not match an accepted shape"
+    fewest = min(count for count, _ in failures)
+    best = [detail for count, detail in failures if count == fewest]
+    return _sanitize("invalid arguments: " + " or ".join(best))
+
+
+def _discriminator_values(variants: tuple[type[BaseModel], ...], discriminator: str) -> list[str]:
+    """The accepted values of a union's discriminator, in variant order."""
+    values: list[str] = []
+    for variant in variants:
+        field = variant.model_fields.get(discriminator)
+        if field is None:
+            continue
+        for value in get_args(field.annotation):
+            if isinstance(value, str) and value not in values:
+                values.append(value)
+    return values
+
+
+def _variant_for_discriminator(
+    variants: tuple[type[BaseModel], ...], discriminator: str, value: str
+) -> type[BaseModel] | None:
+    """The variant whose discriminator field accepts ``value``."""
+    for variant in variants:
+        field = variant.model_fields.get(discriminator)
+        if field is not None and value in get_args(field.annotation):
+            return variant
+    return None
+
+
+def _quoted_values(values: list[str]) -> str:
+    """Render accepted values the way the flat-tool rules do: ``'a', 'b'``."""
+    return ", ".join(f"'{value}'" for value in values)
 
 
 def _display_location(model: type[BaseModel], location: tuple[Any, ...]) -> str:
