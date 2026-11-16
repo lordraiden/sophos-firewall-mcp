@@ -37,8 +37,9 @@ from typing import Any
 import httpx
 import pytest
 import respx
-from mcp import Client, StdioServerParameters
+from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import MCPServer
+from mcp.types import INTERNAL_ERROR, INVALID_PARAMS
 
 from sophos_firewall_mcp.config import Settings
 from sophos_firewall_mcp.context import AppContext
@@ -76,18 +77,23 @@ def make_server(*, read_only: bool = False) -> MCPServer[AppContext]:
     return create_server(make_settings(read_only=read_only))
 
 
+def stdio_env() -> dict[str, str]:
+    """The environment an MCP host passes to the real entrypoint."""
+    return {
+        "PYTHONPATH": str(SRC_DIR),
+        "SOPHOS_HOST": HOST,
+        "SOPHOS_PORT": "4444",
+        "SOPHOS_API_KEY": KEY,
+        "SOPHOS_VERIFY_SSL": "false",
+    }
+
+
 def stdio_params() -> StdioServerParameters:
     """The real entrypoint as an MCP host would launch it: a subprocess, no TTY."""
     return StdioServerParameters(
         command=sys.executable,
         args=["-m", "sophos_firewall_mcp.server"],
-        env={
-            "PYTHONPATH": str(SRC_DIR),
-            "SOPHOS_HOST": HOST,
-            "SOPHOS_PORT": "4444",
-            "SOPHOS_API_KEY": KEY,
-            "SOPHOS_VERIFY_SSL": "false",
-        },
+        env=stdio_env(),
     )
 
 
@@ -318,13 +324,131 @@ async def test_an_invalid_argument_is_rejected_before_any_io():
     assert route.call_count == 0
 
 
-async def test_an_unknown_tool_is_reported_as_an_error_result():
-    """The modern protocol reports an unknown tool as a tool error, not a crash."""
-    async with Client(make_server()) as client:
-        result = await client.call_tool("sophos_tool_that_does_not_exist", {})
+async def test_an_unknown_tool_is_invalid_params_over_stdio():
+    """An unknown tool name is a protocol error, not a tool execution error.
+
+    The spec puts an unknown tool name in the invalid-params class (``-32602``). The SDK's
+    tool handler turns it into an ``isError`` result, so the server's middleware corrects
+    it; this drives the real STDIO subprocess, so it pins the wire behaviour a host sees.
+    """
+    async with asyncio.timeout(90):
+        async with Client(stdio_params()) as client:
+            with pytest.raises(MCPError) as caught:
+                await client.call_tool("sophos_tool_that_does_not_exist", {})
+
+    assert caught.value.code == INVALID_PARAMS
+    assert "Unknown tool" in caught.value.message
+    assert "sophos_tool_that_does_not_exist" in caught.value.message
+
+
+@pytest.mark.parametrize(
+    ("name", "arguments", "message_fragment"),
+    [
+        ("nope", None, "Unknown prompt: nope"),
+        ("explain_flow", {}, "Missing required arguments"),
+        (
+            "explain_flow",
+            {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "bogus": "x"},
+            "'bogus' is not an accepted argument",
+        ),
+        (
+            "explain_flow",
+            {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "port": "443"},
+            "port requires protocol 'tcp' or 'udp'",
+        ),
+    ],
+    ids=["unknown-prompt", "missing-arguments", "unexpected-argument", "invalid-combination"],
+)
+async def test_an_invalid_prompt_request_is_invalid_params_over_stdio(
+    name: str, arguments: dict[str, str] | None, message_fragment: str
+) -> None:
+    """An unknown prompt, missing arguments or a rejected argument is ``-32602``.
+
+    The message names the rejected argument, so a client can fix the request without
+    reading a traceback.
+    """
+    async with asyncio.timeout(90):
+        async with Client(stdio_params()) as client:
+            with pytest.raises(MCPError) as caught:
+                await client.get_prompt(name, arguments)
+
+    assert caught.value.code == INVALID_PARAMS
+    assert message_fragment in caught.value.message
+
+
+async def test_a_valid_prompt_renders_the_same_content_over_stdio():
+    """The error mapping must not change what a valid prompt renders."""
+    async with asyncio.timeout(90):
+        async with Client(stdio_params()) as client:
+            over_stdio = await client.get_prompt("find_unused_objects", {})
+
+    async with Client(make_server()) as in_process:
+        direct = await in_process.get_prompt("find_unused_objects", {})
+
+    assert over_stdio.messages == direct.messages
+    text = over_stdio.messages[0].content.text
+    assert "audit_firewall_rules" in text
+    assert '"checks": ["unused-object"]' in text
+
+
+async def test_a_tool_execution_failure_stays_a_tool_error_over_stdio():
+    """A failure after a valid tool was invoked is ``isError``, not ``-32602``.
+
+    The subprocess points at a closed local port, so the handler fails in the transport
+    layer after the tool name and arguments were accepted: exactly the class that must
+    stay a tool execution error.
+    """
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "sophos_firewall_mcp.server"],
+        env={**stdio_env(), "SOPHOS_HOST": "127.0.0.1", "SOPHOS_PORT": "1"},
+    )
+    async with asyncio.timeout(90):
+        async with Client(params) as client:
+            result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
 
     assert result.is_error is True
-    assert "Unknown tool" in result.content[0].text
+    assert "could not be reached" in result.content[0].text
+
+
+async def test_a_genuine_prompt_renderer_crash_is_an_internal_error_over_stdio(
+    tmp_path: Path,
+) -> None:
+    """A programming error while rendering a valid prompt stays ``-32603``.
+
+    The real prompts cannot crash on their own, so the subprocess runs the real entrypoint
+    with one renderer replaced by a crash. The client must see the generic internal error,
+    never the exception text; ``tests/test_server.py`` pins the server-side log.
+    """
+    driver = tmp_path / "crashing_prompt_server.py"
+    driver.write_text(
+        "import sophos_firewall_mcp.prompts as prompts\n"
+        "\n"
+        "\n"
+        "def _crash(*args, **kwargs):\n"
+        "    raise RuntimeError('synthetic renderer crash')\n"
+        "\n"
+        "\n"
+        "prompts._explain_message = _crash\n"
+        "\n"
+        "from sophos_firewall_mcp.server import main\n"
+        "\n"
+        "main()\n",
+        encoding="utf-8",
+    )
+    params = StdioServerParameters(command=sys.executable, args=[str(driver)], env=stdio_env())
+
+    async with asyncio.timeout(90):
+        async with Client(params) as client:
+            with pytest.raises(MCPError) as caught:
+                await client.get_prompt(
+                    "explain_flow",
+                    {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https"},
+                )
+
+    assert caught.value.code == INTERNAL_ERROR
+    assert caught.value.message == "Internal server error"
+    assert "synthetic renderer crash" not in caught.value.message
 
 
 def test_a_protocol_level_rejection_is_a_jsonrpc_error():

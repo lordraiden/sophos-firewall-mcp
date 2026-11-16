@@ -15,6 +15,7 @@ import ast
 import asyncio
 import importlib.metadata
 import json
+import logging
 import os
 import re
 import subprocess
@@ -23,6 +24,7 @@ import tomllib
 from contextlib import AbstractAsyncContextManager
 from email.message import EmailMessage
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable
 
 import pytest
@@ -30,9 +32,10 @@ from mcp import Client, MCPError, StdioServerParameters
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError, UnexpectedToolError
 
-from mcp.types import INVALID_PARAMS, ToolAnnotations
+from mcp.types import INTERNAL_ERROR, INVALID_PARAMS, ToolAnnotations
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from sophos_firewall_mcp import prompts as prompts_module
 from sophos_firewall_mcp import resources as resources_module
 from sophos_firewall_mcp import server as server_module
 from sophos_firewall_mcp.client import SophosRestClient
@@ -1695,24 +1698,32 @@ async def test_explain_flow_requires_its_endpoints():
 
 
 @pytest.mark.parametrize(
-    ("name", "arguments"),
+    ("name", "arguments", "message_fragment"),
     [
-        ("nope", None),
-        ("explain_flow", {}),
+        ("nope", None, "Unknown prompt: nope"),
+        ("explain_flow", {}, "Missing required arguments"),
         (
             "explain_flow",
             {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "bogus": "x"},
+            "'bogus' is not an accepted argument",
+        ),
+        (
+            "explain_flow",
+            {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "port": "443"},
+            "port requires protocol 'tcp' or 'udp'",
         ),
     ],
+    ids=["unknown-prompt", "missing-arguments", "unexpected-argument", "invalid-combination"],
 )
 async def test_a_caller_fixable_prompt_failure_is_invalid_params(
-    name: str, arguments: dict[str, Any] | None
+    name: str, arguments: dict[str, Any] | None, message_fragment: str
 ) -> None:
     """M4: an unknown prompt or bad arguments is ``-32602``, not ``-32603``.
 
     The spec puts an invalid prompt name and missing or invalid arguments in the invalid
     params class. The SDK maps every ``ValueError`` from ``prompts/get`` to an internal
-    error, so the server's middleware corrects the caller-fixable ones.
+    error, so the server's middleware corrects the caller-fixable ones and names the
+    rejected argument in the message.
     """
     server = create_server(make_settings())
 
@@ -1721,6 +1732,122 @@ async def test_a_caller_fixable_prompt_failure_is_invalid_params(
             await client.get_prompt(name, arguments)
 
     assert caught.value.code == INVALID_PARAMS
+    assert message_fragment in caught.value.message
+
+
+async def test_a_genuine_prompt_renderer_crash_stays_internal_and_is_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A programming error while rendering a valid prompt is ``-32603``, not ``-32602``.
+
+    The middleware must not turn every render failure into a caller error: only a
+    ``PromptArgumentError`` or a pydantic ``ValidationError`` is the caller's mistake. The
+    SDK logs the unmapped exception with its traceback before answering, and the client
+    sees only the generic internal-error message.
+    """
+
+    def _crash(*args: Any, **kwargs: Any) -> str:
+        raise RuntimeError("synthetic renderer crash")
+
+    monkeypatch.setattr(prompts_module, "_explain_message", _crash)
+    server = create_server(make_settings())
+
+    with caplog.at_level(logging.ERROR):
+        async with Client(server) as client:
+            with pytest.raises(MCPError) as caught:
+                await client.get_prompt(
+                    "explain_flow",
+                    {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https"},
+                )
+
+    assert caught.value.code == INTERNAL_ERROR
+    assert caught.value.message == "Internal server error"
+    assert "synthetic renderer crash" not in caught.value.message
+    # The SDK logs the unmapped exception with its traceback before answering.
+    assert "request handler raised" in caplog.text
+    assert "synthetic renderer crash" in caplog.text
+
+
+def test_only_a_caller_fixable_prompt_failure_is_invalid_params() -> None:
+    """The classification is narrow: a plain ``ValueError`` stays an internal error."""
+    assert server_module._prompt_error_is_caller_fixable(ValueError("Unknown prompt: nope"))
+    assert server_module._prompt_error_is_caller_fixable(
+        ValueError("Missing required arguments: {'source'}")
+    )
+    assert not server_module._prompt_error_is_caller_fixable(ValueError("something else"))
+    assert not server_module._prompt_error_is_caller_fixable(
+        ValueError("Error rendering prompt explain_flow")
+    )
+
+    validation = ValidationError.from_exception_data(
+        "explain_flow", [{"type": "extra_forbidden", "loc": ("bogus",), "input": "x"}]
+    )
+    rejected_argument = ValueError("Error rendering prompt explain_flow")
+    rejected_argument.__cause__ = validation
+    assert server_module._prompt_error_is_caller_fixable(rejected_argument)
+
+    rejected_combination = ValueError("Error rendering prompt explain_flow")
+    rejected_combination.__cause__ = prompts_module.PromptArgumentError(
+        "port requires protocol 'tcp' or 'udp'"
+    )
+    assert server_module._prompt_error_is_caller_fixable(rejected_combination)
+
+    crash = ValueError("Error rendering prompt explain_flow")
+    crash.__cause__ = RuntimeError("boom")
+    assert not server_module._prompt_error_is_caller_fixable(crash)
+
+
+def test_a_caller_fixable_prompt_message_names_the_rejected_argument() -> None:
+    """The ``-32602`` message names the prompt and the rejected argument, sanitized."""
+    unexpected = ValidationError.from_exception_data(
+        "explain_flow",
+        [{"type": "unexpected_keyword_argument", "loc": ("bogus",), "input": "x"}],
+    )
+    wrapped_unexpected = ValueError("Error rendering prompt explain_flow")
+    wrapped_unexpected.__cause__ = unexpected
+    assert server_module._prompt_error_message(wrapped_unexpected) == (
+        "explain_flow: 'bogus' is not an accepted argument"
+    )
+
+    mistyped = ValidationError.from_exception_data(
+        "explain_flow", [{"type": "int_parsing", "loc": ("port",), "input": "notanint"}]
+    )
+    wrapped_mistyped = ValueError("Error rendering prompt explain_flow")
+    wrapped_mistyped.__cause__ = mistyped
+    assert server_module._prompt_error_message(wrapped_mistyped).startswith(
+        "explain_flow: 'port': Input should be a valid integer"
+    )
+
+    combination = ValueError("Error rendering prompt explain_flow")
+    combination.__cause__ = prompts_module.PromptArgumentError(
+        "port requires protocol 'tcp' or 'udp'"
+    )
+    assert server_module._prompt_error_message(combination) == (
+        "explain_flow: port requires protocol 'tcp' or 'udp'"
+    )
+
+    # The SDK's own message is kept for the direct cases.
+    assert server_module._prompt_error_message(ValueError("Unknown prompt: nope")) == (
+        "Unknown prompt: nope"
+    )
+
+
+def test_unknown_tool_detection_matches_only_the_sdk_message() -> None:
+    """Only the SDK's exact unknown-tool result is converted; tool errors are not."""
+    ctx = SimpleNamespace(method="tools/call", params={"name": "nope"})
+
+    def result(text: str, *, is_error: bool = True) -> dict[str, Any]:
+        return {"isError": is_error, "content": [{"type": "text", "text": text}]}
+
+    assert server_module._unknown_tool_name(ctx, result("Unknown tool: nope")) == "nope"
+    # A failure after a valid tool was invoked is not an unknown tool.
+    assert server_module._unknown_tool_name(ctx, result("Error executing tool nope")) is None
+    # A message naming another tool is not this request's unknown tool.
+    assert server_module._unknown_tool_name(ctx, result("Unknown tool: other")) is None
+    # A successful result is never converted.
+    assert (
+        server_module._unknown_tool_name(ctx, result("Unknown tool: nope", is_error=False)) is None
+    )
 
 
 def rendered_tool_calls(text: str, tool_names: set[str]) -> list[tuple[str, dict[str, Any]]]:

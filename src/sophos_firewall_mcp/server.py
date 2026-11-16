@@ -92,12 +92,17 @@ from mcp.server.context import CallNext, HandlerResult, ServerRequestContext  # 
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 from mcp.shared.exceptions import MCPError  # noqa: E402
 from mcp.types import INVALID_PARAMS  # noqa: E402
+from pydantic import ValidationError  # noqa: E402
 
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
 from sophos_firewall_mcp.config import ConfigurationError, Settings, TOOL_DOMAINS  # noqa: E402
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
 from sophos_firewall_mcp.mrtr import mrtr_replay_guard  # noqa: E402
-from sophos_firewall_mcp.prompts import available_prompts, register_prompts  # noqa: E402
+from sophos_firewall_mcp.prompts import (  # noqa: E402
+    PromptArgumentError,
+    available_prompts,
+    register_prompts,
+)
 from sophos_firewall_mcp.resources import (  # noqa: E402
     SurfaceSummary,
     register_resources,
@@ -346,30 +351,134 @@ def _package_identity() -> _PackageIdentity:
 #: The prefixes of the ``ValueError`` messages the SDK raises for a ``prompts/get`` the
 #: caller can fix. ``MCPServer.get_prompt`` wraps every failure in ``ValueError`` and the
 #: runner maps that to ``-32603`` (internal error), but the spec puts an unknown prompt
-#: name and missing or invalid arguments in the ``-32602`` (invalid params) class.
+#: name and missing arguments in the ``-32602`` (invalid params) class.
 _PROMPT_ARGUMENT_ERRORS = (
     "Unknown prompt:",
     "Missing required arguments:",
-    "Error rendering prompt",
 )
 
+#: The prefix the SDK wraps a prompt renderer failure in. The renderer's own exception is
+#: the root ``__cause__`` of the chain, and only a caller-fixable root cause is ``-32602``.
+_PROMPT_RENDER_ERROR = "Error rendering prompt"
 
-async def _prompt_error_middleware(
+#: The exact message the SDK's tool manager raises for a tool name it does not know. The
+#: tool handler turns that into an ``isError`` result, so the middleware recognises the one
+#: caller-fixable case by the message the SDK wrote, not by a broad "any tool error" rule.
+_UNKNOWN_TOOL_PREFIX = "Unknown tool: "
+
+
+def _root_cause(exc: BaseException) -> BaseException:
+    """The innermost exception in the ``__cause__`` chain."""
+    cause = exc
+    while cause.__cause__ is not None:
+        cause = cause.__cause__
+    return cause
+
+
+def _prompt_error_is_caller_fixable(exc: ValueError) -> bool:
+    """Whether a ``prompts/get`` ``ValueError`` is the caller's mistake, not a crash.
+
+    The SDK raises ``ValueError`` for every prompt failure: an unknown name and missing
+    arguments directly, and a renderer failure wrapped twice (``Prompt.render`` wraps it,
+    then ``MCPServer.get_prompt`` re-wraps that). Only the root cause decides: a pydantic
+    ``ValidationError`` is an argument the prompt does not accept, and
+    :class:`~sophos_firewall_mcp.prompts.PromptArgumentError` is an argument combination
+    the renderer rejects. Any other root cause is a programming error and stays
+    ``-32603``, which the SDK logs server-side.
+    """
+    message = str(exc)
+    if message.startswith(_PROMPT_ARGUMENT_ERRORS):
+        return True
+    if not message.startswith(_PROMPT_RENDER_ERROR):
+        return False
+    return isinstance(_root_cause(exc), (PromptArgumentError, ValidationError))
+
+
+def _prompt_error_message(exc: ValueError) -> str:
+    """A sanitized, actionable message for a caller-fixable ``prompts/get`` failure.
+
+    The SDK's own render-failure message is only ``Error rendering prompt <name>``, which
+    names neither the rejected argument nor the reason. The root cause carries both, so the
+    message is rebuilt from it: the prompt name plus the rejected field and, for a mistyped
+    value, pydantic's field-level reason. The caller's input value, the traceback and any
+    internal path are never included.
+    """
+    message = str(exc)
+    if message.startswith(_PROMPT_ARGUMENT_ERRORS):
+        return message
+    prompt_name = message.removeprefix(_PROMPT_RENDER_ERROR).strip() or "prompt"
+    cause = _root_cause(exc)
+    if isinstance(cause, PromptArgumentError):
+        return f"{prompt_name}: {cause}"
+    if isinstance(cause, ValidationError):
+        rejected: list[str] = []
+        for error in cause.errors():
+            field = ".".join(str(part) for part in error["loc"]) or "arguments"
+            if error["type"] in ("extra_forbidden", "unexpected_keyword_argument"):
+                rejected.append(f"{field!r} is not an accepted argument")
+            else:
+                rejected.append(f"{field!r}: {error['msg']}")
+        if rejected:
+            return f"{prompt_name}: " + "; ".join(rejected)
+    return message
+
+
+def _unknown_tool_name(ctx: ServerRequestContext[Any, Any], result: HandlerResult) -> str | None:
+    """The requested tool name when the SDK reported it as unknown, else ``None``.
+
+    ``MCPServer._handle_call_tool`` turns every tool failure into an ``isError`` result, so
+    the middleware cannot see the ``ToolError``. The one caller-fixable case is an unknown
+    tool name, which the SDK reports with the exact message ``Unknown tool: <name>`` for the
+    name the caller sent. Every other ``isError`` result is a failure after a valid tool was
+    invoked and stays a tool error.
+    """
+    if ctx.method != "tools/call" or not isinstance(result, dict):
+        return None
+    if result.get("isError") is not True:
+        return None
+    params = ctx.params or {}
+    name = params.get("name")
+    if not isinstance(name, str):
+        return None
+    content = result.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    first = content[0]
+    if not isinstance(first, dict) or first.get("text") != f"{_UNKNOWN_TOOL_PREFIX}{name}":
+        return None
+    return name
+
+
+async def _request_error_middleware(
     ctx: ServerRequestContext[Any, Any], call_next: CallNext
 ) -> HandlerResult:
-    """Report a caller-fixable ``prompts/get`` failure as ``-32602``, not ``-32603``.
+    """Report a caller-fixable request failure as ``-32602``, not ``-32603``/``isError``.
 
-    The SDK owns the ``ValueError`` -> internal-error mapping, so the middleware chain is
-    the only place to correct it. A ``ValueError`` from ``prompts/get`` whose message names
-    an unknown prompt, missing arguments or a render failure is the caller's mistake;
-    anything else keeps the SDK's internal-error mapping.
+    Two dispatch paths need this correction because the SDK owns their error mapping:
+
+    * ``prompts/get``: the SDK maps every ``ValueError`` to ``-32603``, but an unknown
+      prompt name, missing arguments and an argument the prompt rejects are the caller's
+      mistake. A genuine renderer crash keeps the SDK's ``-32603`` and its server-side log.
+    * ``tools/call``: the SDK turns an unknown tool name into an ``isError`` result, but the
+      spec puts it in the invalid-params class. A failure after a valid tool was invoked
+      stays an ``isError`` result.
+
+    The ``-32603`` half of the prompt contract holds on the modern protocol this server
+    advertises (2026-07-28). On a legacy ``initialize`` handshake the SDK's own dispatcher
+    deliberately maps an unmapped exception to JSON-RPC code ``0`` (its ``TODO(L58)``
+    compatibility pin), so a genuine renderer crash is ``code=0`` there. This middleware
+    does not change that; the ``-32602`` mappings above apply on both paths.
     """
     try:
-        return await call_next(ctx)
+        result = await call_next(ctx)
     except ValueError as exc:
-        if ctx.method == "prompts/get" and str(exc).startswith(_PROMPT_ARGUMENT_ERRORS):
-            raise MCPError(code=INVALID_PARAMS, message=str(exc)) from exc
+        if ctx.method == "prompts/get" and _prompt_error_is_caller_fixable(exc):
+            raise MCPError(code=INVALID_PARAMS, message=_prompt_error_message(exc)) from exc
         raise
+    unknown_tool = _unknown_tool_name(ctx, result)
+    if unknown_tool is not None:
+        raise MCPError(code=INVALID_PARAMS, message=f"{_UNKNOWN_TOOL_PREFIX}{unknown_tool}")
+    return result
 
 
 def create_server(
@@ -445,7 +554,7 @@ def create_server(
         lifespan=lifespan,
         subscriptions=False,
         cache_hints=_CATALOG_CACHE_HINTS,
-        middleware=[_prompt_error_middleware],
+        middleware=[_request_error_middleware],
     )
     # The SDK appends its RequestStateBoundary before the user middleware, so a middleware
     # passed to the constructor runs *inside* the boundary and sees the unsealed state.
