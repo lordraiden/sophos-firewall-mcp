@@ -146,6 +146,30 @@ IPV4_ONLY_IPSEC_TOOLS = frozenset(
     }
 )
 
+#: The sixteen getters whose descriptions must say what they return. Pinned as a literal
+#: set so dropping a row from ``EXPECTED_GETTER_RETURN_SENTENCES`` fails the test instead of
+#: silently shrinking the contract.
+GETTER_TOOLS = frozenset(
+    {
+        "zone_get",
+        "ipsec_profile_get",
+        "dns_host_entry_get",
+        "dns_request_route_get",
+        "ipsec_failover_group_get",
+        "sslvpn_clientless_policy_get",
+        "sslvpn_remote_access_policy_get",
+        "sslvpn_bookmark_group_get",
+        "ipsec_route_based_connection_get_ipv4",
+        "ipsec_policy_based_connection_get_ipv4",
+        "dhcp_server_get",
+        "wan_gateway_get",
+        "sdwan_route_get",
+        "custom_gateway_get",
+        "unicast_route_get",
+        "static_neighbor_get",
+    }
+)
+
 #: The one sentence each getter adds to describe the object it returns, based on its output
 #: DTO. Pinned per tool because it is the model's only summary of the payload; a reworded
 #: sentence is a deliberate contract change, not a refactor.
@@ -635,11 +659,15 @@ async def test_the_sixteen_getters_describe_the_returned_object() -> None:
     """A getter must say what it returns, not only what it targets.
 
     The sentence is pinned per tool because it is the model's only summary of the output
-    DTO; a reworded sentence is a deliberate contract change, not a refactor.
+    DTO; a reworded sentence is a deliberate contract change, not a refactor. The table is
+    checked for completeness as well as for content, so dropping a row fails instead of
+    silently shrinking the contract.
     """
     tools = await tools_by_name()
 
-    assert set(EXPECTED_GETTER_RETURN_SENTENCES) <= set(tools)
+    assert len(GETTER_TOOLS) == 16
+    assert set(EXPECTED_GETTER_RETURN_SENTENCES) == GETTER_TOOLS
+    assert GETTER_TOOLS <= set(tools)
     for name, sentence in EXPECTED_GETTER_RETURN_SENTENCES.items():
         assert sentence in tools[name].description, name
 
