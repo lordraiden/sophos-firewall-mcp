@@ -21,11 +21,13 @@ Two properties keep the guard from being bypassed by a flood of forged states:
   state the boundary rejects raises ``MCPError`` and releases the reservation, so a forged
   token never consumes a slot. A handler failure is returned as ``CallToolResult`` (not
   raised), so a legitimate state whose handler failed stays consumed -- the confirmation
-  was used. The release is keyed on *any* exception from ``call_next``, which cannot
-  distinguish a boundary rejection (correct to release) from a post-acceptance exception.
-  That is unreachable with the current handlers -- a handler failure is returned as
-  ``CallToolResult`` and no handler raises after a side effect -- but a future handler that
-  raises after a side effect must not rely on this guard alone.
+  was used.
+* **Cancellation keeps the reservation.** The release is keyed on ``MCPError`` only: the
+  SDK boundary raises it before the handler runs, so the state was never accepted. Any
+  other exception -- notably ``asyncio.CancelledError`` -- keeps the reservation, because
+  the write may already have reached the appliance and an ambiguous write must not become
+  repeatable. A handler that raises ``MCPError`` after a side effect would release the
+  reservation; no current handler does, and a future one must not rely on this guard alone.
 * **The cap fails closed.** When the set is full of live entries, a new state is refused
   with ``-32602`` instead of evicting a live entry. A flood can therefore only deny new
   confirmations, never displace a legitimate one.
@@ -104,11 +106,12 @@ async def mrtr_replay_guard(
     untouched. The check-and-reserve is synchronous, so two concurrent requests carrying
     the same token cannot both pass it on one event loop.
 
-    The reservation is released on any exception from ``call_next``. That is correct for a
-    boundary rejection (the state was never accepted) but would also release it for a
-    post-acceptance exception. This is unreachable today: handler failures are returned as
-    ``CallToolResult`` and no handler raises after a side effect. A future handler that
-    raises after a side effect must not rely on this guard alone.
+    The reservation is released only on ``MCPError``: the SDK boundary raises it before the
+    handler runs, so the state was never accepted. Any other exception -- notably
+    ``asyncio.CancelledError`` -- keeps the reservation, because the write may already have
+    reached the appliance and an ambiguous write must not become repeatable. A handler that
+    raises ``MCPError`` after a side effect would release the reservation; no current
+    handler does, and a future one must not rely on this guard alone.
     """
     state = (ctx.params or {}).get("requestState")
     if ctx.method != "tools/call" or not isinstance(state, str) or not state:
@@ -131,12 +134,14 @@ async def mrtr_replay_guard(
         )
 
     # Reserve synchronously so a concurrent request cannot also pass, then commit only if
-    # the boundary accepted the state. A boundary rejection raises; a handler failure is
-    # returned as a CallToolResult and keeps the reservation (the confirmation was used).
+    # the boundary accepted the state. A boundary rejection raises MCPError and releases the
+    # slot; a handler failure is returned as a CallToolResult and keeps it. Cancellation
+    # (CancelledError) and any other exception keep the reservation: the write may already
+    # have reached the appliance, so the confirmation must stay used.
     _consumed[digest] = now
     try:
         result = await call_next(ctx)
-    except BaseException:
+    except MCPError:
         _consumed.pop(digest, None)
         raise
     return result
