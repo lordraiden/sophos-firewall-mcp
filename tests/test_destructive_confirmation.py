@@ -103,6 +103,10 @@ def make_settings() -> Settings:
         verify_ssl=False,
         timeout=5.0,
         read_only_mode=False,
+        # These tests exercise the MRTR replay guard, not the invocation-rate limiter: a
+        # high burst keeps the limiter out of the way of the forged-state flood.
+        invocation_rate_per_minute=6000,
+        invocation_burst=1000,
     )
 
 

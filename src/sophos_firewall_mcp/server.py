@@ -99,6 +99,7 @@ from sophos_firewall_mcp.config import ConfigurationError, Settings, TOOL_DOMAIN
 from sophos_firewall_mcp.context import AppContext  # noqa: E402
 from sophos_firewall_mcp.models.common import trim_published_output_schema  # noqa: E402
 from sophos_firewall_mcp.mrtr import mrtr_replay_guard  # noqa: E402
+from sophos_firewall_mcp.ratelimit import InvocationRateLimiter  # noqa: E402
 from sophos_firewall_mcp.prompts import (  # noqa: E402
     PromptArgumentError,
     available_prompts,
@@ -568,6 +569,17 @@ def create_server(
     # The replay guard must see the raw sealed token, so it is prepended: outermost-first,
     # it runs before the boundary unseals (and before any handler). See mrtr.py.
     server.middleware.insert(0, mrtr_replay_guard)
+    # The invocation-rate limiter is prepended again, so it is the outermost middleware: a
+    # throttled call is rejected before the replay guard reserves the single-use confirmation,
+    # so a throttled MRTR resume does not consume the confirmation state. It counts every
+    # ``tools/call``, including resumes; see ratelimit.py for the accounting decision.
+    server.middleware.insert(
+        0,
+        InvocationRateLimiter(
+            rate_per_minute=settings.invocation_rate_per_minute,
+            burst=settings.invocation_burst,
+        ),
+    )
     for register in registrars:
         register(server, read_only=read_only)
     # The published output schemas are trimmed once, after every domain has registered:
