@@ -17,12 +17,14 @@ It is not the Sophos Central Firewall Management API: the only backend is
 `https://<SOPHOS_HOST>:<SOPHOS_PORT>/api/firewall-config/v1` on the appliance itself, authenticated with a
 Bearer API key.
 
-> **0.7.1 is the current release.** It is a patch release that closes the High finding and the cheap
-> findings of the [0.7.0 MCP standards review](docs/architecture/sophos-rest-api-redesign/MCP-STANDARDS-REVIEW-0.7.md):
-> the four gated delete descriptions now state that the confirmation is **best-effort** (it fires on
-> the legacy handshake path and is skipped, with a logged warning, on the `2026-07-28` path), and
-> `nat_rule_create` now requires `position`, which the appliance already rejected a create without.
-> No tool is renamed and no argument is removed. **0.7.0 remains the breaking release:** the 40
+> **0.8.0 is the current release.** It is a minor release: the four highest-blast-radius deletes
+> (`firewall_rule_delete`, `nat_rule_delete`, `network_user_delete`,
+> `network_interface_delete_vlan`) now **require** a client confirmation and **fail closed** when the
+> client cannot answer — breaking for a non-interactive client — the published surface is selectable
+> with `SOPHOS_TOOL_DOMAINS`, the server enforces its own invocation rate
+> (`SOPHOS_INVOCATION_RATE_PER_MINUTE`), `mcp` is pinned to exactly `2.3.0`, unknown tools and invalid
+> prompt requests return JSON-RPC `-32602`, and the `tools/list` catalog is 21.3% smaller (493,965
+> bytes). No tool is renamed and no argument is removed. **0.7.0 remains the breaking release:** the 40
 > IPv4/IPv6 tool pairs collapse into one tool per concept behind a **required `ip_family`** argument,
 > and tool arguments are published **flat** instead of inside a `request` wrapper. The surface is 112
 > tools. The
@@ -31,7 +33,8 @@ Bearer API key.
 > Sophos wire names); 0.5.0 unified every published *input* parameter on snake_case; 0.4.0 was the
 > breaking, REST-only migration: the XML transport, the XML credentials, the raw XML tool, the
 > semantic router and FastEmbed are gone, with no compatibility mode. See
-> [`CHANGELOG.md`](CHANGELOG.md), the [0.7.1 release notes](docs/release/RELEASE-0.7.1.md), the
+> [`CHANGELOG.md`](CHANGELOG.md), the [0.8.0 release notes](docs/release/RELEASE-0.8.0.md), the
+> [0.7.1 release notes](docs/release/RELEASE-0.7.1.md), the
 > [0.7.0 release notes](docs/release/RELEASE-0.7.0.md), the
 > [0.6.0 release notes](docs/release/RELEASE-0.6.0.md), the
 > [0.5.0 release notes](docs/release/RELEASE-0.5.0.md) and the
@@ -414,7 +417,7 @@ Desktop's `claude_desktop_config.json`, or the equivalent in Cursor / Antigravit
         "-e", "SOPHOS_VERIFY_SSL",
         "-e", "SOPHOS_MAX_CONCURRENCY",
         "-e", "SOPHOS_READ_ONLY_MODE",
-        "ghcr.io/lordraiden/sophos-firewall-mcp:0.7.1"
+        "ghcr.io/lordraiden/sophos-firewall-mcp:0.8.0"
       ],
       "env": {
         "SOPHOS_HOST": "192.168.1.1",
@@ -489,7 +492,7 @@ The image is published to GHCR as **`ghcr.io/lordraiden/sophos-firewall-mcp`**.
 
 | Tag | Meaning |
 |---|---|
-| `0.7.1`, `0.7` | Stable release tags, published only from an approved release. |
+| `0.8.0`, `0.8` | Stable release tags, published only from an approved release. |
 | `latest` | Moved **only** by an approved release promotion — never by a push to `main`. |
 | `main`, `sha-<short>` | Development builds from `main`. Not a release; no stability guarantee. |
 
@@ -504,7 +507,7 @@ docker run -i --rm \
   -e SOPHOS_API_KEY_FILE=/run/secrets/sophos_api_key \
   -e SOPHOS_VERIFY_SSL=true \
   -v "$PWD/sophos_api_key:/run/secrets/sophos_api_key:ro" \
-  ghcr.io/lordraiden/sophos-firewall-mcp:0.7.1
+  ghcr.io/lordraiden/sophos-firewall-mcp:0.8.0
 ```
 
 `docker-compose.yml` in this repository is a REST-only reference: it passes the same variables, keeps
@@ -752,6 +755,9 @@ documented in [`docs/live-evidence/README.md`](docs/live-evidence/README.md).
   access and phase reviews.
 - [Live evidence](docs/live-evidence/) — what was verified against a real appliance, and what was
   deferred with a reason.
+- [Release notes 0.8.0](docs/release/RELEASE-0.8.0.md) — the minor release that makes the four gated
+  deletes fail closed, adds domain selection and the invocation rate limiter, pins the SDK, and trims
+  the catalog, with its rollback plan and publication checklist.
 - [Release notes 0.7.1](docs/release/RELEASE-0.7.1.md) — the patch release that closes the 0.7.0
   standards-review findings, its one behaviour change, rollback plan and publication checklist.
 - [Release notes 0.7.0](docs/release/RELEASE-0.7.0.md) — the breaking release, its IPv4/IPv6 collapse
