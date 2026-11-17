@@ -5,6 +5,199 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-17
+
+**Minor release: the four highest-blast-radius deletes now require a client confirmation and fail
+closed, the published tool surface is selectable by domain, and the server enforces its own
+invocation rate.** No tool is renamed, no argument is removed and the wire body is unchanged for
+every call that already worked. The surface stays at **112 tools** (74 read-only / 38 mutations; 26
+destructive / 12 additive), and the `tools/list` catalog drops from 627,848 to **493,965 bytes**
+(−21.3%). Five changes are visible to a client or an operator and are called out as behaviour
+changes below: the confirmation gate, the exact SDK pin, the JSON-RPC error codes, the Compose
+defaults and the invocation rate limiter. The release closes the 0.8.0 items of the 0.7.0 MCP
+standards review and the follow-up issues filed against it.
+
+### Added
+
+- **`SOPHOS_TOOL_DOMAINS` selects the published tool surface.** A comma-separated
+  allowlist of `firewall`, `nat`, `objects`, `users`, `network` and `audit`. Unset keeps the complete
+  112-tool surface, so an existing deployment is unaffected; a set value publishes only the tools of
+  the named domains. The value is a closed allowlist — an unknown identifier, an empty entry or a
+  duplicate is rejected at startup with a message naming the accepted identifiers, never silently
+  ignored. Order does not matter (`audit,firewall` and `firewall,audit` publish the same catalog), and
+  the three audit composites are self-contained, so `SOPHOS_TOOL_DOMAINS=audit` works on its own. The
+  resources, the prompts and `serverInfo.instructions` now describe the surface that is actually
+  registered instead of the full catalog: a prompt is registered only when every tool its workflow
+  names is present, and `sophos://api/surface` reports the filtered set. Measured live in read-only
+  mode: 74 tools with the variable unset, 47 with `network`, and 4 with `firewall,nat`.
+- **A server-side invocation rate limiter** (behaviour change). The `2026-07-28` Tools specification
+  requires servers to rate limit tool invocations; 0.7.1 recorded that as a risk acceptance, and this
+  release implements it. A token bucket sits in the outermost middleware position and bounds
+  `tools/call` requests: `SOPHOS_INVOCATION_RATE_PER_MINUTE` (default `60`, range 1–6000) is the
+  sustained rate and `SOPHOS_INVOCATION_BURST` (default `10`, range 1–1000) is the bucket depth. A
+  throttled call fails fast with an actionable `isError` result naming the limit and the retry delay
+  instead of queueing, so a runaway client cannot build an unbounded backlog. A composite counts as
+  one invocation, and an MRTR resume counts as one too. The limiter runs before the MRTR replay guard,
+  so a throttled resume does not consume the single-use confirmation and the client can retry once the
+  bucket refills. The policy, the threat model and the concurrency-versus-rate distinction are in
+  [`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md).
+- **`tests/test_sdk_compat.py` and a CI compatibility matrix.** The suite fails with a diagnostic
+  naming the attribute that moved when any of the four private SDK surfaces the server depends on
+  changes, when the declared dependency is not the exact verified pin, or when the installed SDK is
+  not the verified release. It also proves the behaviour the seam exists for still works end to end:
+  flat arguments, a closed argument model, a root union of closed variants, and a real invocation
+  reaching the handler on all three argument-model branches. The `test` job gains a
+  `python-version` × `mcp-version` matrix that installs the pinned release explicitly, and a
+  `clean-install` job that builds the wheel, installs it into a throwaway environment and checks that
+  a clean install resolves the pinned SDK and still registers a non-empty tool surface.
+- **`scripts/measure_catalog.py` and [`docs/CATALOG-SIZE.md`](docs/CATALOG-SIZE.md).** The catalog is
+  measured as the raw JSON-RPC `tools/list` response line over STDIO, split four ways (input schemas,
+  output schemas, descriptions, envelope), so the size claim is reproducible on any commit instead of
+  being a one-off number.
+- **`scripts/docker_stdio_smoke.py`.** The container smoke test now drives a real STDIO session and
+  synchronises on protocol responses instead of sleeping and hoping, so a slow image start can no
+  longer produce a false green or a flaky red.
+- **A single-use guard for the sealed MRTR `requestState`** (`src/sophos_firewall_mcp/mrtr.py`). The
+  SDK verifies a resumed state's integrity, envelope, expiry, digest, audience and principal, but it
+  does not track consumption, so the same sealed state could be replayed. The guard records the first
+  `tools/call` carrying a given token and refuses a second use with `-32602` before the boundary
+  unseals it and before any handler runs. Only accepted states are remembered, so a forged token never
+  consumes a slot, and the cap fails closed rather than evicting a live entry.
+
+### Changed
+
+- **The four gated deletes now require a client confirmation and fail closed** (behaviour change,
+  **breaking for non-interactive clients**). `firewall_rule_delete`, `nat_rule_delete`,
+  `network_user_delete` and `network_interface_delete_vlan` now require the client to answer a
+  confirmation through the SDK's `Resolve`/`Elicit` mechanism before the appliance is touched. 0.7.1
+  documented the gate as best-effort: it fired on the legacy handshake path and was skipped, with a
+  logged warning, on the `2026-07-28` per-request path. It is now a real precondition on both eras. A
+  client that cannot answer — no `elicitation` capability, a `url`-only client, or a transport with no
+  back-channel — is **refused**, and nothing is deleted. A declined or cancelled answer aborts the
+  call with a `ToolError`. This is the release's one breaking change: a non-interactive client that
+  used to delete unconfirmed must now either declare form-mode elicitation or stop calling these four
+  tools. The other 34 mutations are unaffected.
+- **`mcp` is pinned to exactly `2.3.0`** (behaviour change, install-time). The declared dependency was
+  `>=2.3.0,<3`; it is now `mcp==2.3.0`. The server depends on four attributes the SDK does not expose
+  publicly, and a different release may rename, move or remove any of them without a clean import
+  error — registration would still succeed and every tool would silently fall back to the SDK's
+  default `request`-wrapped, open argument model. The range is therefore the one release that was
+  actually tested. A deployment that pinned a different 2.x release will now fail to resolve instead of
+  running untested; the widening procedure is in
+  [`docs/SDK-COMPATIBILITY.md`](docs/SDK-COMPATIBILITY.md).
+- **Unknown tools and invalid prompt requests return JSON-RPC `-32602`** (behaviour change, protocol).
+  An unknown tool name, an unknown prompt name, missing or invalid prompt arguments, and a
+  caller-fixable render failure are now reported as *invalid params* instead of *internal error* or an
+  `isError` result, matching the specification's error classes and the existing `resources/read` path.
+  A genuine renderer failure still returns `-32603`. Measured over STDIO: an unknown tool returns
+  `-32602` and an unknown prompt returns `-32602`.
+- **The catalog is 21.3% smaller.** `tools/list` is **493,965 bytes** (was 627,848), roughly 123k
+  tokens at ~4 bytes per token. The split is input schemas 191,630, output schemas 242,915,
+  descriptions 38,399 and envelope 21,021. The trim removes two JSON Schema annotations from the
+  published `outputSchema` — the repeated model docstrings and field descriptions (the same `ObjectRef`
+  definition appeared 64 times and `Pages` 33 times) and the response-only `default` — which takes the
+  output schemas from 376,788 to 242,915 bytes (−35.5%). It is annotation-only: `required`,
+  `properties`, `type`, `enum`, `const`, `format`, `$ref`, `anyOf`/`oneOf`, `additionalProperties`,
+  nullability and aliases are untouched, and the SDK still validates `structuredContent` against the
+  output model. `Pages` and `FirewallRuleOutput` keep their field descriptions because they document
+  the `total`/`items` trap and the 1-based position. The tool count and every tool name are unchanged.
+- **`tools/list` is not paginated.** The protocol supports `nextCursor`, but the pinned SDK's
+  `MCPServer` accepts `PaginatedRequestParams` and discards it, and exposes no public hook to supply a
+  page. The server does not fake partial results; the limitation and the smallest upstream-compatible
+  path are documented in [`docs/CATALOG-SIZE.md`](docs/CATALOG-SIZE.md), and a test pins the
+  single-page behaviour so it fails when the SDK grows a supported hook.
+- **`destructiveHint` and `idempotentHint` are pinned for all 38 mutations.** The two hints were
+  correct per tool but not governed by a stated policy, so the same operation class could drift apart
+  again. A centralized annotation policy now classifies every mutation — 26 destructive, 12 additive —
+  and a 38-row regression table pins each tool's pair, failing with a diagnostic that names the stale
+  row. The read-only tools are unchanged.
+- **Sixteen getter descriptions describe the payload they return.** The `*_get` tools published a
+  description of the *request* and said nothing about the response, so a model had to call one to learn
+  its shape. Each now names the object it returns and the fields that matter. The union tools state
+  which selector field chooses the variant, `mac_address_create` publishes one message for its
+  mutually-exclusive `macAddress`/`macAddresses` pair instead of two competing ones, and several
+  published input names that had drifted to camelCase are corrected to snake_case.
+- **The package description no longer embeds a tool count** (behaviour change, metadata). The
+  `pyproject.toml` summary said "152 typed tools" against a 112-tool surface. It now describes the
+  domains instead, and `serverInfo.description` publishes the installed distribution's metadata
+  verbatim, so the two cannot disagree. A drift test compares the published description with
+  `project.description`.
+- **Compose defaults to read-only** (behaviour change, deployment). `docker-compose.yml` now defaults
+  `SOPHOS_READ_ONLY_MODE` to `true`, so the reference deployment publishes 74 tools and cannot write
+  until an operator sets it to `false` explicitly. It passes `SOPHOS_MAX_CONCURRENCY` through, and it
+  deliberately declares **no `restart` policy**: the MCP client owns the process lifecycle, so a
+  restart would only re-spawn a server whose `stdin` is gone. The supported invocation is one container
+  per session, `docker compose run --rm -T sophos-firewall-mcp`, where `-T` disables the pseudo-TTY
+  that would otherwise corrupt the JSON-RPC stream.
+- **The GitHub repository description no longer claims 152 tools.** It matches the package metadata:
+  the domains, not a count that goes stale on every surface change.
+
+### Fixed
+
+- **A cancelled destructive write keeps its confirmation consumed.** The single-use guard released the
+  reservation on any exception, including `asyncio.CancelledError`. A cancellation can arrive after the
+  request reached the appliance, so the write may have landed; releasing the state made an ambiguous
+  write replayable, and a retry could delete a re-created object of the same name without a fresh
+  confirmation. The reservation is now released only for an `MCPError` raised by the SDK boundary
+  before the handler runs — the one case where the state was provably never accepted. A handler
+  failure is returned as a `CallToolResult` rather than raised, so a legitimate state whose handler
+  failed stays consumed.
+- **Legacy handshakes return `-32603` for a genuine prompt-renderer failure.** On the legacy
+  `initialize` path a renderer exception was mapped to JSON-RPC `code=0`, which is not a valid error
+  code and which a client cannot classify. It is now `-32603` (internal error), matching the modern
+  path. A caller-fixable failure on the same path is still `-32602`.
+- **The Docker STDIO smoke test no longer races the server.** It waited a fixed interval and then
+  asserted, so a slow image start produced a flaky failure and a fast one could pass before the server
+  had answered. It now reads until it has the protocol response it is waiting for, with a bounded
+  timeout.
+- **The published metadata matches the installed package.** `serverInfo.description` is read from the
+  installed distribution instead of being assembled from a stale editable install, so a development
+  checkout can no longer advertise a surface it does not register.
+
+### Security
+
+- **Destructive deletes fail closed.** The four gated deletes refuse the call when the client cannot
+  answer the confirmation, instead of proceeding unconfirmed. A non-interactive client can no longer
+  delete a firewall rule, a NAT rule, a network user or a VLAN interface by accident or by prompt
+  injection: the confirmation is a precondition, not an affordance.
+- **A sealed confirmation cannot be replayed.** The single-use guard refuses a second use of the same
+  `requestState` with `-32602` before the boundary unseals it, so a client that retries on timeout
+  cannot execute the confirmed delete twice, and a captured state cannot delete a re-created object of
+  the same name. Only accepted states are remembered, so a flood of forged states cannot displace a
+  legitimate one — the cap fails closed.
+- **Tool invocations are rate limited.** The `2026-07-28` specification's *Security Considerations*
+  require servers to rate limit tool invocations. The token bucket bounds a runaway loop, a prompt
+  injection or a buggy agent to `SOPHOS_INVOCATION_RATE_PER_MINUTE` sustained with a
+  `SOPHOS_INVOCATION_BURST` burst, and fails fast rather than queueing. This supersedes the risk
+  acceptance recorded in 0.7.1 (issue #63), which is retained in
+  [`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md) as the rationale for the design.
+- **The SDK dependency is an exact pin.** `mcp==2.3.0` removes the window in which a resolver could
+  install an untested release that silently degrades every tool's argument model, and the
+  compatibility test fails loudly if the pin, the installed release and the startup guard ever
+  disagree.
+
+### Known limitations
+
+- **The confirmation gate requires a client that can answer it.** A client that declares no
+  `elicitation` capability, a `url`-only client, or a transport with no back-channel is refused on the
+  four gated deletes. That is the intended fail-closed behaviour, but it means a non-interactive
+  automation client cannot use those four tools at all; it must use a client that supports form-mode
+  elicitation.
+- **`tools/list` is one page.** The pinned SDK's `MCPServer` discards the pagination cursor and exposes
+  no public hook to supply a page, so the server cannot paginate without a private override. The
+  mitigations are the cache hint, read-only mode, domain selection, the resources and the prompts.
+- **Firmware compatibility is limited to the tested build.** The live evidence applies to **SFOS 23.0.0
+  GA-Build371** only. The Configuration REST API exposes no version endpoint, so the server cannot
+  detect the firmware and makes no claim for other SFOS builds, including later 23.0 maintenance
+  builds and SFOS 24.
+- **Live write validation is limited** to the object kinds exercised on the lab appliance; ambiguous
+  write reconciliation, a real `403` denial, bulk delete and interface/VPN mutations remain unverified.
+- **Accepted regressions** are unchanged: no system information, no service status and no log query,
+  because the Configuration REST API exposes no endpoint for them.
+- **Audit tools are configuration analysis, not packet tests**; `explain_connectivity` reports
+  `method: config-analysis` and `not-verifiable` when the configuration lacks the evidence.
+- **Pagination is one page per call**; the server never fetches every page automatically.
+
 ## [0.7.1] - 2026-11-16
 
 **Patch release: the High finding and the cheap findings of the 0.7.0 MCP standards review are
