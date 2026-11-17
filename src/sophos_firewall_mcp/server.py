@@ -91,7 +91,7 @@ from mcp.server.caching import CacheableMethod  # noqa: E402
 from mcp.server.context import CallNext, HandlerResult, ServerRequestContext  # noqa: E402
 from mcp.server.mcpserver import MCPServer  # noqa: E402
 from mcp.shared.exceptions import MCPError  # noqa: E402
-from mcp.types import INVALID_PARAMS  # noqa: E402
+from mcp.types import INTERNAL_ERROR, INVALID_PARAMS  # noqa: E402
 from pydantic import ValidationError  # noqa: E402
 
 from sophos_firewall_mcp.client import SophosRestClient  # noqa: E402
@@ -385,8 +385,8 @@ def _prompt_error_is_caller_fixable(exc: ValueError) -> bool:
     then ``MCPServer.get_prompt`` re-wraps that). Only the root cause decides: a pydantic
     ``ValidationError`` is an argument the prompt does not accept, and
     :class:`~sophos_firewall_mcp.prompts.PromptArgumentError` is an argument combination
-    the renderer rejects. Any other root cause is a programming error and stays
-    ``-32603``, which the SDK logs server-side.
+    the renderer rejects. Any other root cause is a programming error: the middleware logs
+    it and raises ``-32603`` itself, so the code is the same on both protocol eras.
     """
     message = str(exc)
     if message.startswith(_PROMPT_ARGUMENT_ERRORS):
@@ -460,23 +460,28 @@ async def _request_error_middleware(
 
     * ``prompts/get``: the SDK maps every ``ValueError`` to ``-32603``, but an unknown
       prompt name, missing arguments and an argument the prompt rejects are the caller's
-      mistake. A genuine renderer crash keeps the SDK's ``-32603`` and its server-side log.
+      mistake. A genuine renderer crash is a protocol-level internal error.
     * ``tools/call``: the SDK turns an unknown tool name into an ``isError`` result, but the
       spec puts it in the invalid-params class. A failure after a valid tool was invoked
       stays an ``isError`` result.
 
-    The ``-32603`` half of the prompt contract holds on the modern protocol this server
-    advertises (2026-07-28). On a legacy ``initialize`` handshake the SDK's own dispatcher
-    deliberately maps an unmapped exception to JSON-RPC code ``0`` (its ``TODO(L58)``
-    compatibility pin), so a genuine renderer crash is ``code=0`` there. This middleware
-    does not change that; the ``-32602`` mappings above apply on both paths.
+    The internal-error half is raised here rather than left to the SDK because the SDK's
+    mapping is era-dependent: the modern ``2026-07-28`` path maps an unmapped exception to
+    ``-32603``, but a legacy ``initialize`` handshake deliberately maps it to JSON-RPC code
+    ``0`` (its ``TODO(L58)`` compatibility pin). ``MCPError`` is handled explicitly by both
+    dispatchers, so raising it reaches the wire as ``-32603`` on every protocol era. The
+    traceback is logged here for the same reason: the SDK no longer sees an unmapped
+    exception, so it would not log one.
     """
     try:
         result = await call_next(ctx)
     except ValueError as exc:
-        if ctx.method == "prompts/get" and _prompt_error_is_caller_fixable(exc):
+        if ctx.method != "prompts/get":
+            raise
+        if _prompt_error_is_caller_fixable(exc):
             raise MCPError(code=INVALID_PARAMS, message=_prompt_error_message(exc)) from exc
-        raise
+        logger.exception("prompt rendering failed for %r", (ctx.params or {}).get("name"))
+        raise MCPError(code=INTERNAL_ERROR, message="Internal server error") from exc
     unknown_tool = _unknown_tool_name(ctx, result)
     if unknown_tool is not None:
         raise MCPError(code=INVALID_PARAMS, message=f"{_UNKNOWN_TOOL_PREFIX}{unknown_tool}")

@@ -61,6 +61,14 @@ EXPECTED_MUTATION_COUNT = 38
 #: The protocol revision the SDK negotiates by default with a modern server.
 MODERN_PROTOCOL_VERSION = "2026-07-28"
 
+#: The protocol eras the server accepts, as ``Client`` keyword arguments: the latest legacy
+#: handshake revision (``2025-11-25``) and the modern per-request envelope (``2026-07-28``).
+#: The prompt error mapping must be identical on both.
+PROTOCOL_ERAS = (
+    pytest.param({"mode": "legacy"}, id="legacy-2025-11-25"),
+    pytest.param({}, id="modern-2026-07-28"),
+)
+
 
 def make_settings(*, read_only: bool = False) -> Settings:
     return Settings(
@@ -341,9 +349,14 @@ async def test_an_unknown_tool_is_invalid_params_over_stdio():
     assert "sophos_tool_that_does_not_exist" in caught.value.message
 
 
-@pytest.mark.parametrize(
-    ("name", "arguments", "message_fragment"),
-    [
+@pytest.mark.parametrize("era", PROTOCOL_ERAS)
+async def test_an_invalid_prompt_request_is_invalid_params_over_stdio(era: dict[str, str]) -> None:
+    """An unknown prompt, missing arguments or a rejected argument is ``-32602``.
+
+    The message names the rejected argument, so a client can fix the request without
+    reading a traceback. Both protocol eras must agree.
+    """
+    cases = [
         ("nope", None, "Unknown prompt: nope"),
         ("explain_flow", {}, "Missing required arguments"),
         (
@@ -356,30 +369,21 @@ async def test_an_unknown_tool_is_invalid_params_over_stdio():
             {"source": "1.1.1.1", "destination": "2.2.2.2", "service": "https", "port": "443"},
             "port requires protocol 'tcp' or 'udp'",
         ),
-    ],
-    ids=["unknown-prompt", "missing-arguments", "unexpected-argument", "invalid-combination"],
-)
-async def test_an_invalid_prompt_request_is_invalid_params_over_stdio(
-    name: str, arguments: dict[str, str] | None, message_fragment: str
-) -> None:
-    """An unknown prompt, missing arguments or a rejected argument is ``-32602``.
-
-    The message names the rejected argument, so a client can fix the request without
-    reading a traceback.
-    """
+    ]
     async with asyncio.timeout(90):
-        async with Client(stdio_params()) as client:
-            with pytest.raises(MCPError) as caught:
-                await client.get_prompt(name, arguments)
+        async with Client(stdio_params(), **era) as client:
+            for name, arguments, message_fragment in cases:
+                with pytest.raises(MCPError) as caught:
+                    await client.get_prompt(name, arguments)
+                assert caught.value.code == INVALID_PARAMS, (name, arguments)
+                assert message_fragment in caught.value.message, (name, arguments)
 
-    assert caught.value.code == INVALID_PARAMS
-    assert message_fragment in caught.value.message
 
-
-async def test_a_valid_prompt_renders_the_same_content_over_stdio():
+@pytest.mark.parametrize("era", PROTOCOL_ERAS)
+async def test_a_valid_prompt_renders_the_same_content_over_stdio(era: dict[str, str]) -> None:
     """The error mapping must not change what a valid prompt renders."""
     async with asyncio.timeout(90):
-        async with Client(stdio_params()) as client:
+        async with Client(stdio_params(), **era) as client:
             over_stdio = await client.get_prompt("find_unused_objects", {})
 
     async with Client(make_server()) as in_process:
@@ -391,7 +395,10 @@ async def test_a_valid_prompt_renders_the_same_content_over_stdio():
     assert '"checks": ["unused-object"]' in text
 
 
-async def test_a_tool_execution_failure_stays_a_tool_error_over_stdio():
+@pytest.mark.parametrize("era", PROTOCOL_ERAS)
+async def test_a_tool_execution_failure_stays_a_tool_error_over_stdio(
+    era: dict[str, str],
+) -> None:
     """A failure after a valid tool was invoked is ``isError``, not ``-32602``.
 
     The subprocess points at a closed local port, so the handler fails in the transport
@@ -404,17 +411,18 @@ async def test_a_tool_execution_failure_stays_a_tool_error_over_stdio():
         env={**stdio_env(), "SOPHOS_HOST": "127.0.0.1", "SOPHOS_PORT": "1"},
     )
     async with asyncio.timeout(90):
-        async with Client(params) as client:
+        async with Client(params, **era) as client:
             result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
 
     assert result.is_error is True
     assert "could not be reached" in result.content[0].text
 
 
+@pytest.mark.parametrize("era", PROTOCOL_ERAS)
 async def test_a_genuine_prompt_renderer_crash_is_an_internal_error_over_stdio(
-    tmp_path: Path,
+    tmp_path: Path, era: dict[str, str]
 ) -> None:
-    """A programming error while rendering a valid prompt stays ``-32603``.
+    """A programming error while rendering a valid prompt is ``-32603`` on every era.
 
     The real prompts cannot crash on their own, so the subprocess runs the real entrypoint
     with one renderer replaced by a crash. The client must see the generic internal error,
@@ -439,7 +447,7 @@ async def test_a_genuine_prompt_renderer_crash_is_an_internal_error_over_stdio(
     params = StdioServerParameters(command=sys.executable, args=[str(driver)], env=stdio_env())
 
     async with asyncio.timeout(90):
-        async with Client(params) as client:
+        async with Client(params, **era) as client:
             with pytest.raises(MCPError) as caught:
                 await client.get_prompt(
                     "explain_flow",

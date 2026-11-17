@@ -1735,15 +1735,16 @@ async def test_a_caller_fixable_prompt_failure_is_invalid_params(
     assert message_fragment in caught.value.message
 
 
+@pytest.mark.parametrize("mode", ["legacy", "modern"])
 async def test_a_genuine_prompt_renderer_crash_stays_internal_and_is_logged(
-    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, mode: str
 ) -> None:
-    """A programming error while rendering a valid prompt is ``-32603``, not ``-32602``.
+    """A programming error while rendering a valid prompt is ``-32603`` on every era.
 
     The middleware must not turn every render failure into a caller error: only a
-    ``PromptArgumentError`` or a pydantic ``ValidationError`` is the caller's mistake. The
-    SDK logs the unmapped exception with its traceback before answering, and the client
-    sees only the generic internal-error message.
+    ``PromptArgumentError`` or a pydantic ``ValidationError`` is the caller's mistake. It
+    logs the traceback itself and raises the protocol error, so the code does not depend on
+    the SDK's era-dependent mapping, and the client sees only the generic message.
     """
 
     def _crash(*args: Any, **kwargs: Any) -> str:
@@ -1751,9 +1752,10 @@ async def test_a_genuine_prompt_renderer_crash_stays_internal_and_is_logged(
 
     monkeypatch.setattr(prompts_module, "_explain_message", _crash)
     server = create_server(make_settings())
+    kwargs = {"mode": "legacy"} if mode == "legacy" else {}
 
     with caplog.at_level(logging.ERROR):
-        async with Client(server) as client:
+        async with Client(server, **kwargs) as client:
             with pytest.raises(MCPError) as caught:
                 await client.get_prompt(
                     "explain_flow",
@@ -1763,8 +1765,8 @@ async def test_a_genuine_prompt_renderer_crash_stays_internal_and_is_logged(
     assert caught.value.code == INTERNAL_ERROR
     assert caught.value.message == "Internal server error"
     assert "synthetic renderer crash" not in caught.value.message
-    # The SDK logs the unmapped exception with its traceback before answering.
-    assert "request handler raised" in caplog.text
+    # The middleware logs the traceback server-side before answering.
+    assert "prompt rendering failed for 'explain_flow'" in caplog.text
     assert "synthetic renderer crash" in caplog.text
 
 
