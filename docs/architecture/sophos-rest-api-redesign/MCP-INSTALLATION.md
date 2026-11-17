@@ -217,6 +217,8 @@ The canonical shape, as the panel writes it (inside the managed block, id `panel
 - insert:
     - id: panel-mcp-sophos
       name: '@deepseek-ai/dsh-mcp-client'
+      inject:
+        - credentials
       config:
         serverName: sophos
         toolCallTimeoutMs: 60000
@@ -227,16 +229,30 @@ The canonical shape, as the panel writes it (inside the managed block, id `panel
           maxDelayMs: 30000
           maxAttempts: 10
         transport: stdio
-        command: /home/raiden/Projects/sophos-firewall-mcp/.agents/mcp-venv/bin/sophos-firewall-mcp-server
-        args: []
+        command: /home/raiden/.local/bin/uvx
+        args:
+          - --refresh-package
+          - sophos-firewall-mcp-server
+          - --from
+          - git+https://github.com/lordraiden/sophos-firewall-mcp@main
+          - sophos-firewall-mcp-server
         env:
           SOPHOS_HOST: 10.10.10.1
           SOPHOS_PORT: '443'
-          SOPHOS_API_KEY_FILE: /home/raiden/Projects/sophos-firewall-mcp/.agents/secrets/sophos_api_key
+          SOPHOS_API_KEY: ${credential:SOPHOS_API_KEY}
           SOPHOS_VERIFY_SSL: 'false'
-          SOPHOS_READ_ONLY_MODE: 'true'
+          SOPHOS_READ_ONLY_MODE: 'false'
+          UV_TOOL_DIR: /home/raiden/Projects/sophos-firewall-mcp/.agents/uv-tools
+          UV_CACHE_DIR: /home/raiden/Projects/sophos-firewall-mcp/.agents/uv-cache
+        expandTemplates: true
         cwd: ''
 ```
+
+This is the shape in use since 17 November 2026: the package is fetched from GitHub at start-up
+(`uvx --from git+…@main`, with `--refresh-package` forcing a re-resolution so a restart picks up new
+commits), and the key comes from the DSH credential store rather than a file on disk. The earlier
+local-venv form (`command: …/.agents/mcp-venv/bin/sophos-firewall-mcp-server`, `args: []`,
+`SOPHOS_API_KEY_FILE: …`) still works but is no longer what the profile uses.
 
 The equivalent hand-written form — a **top-level** entry, outside the managed block — is also fully
 listed and manageable (v2.3.6+), and is the shape the bundle already uses:
@@ -244,17 +260,25 @@ listed and manageable (v2.3.6+), and is the shape the bundle already uses:
 ```yaml
 - id: sophos-firewall-mcp
   name: '@deepseek-ai/dsh-mcp-client'
+  inject:
+    - credentials
   config:
     serverName: sophos
     transport: stdio
-    command: /home/raiden/Projects/sophos-firewall-mcp/.agents/mcp-venv/bin/sophos-firewall-mcp-server
-    args: []
+    command: /home/raiden/.local/bin/uvx
+    args:
+      - --refresh-package
+      - sophos-firewall-mcp-server
+      - --from
+      - git+https://github.com/lordraiden/sophos-firewall-mcp@main
+      - sophos-firewall-mcp-server
     env:
       SOPHOS_HOST: 10.10.10.1
       SOPHOS_PORT: '443'
-      SOPHOS_API_KEY_FILE: /home/raiden/Projects/sophos-firewall-mcp/.agents/secrets/sophos_api_key
+      SOPHOS_API_KEY: ${credential:SOPHOS_API_KEY}
       SOPHOS_VERIFY_SSL: 'false'
-      SOPHOS_READ_ONLY_MODE: 'true'
+      SOPHOS_READ_ONLY_MODE: 'false'
+    expandTemplates: true
     failOnStartupError: true
 ```
 
@@ -278,15 +302,33 @@ and the per-domain counts are in the README's "Domain selection" section.
 dsh-panel mcp add \
   --name sophos \
   --stdio \
-  --command /home/raiden/Projects/sophos-firewall-mcp/.agents/mcp-venv/bin/sophos-firewall-mcp-server \
+  --command /home/raiden/.local/bin/uvx \
+  --args --refresh-package \
+  --args sophos-firewall-mcp-server \
+  --args --from \
+  --args git+https://github.com/lordraiden/sophos-firewall-mcp@main \
+  --args sophos-firewall-mcp-server \
   --env SOPHOS_HOST=10.10.10.1 \
   --env SOPHOS_PORT=443 \
-  --env SOPHOS_API_KEY_FILE=/home/raiden/Projects/sophos-firewall-mcp/.agents/secrets/sophos_api_key \
+  --env 'SOPHOS_API_KEY=${credential:SOPHOS_API_KEY}' \
   --env SOPHOS_VERIFY_SSL=false \
-  --env SOPHOS_READ_ONLY_MODE=true \
+  --env SOPHOS_READ_ONLY_MODE=false \
   --fail-on-startup \
   --profile web
 ```
+
+`mcp add` has no flag for `inject` or `expandTemplates`, and a row that references
+`${credential:…}` needs both. Add the row with the command above, then finish it with the raw editor:
+
+```bash
+dsh-panel mcp raw sophos --profile web > /tmp/sophos-row.yml
+# add `inject: [credentials]` at row level and `expandTemplates: true` under `config`
+dsh-panel mcp raw sophos --profile web --set /tmp/sophos-row.yml
+```
+
+`raw --set` replaces the whole row, so the file must contain every field the row needs. This is the
+supported path: it keeps the panel's markers and its managed block intact, which a hand edit of
+`cordis.patch.yml` does not guarantee.
 
 Notes on the flags, from `lib/cli-mcp.js:140`:
 
@@ -378,26 +420,33 @@ installed would be the later one and would fail. **Remove the bundle first, then
 
 ### 6.1 Keeping the API key out of the profile file
 
-The key never enters `cordis.patch.yml` in either registration. The row carries only the **path**:
+The key never enters `cordis.patch.yml`. The row carries only a **reference**:
 
 ```yaml
-env:
-  SOPHOS_API_KEY_FILE: /home/raiden/Projects/sophos-firewall-mcp/.agents/secrets/sophos_api_key
+inject:
+  - credentials
+config:
+  env:
+    SOPHOS_API_KEY: ${credential:SOPHOS_API_KEY}
+  expandTemplates: true
 ```
 
-The server reads the key from that file at start-up. Keep it that way:
+The value lives in the DSH credential store (`~/.dsh/.credentials.yaml`, `refs.SOPHOS_API_KEY`,
+mode `0600`), the same mechanism the `unraid-server` row uses for `MCP_UNRAID_TOKEN`. The store
+resolves the reference at start-up and redacts the resolved value from diagnostics.
+
+Keep it that way:
 
 - Do **not** replace it with `SOPHOS_API_KEY: <literal>` — that would put the secret in a profile file
   that is backed up, synced and read by the panel.
 - Do **not** paste the key into the panel's form or into `dsh-panel mcp add --env`; the CLI stores
   what it is given, in clear text.
-- If a credential-provider route is preferred later, the supported form is
-  `SOPHOS_API_KEY: !!js '`${process.env.SOPHOS_API_KEY}`'` (or `${credential:…}` with
-  `expandTemplates: true` plus `inject: [credentials]`). Note the warning already in the profile
-  patch at `cordis.patch.yml:212-215`: the panel's **form** rebuilds a row and drops `inject`, so a
-  row that needs `inject` must be edited with **Raw**, not the form. The file-path approach avoids
-  that trap entirely and is the recommendation.
-- Ensure the key file stays out of git (`.agents/secrets/` must be ignored) and keeps mode `0600`.
+- A row that references `${credential:…}` **needs** `inject: [credentials]` and `expandTemplates:
+  true`. The panel's **form** rebuilds a row and drops `inject`, so such a row must be edited with
+  **Raw** (or `dsh-panel mcp raw --set`), never with the form.
+- The file-path alternative (`SOPHOS_API_KEY_FILE: …`) still works and needs no `inject`, but it
+  leaves a second copy of the secret on disk. It was the setup until 17 November 2026; the duplicate
+  file was removed when the credential store became the source of truth.
 
 ---
 
