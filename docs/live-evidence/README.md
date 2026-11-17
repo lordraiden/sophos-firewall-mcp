@@ -7,15 +7,22 @@ for the build that was tested.
 
 - [`api-smoke-2026-11-15.md`](api-smoke-2026-11-15.md) — read-only smoke test
   of 15 November 2026.
+- [`api-write-capability-2026-11-16.md`](api-write-capability-2026-11-16.md) —
+  the 16 November 2026 observation that the lab key can write.
 - `<domain>.md` — one record file per domain, created by the domain issues
   (#27–#32).
 
 ## 1. Safety rules (non-negotiable)
 
-1. **The lab key is read-only.** Live tests perform `GET` requests only. They
-   never write: no `POST`, `PATCH`, `DELETE`, bulk delete, move, disconnect,
-   login/logout or modem action. A write test requires a separate write key and
+1. **The lab key is not read-only.** It was observed to be write-capable on
+   16 November 2026 (see
+   [`api-write-capability-2026-11-16.md`](api-write-capability-2026-11-16.md)),
+   so the "read-only" assumption this rule used to state is withdrawn. Live
+   tests still perform `GET` requests only: no `POST`, `PATCH`, `DELETE`, bulk
+   delete, move, disconnect, login/logout or modem action. A write test requires
    a disposable-object plan approved by the owner; until then it is deferred.
+   The credential's effective permission scope is unverified, and the
+   containment action is rotation by the owner, not the administrator profile.
 2. **Never put secrets in a record.** No API key, no `Authorization` header, no
    full remote body containing credentials. Record the endpoint as
    `host:port` only.
@@ -142,6 +149,7 @@ the coverage matrix never implies firmware support that was not observed.
 | File | Scope | Result |
 |---|---|---|
 | [`api-smoke-2026-11-15.md`](api-smoke-2026-11-15.md) | Read-only smoke test: authentication, 20+ endpoints, pagination, error envelopes | API reachable, Bearer accepted, `live-users` pagination observed; SFOS build unknown; no writes attempted |
+| [`api-write-capability-2026-11-16.md`](api-write-capability-2026-11-16.md) | Write-capability observation: one disposable MAC object created and deleted | **Write capability demonstrated**; owning administrator, effective permission scope and revocation status remain unverified |
 | [`phase-2-deferral.md`](phase-2-deferral.md) | Phase-2 deferral record for the domain tools (#27–#31, #35) | Contract-tested only; live writes deferred to #32 |
 | [`phase-3-live-matrix.md`](phase-3-live-matrix.md) | Phase-3 read-only matrix: all 98 read-only tools across the six domain families | 74 PASS, 24 SKIP (no object of that kind), 0 FAIL after two fixed deviations; SFOS build unknown; no writes attempted |
 

@@ -1,5 +1,12 @@
 # Live evidence deferral — phase 2 domain tools (#27–#31, #35)
 
+> **Correction (17 November 2026).** This record states that the lab API key is read-only. That was
+> an inference from the administrator profile's display name, and it is **wrong**: on 16 November 2026
+> the key created and deleted a disposable MAC object. See
+> [`api-write-capability-2026-11-16.md`](api-write-capability-2026-11-16.md). The deferral decision
+> itself stands — no write was sent during phase 2 — but the reason must not be read as a verified
+> permission boundary.
+
 **Date:** 15 November 2026
 **Decision:** the repository owner chose to keep live tests read-only and to defer live
 write validation to phase 3 (#32). The lab API key is read-only; no POST, PATCH or DELETE
