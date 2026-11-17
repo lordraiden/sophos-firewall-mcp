@@ -341,7 +341,7 @@ flat arguments removed a further 32,247 bytes — on top of the earlier trim tha
 
 ## Configuration
 
-The server reads exactly these ten environment variables. There are no XML-era settings.
+The server reads exactly these twelve environment variables. There are no XML-era settings.
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
@@ -353,6 +353,8 @@ The server reads exactly these ten environment variables. There are no XML-era s
 | `SOPHOS_CA_BUNDLE` | no | — | PEM CA bundle used to verify a private or self-signed appliance certificate. |
 | `SOPHOS_TIMEOUT` | no | `30` | Request timeout in seconds (connect, read, write and pool). |
 | `SOPHOS_MAX_CONCURRENCY` | no | `4` | Maximum concurrent HTTP requests to the appliance (1–64). A concurrency bound, not an invocation-rate limit; see [Invocation rate and concurrency](#invocation-rate-and-concurrency). |
+| `SOPHOS_INVOCATION_RATE_PER_MINUTE` | no | `60` | Sustained tool-invocation rate for the server-side limiter (1–6000 per minute). Every `tools/call` consumes one token; a composite consumes one invocation. See [Invocation rate and concurrency](#invocation-rate-and-concurrency). |
+| `SOPHOS_INVOCATION_BURST` | no | `10` | Burst capacity of the invocation-rate limiter (1–1000). Excess calls fail fast with an actionable `isError` result. |
 | `SOPHOS_READ_ONLY_MODE` | no | `false` | When `true`, mutation tools are not registered at all. The application default is `false`; the shipped `.env.example` and `docker-compose.yml` default to `true`. |
 | `SOPHOS_TOOL_DOMAINS` | no | unset (all six) | Comma-separated allowlist of the domains to publish: `firewall`, `nat`, `objects`, `users`, `network`, `audit`. Unset publishes the complete 112-tool surface. See [Domain selection](#domain-selection). |
 
@@ -626,29 +628,44 @@ administrator profile or a host-side approval policy.
 
 ## Invocation rate and concurrency
 
-The server distinguishes two controls that are easy to conflate:
+The server enforces two independent controls that are easy to conflate:
 
 | Control | What it bounds | Setting | Default | Ceiling |
 |---|---|---|---|---|
 | Concurrency | HTTP requests in flight at once | `SOPHOS_MAX_CONCURRENCY` | `4` | `64` |
-| Invocation rate | tool invocations per unit of time | none | — | — |
+| Invocation rate | `tools/call` requests over time | `SOPHOS_INVOCATION_RATE_PER_MINUTE` / `SOPHOS_INVOCATION_BURST` | `60`/min, burst `10` | `6000`/min, burst `1000` |
 
-`SOPHOS_MAX_CONCURRENCY` is a **concurrency** bound, not a rate limit. It caps how many requests
-overlap; it does not cap how many invocations a client may issue over time. A client can make an
-unbounded number of sequential calls, each of which waits for a slot and then completes.
+`SOPHOS_MAX_CONCURRENCY` is a **concurrency** bound: it caps how many HTTP requests overlap. It does
+not cap how many invocations a client may issue over time.
 
-**Policy: no server-side invocation-rate limiter.** The MCP `2026-07-28` Tools specification lists
+**Invocation-rate policy.** The MCP `2026-07-28` Tools specification lists
 "Rate limit tool invocations" among the server's Security Considerations
 ([source](https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations)).
-This server does not implement that limiter; the decision record
-([`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md)) records it as an **accepted residual
-risk** for the local STDIO, one-client-per-process deployment, not as a discharge of the MUST. The
-exposure is bounded by the STDIO transport (one local client), the concurrency semaphore, and the
-appliance's own rate limits; the residual risk — a runaway model loop issuing many sequential calls —
-is delegated to the client/host (timeouts, loop detection, user confirmation), whose guidance is a
-SHOULD, not a MUST. A deployment that exposes the server over HTTP or shares one process across
-clients must add a tool-invocation limiter at the tool dispatch layer; the decision record explains
-why the HTTP client layer is the wrong place for it.
+The server enforces it with a process-local token bucket at the MCP tool-dispatch boundary
+(`src/sophos_firewall_mcp/ratelimit.py`):
+
+- **One invocation per `tools/call`.** A composite tool (`audit_firewall_rules`,
+  `explain_connectivity`, `find_object_usage`) consumes one token, not one per internal adapter read,
+  because the limiter sits above the handler rather than around the HTTP client.
+- **MRTR resumes count too.** Every incoming `tools/call` consumes one token, including a resume that
+  carries `requestState`. A resume is a new request; charging it cannot be bypassed by repeated
+  resumes, and the replay guard independently makes a sealed state single-use.
+- **Fail fast, no waiter queue.** When the bucket is empty the call returns an `isError` tool result
+  naming the configured rate, burst and retry delay. Nothing waits, so a throttled call cannot block
+  shutdown or grow memory.
+- **Outermost middleware.** The limiter runs before the MRTR replay guard, so a throttled resume does
+  not consume the single-use confirmation; the client can retry after the limit resets.
+- **Bounded and validated.** Both settings must be at least 1; zero, negative or absurd values fail
+  startup instead of silently disabling the control. There is no unlimited/off default.
+- **Observable.** A throttled call logs one `WARNING` with the tool name and retry delay; arguments,
+  credentials and appliance data are never logged.
+
+The defaults (60 invocations per minute, burst 10) are sized for an appliance-management workload: a
+human-driven session rarely exceeds a few calls per minute, and a short fan-out of ten is enough for a
+model listing several collections. Raise them for a deployment that legitimately needs more; the
+concurrency semaphore still bounds how many of those invocations overlap on the wire. The full
+policy, including the threat model and residual risk, is in
+[`docs/SECURITY-RATE-POLICY.md`](docs/SECURITY-RATE-POLICY.md).
 
 ## Known limitations and accepted regressions
 

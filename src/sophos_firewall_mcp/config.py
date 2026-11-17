@@ -16,7 +16,7 @@ Security rules enforced here:
   repeated identifier or a selection whose dependencies are missing is rejected instead of
   being silently dropped, because a typo that quietly narrows the surface publishes a server
   the operator did not ask for;
-* no legacy XML-era setting is read: the only recognised variables are the ten listed above.
+* no legacy XML-era setting is read: the only recognised variables are the twelve listed above.
 """
 
 from __future__ import annotations
@@ -72,6 +72,26 @@ DEFAULT_MAX_CONCURRENCY = 4
 #: misconfiguration switch the protection off, so the ceiling is enforced here rather than trusted.
 MAX_CONCURRENCY_LIMIT = 64
 
+#: Default sustained tool-invocation rate, in invocations per minute.
+#:
+#: This is the server-side rate limit required by the MCP ``2026-07-28`` Tools specification
+#: ("Rate limit tool invocations"). It is a *rate* bound, distinct from the concurrency semaphore:
+#: a firewall management API is not a high-throughput data plane, so one invocation per second is
+#: generous for interactive use while bounding a runaway loop. See ``docs/SECURITY-RATE-POLICY.md``.
+DEFAULT_INVOCATION_RATE_PER_MINUTE = 60
+
+#: Default burst capacity for the invocation-rate limiter.
+#:
+#: Ten back-to-back invocations cover a short fan-out without letting a runaway loop empty a large
+#: bucket at once. The concurrency semaphore still bounds how many of those overlap on the wire.
+DEFAULT_INVOCATION_BURST = 10
+
+#: Upper bound for ``SOPHOS_INVOCATION_RATE_PER_MINUTE`` (100 invocations per second).
+MAX_INVOCATION_RATE_PER_MINUTE = 6000
+
+#: Upper bound for ``SOPHOS_INVOCATION_BURST``.
+MAX_INVOCATION_BURST = 1000
+
 #: Stable domain identifiers for ``SOPHOS_TOOL_DOMAINS``, in canonical registration order.
 #:
 #: One identifier per domain family of the registration architecture, so each one maps to exactly
@@ -103,6 +123,8 @@ _ENV_CA_BUNDLE = "SOPHOS_CA_BUNDLE"
 _ENV_TIMEOUT = "SOPHOS_TIMEOUT"
 _ENV_READ_ONLY_MODE = "SOPHOS_READ_ONLY_MODE"
 _ENV_MAX_CONCURRENCY = "SOPHOS_MAX_CONCURRENCY"
+_ENV_INVOCATION_RATE_PER_MINUTE = "SOPHOS_INVOCATION_RATE_PER_MINUTE"
+_ENV_INVOCATION_BURST = "SOPHOS_INVOCATION_BURST"
 _ENV_TOOL_DOMAINS = "SOPHOS_TOOL_DOMAINS"
 
 
@@ -302,6 +324,8 @@ class Settings(BaseModel):
     timeout: float = Field(default=DEFAULT_TIMEOUT)
     read_only_mode: bool = False
     max_concurrency: int = Field(default=DEFAULT_MAX_CONCURRENCY)
+    invocation_rate_per_minute: int = Field(default=DEFAULT_INVOCATION_RATE_PER_MINUTE)
+    invocation_burst: int = Field(default=DEFAULT_INVOCATION_BURST)
     tool_domains: tuple[str, ...] | None = None
 
     @field_validator("host")
@@ -347,6 +371,27 @@ class Settings(BaseModel):
         if not 1 <= value <= MAX_CONCURRENCY_LIMIT:
             raise ValueError(
                 f"max_concurrency must be between 1 and {MAX_CONCURRENCY_LIMIT} concurrent requests"
+            )
+        return value
+
+    @field_validator("invocation_rate_per_minute")
+    @classmethod
+    def _check_invocation_rate(cls, value: int) -> int:
+        """Reject a zero, negative or absurd rate: the control must never be silently off."""
+        if not 1 <= value <= MAX_INVOCATION_RATE_PER_MINUTE:
+            raise ValueError(
+                "invocation_rate_per_minute must be between 1 and "
+                f"{MAX_INVOCATION_RATE_PER_MINUTE} invocations per minute"
+            )
+        return value
+
+    @field_validator("invocation_burst")
+    @classmethod
+    def _check_invocation_burst(cls, value: int) -> int:
+        """Reject a zero, negative or absurd burst: the control must never be silently off."""
+        if not 1 <= value <= MAX_INVOCATION_BURST:
+            raise ValueError(
+                f"invocation_burst must be between 1 and {MAX_INVOCATION_BURST} invocations"
             )
         return value
 
@@ -460,6 +505,12 @@ class Settings(BaseModel):
         max_concurrency = _optional(source, _ENV_MAX_CONCURRENCY)
         if max_concurrency is not None:
             values["max_concurrency"] = max_concurrency
+        invocation_rate = _optional(source, _ENV_INVOCATION_RATE_PER_MINUTE)
+        if invocation_rate is not None:
+            values["invocation_rate_per_minute"] = invocation_rate
+        invocation_burst = _optional(source, _ENV_INVOCATION_BURST)
+        if invocation_burst is not None:
+            values["invocation_burst"] = invocation_burst
         # Read with ``_raw``, not ``_optional``: for this setting a blank value is a mistake to
         # report, not an absent setting to default. ``None`` here means "unset", which keeps the
         # complete default surface.

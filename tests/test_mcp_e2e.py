@@ -70,7 +70,7 @@ PROTOCOL_ERAS = (
 )
 
 
-def make_settings(*, read_only: bool = False) -> Settings:
+def make_settings(*, read_only: bool = False, **overrides: Any) -> Settings:
     return Settings(
         host=HOST,
         port=4444,
@@ -78,11 +78,12 @@ def make_settings(*, read_only: bool = False) -> Settings:
         verify_ssl=False,
         timeout=5.0,
         read_only_mode=read_only,
+        **overrides,
     )
 
 
-def make_server(*, read_only: bool = False) -> MCPServer[AppContext]:
-    return create_server(make_settings(read_only=read_only))
+def make_server(*, read_only: bool = False, **overrides: Any) -> MCPServer[AppContext]:
+    return create_server(make_settings(read_only=read_only, **overrides))
 
 
 def stdio_env() -> dict[str, str]:
@@ -419,6 +420,38 @@ async def test_a_tool_execution_failure_stays_a_tool_error_over_stdio(
 
 
 @pytest.mark.parametrize("era", PROTOCOL_ERAS)
+async def test_a_rate_limited_call_returns_an_iserror_result_over_stdio(
+    era: dict[str, str],
+) -> None:
+    """The limiter's rejection reaches a real subprocess STDIO client as ``isError``.
+
+    The subprocess points at a closed local port, so the first call fails in the transport
+    layer but still consumes its token; the second call is throttled by the limiter. This
+    exercises the real ``stdin``/``stdout`` dispatch, not the in-process transport.
+    """
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "sophos_firewall_mcp.server"],
+        env={
+            **stdio_env(),
+            "SOPHOS_HOST": "127.0.0.1",
+            "SOPHOS_PORT": "1",
+            "SOPHOS_INVOCATION_RATE_PER_MINUTE": "60",
+            "SOPHOS_INVOCATION_BURST": "1",
+        },
+    )
+    async with asyncio.timeout(90):
+        async with Client(params, **era) as client:
+            first = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
+            second = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
+
+    assert first.is_error is True
+    assert "could not be reached" in first.content[0].text
+    assert second.is_error is True
+    assert "Rate limit exceeded" in second.content[0].text
+
+
+@pytest.mark.parametrize("era", PROTOCOL_ERAS)
 async def test_a_genuine_prompt_renderer_crash_is_an_internal_error_over_stdio(
     tmp_path: Path, era: dict[str, str]
 ) -> None:
@@ -517,12 +550,11 @@ def test_a_protocol_level_rejection_is_a_jsonrpc_error():
 # -- Invocation-rate policy ------------------------------------------------------------
 
 
-async def test_tool_calls_are_not_rate_limited_through_the_mcp_client():
-    """The documented policy is concurrency-only at the tool-invocation layer too.
+async def test_tool_calls_within_the_configured_rate_are_accepted():
+    """The limiter is configurable: 50 calls succeed when the burst allows them.
 
-    The policy is about tool invocations, not HTTP requests, so the HTTP-client test in
-    ``tests/test_client.py`` cannot catch a limiter added at the tool dispatch layer. Fifty
-    ``tools/call`` requests through the real SDK ``Client`` must all succeed.
+    This is the counterpart of the rejection test below: the limiter must not throttle a
+    caller that stays inside the configured policy.
     """
     with respx.mock(assert_all_called=False) as router:
         router.get(f"{BASE}/firewall/rules/ipv4").mock(
@@ -531,10 +563,36 @@ async def test_tool_calls_are_not_rate_limited_through_the_mcp_client():
                 json={"items": [], "pages": {"current": 1, "size": 50, "maxSize": 100}},
             )
         )
-        async with Client(make_server()) as client:
+        async with Client(make_server(invocation_burst=100)) as client:
             for _ in range(50):
                 result = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
                 assert result.is_error is False
+
+
+async def test_a_rate_limited_tool_call_returns_an_iserror_result():
+    """The rejection reaches the wire as a sanitized, actionable ``isError`` tool result.
+
+    The server is configured with a one-invocation burst, so the second ``tools/call`` is
+    throttled. The first call proves the limiter does not reject a call it admitted.
+    """
+    with respx.mock(assert_all_called=False) as router:
+        router.get(f"{BASE}/firewall/rules/ipv4").mock(
+            return_value=httpx.Response(
+                200,
+                json={"items": [], "pages": {"current": 1, "size": 50, "maxSize": 100}},
+            )
+        )
+        async with Client(make_server(invocation_rate_per_minute=60, invocation_burst=1)) as client:
+            first = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
+            second = await client.call_tool("firewall_rule_list", {"ip_family": "ipv4"})
+
+    assert first.is_error is False
+    assert second.is_error is True
+    text = second.content[0].text
+    assert "Rate limit exceeded" in text
+    assert "60 tool invocations per minute" in text
+    assert "burst of 1" in text
+    assert "Retry after 1 second." in text
 
 
 # -- Cancellation ----------------------------------------------------------------------

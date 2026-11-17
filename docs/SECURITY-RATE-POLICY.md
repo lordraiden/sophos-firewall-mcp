@@ -1,8 +1,8 @@
 # Invocation-rate policy (MCP 2026-07-28)
 
-**Status:** accepted
+**Status:** enforced
 **Scope:** Sophos Firewall MCP server, STDIO transport, one MCP client per process
-**Related:** issue #63; `docs/architecture/sophos-rest-api-redesign/MCP-STANDARDS-REVIEW-0.7.md` (L8)
+**Related:** issues #63 (initial risk acceptance) and #77 (implementation); `docs/architecture/sophos-rest-api-redesign/MCP-STANDARDS-REVIEW-0.7.md` (L8)
 
 ## The requirement
 
@@ -17,7 +17,7 @@ The MCP `2026-07-28` Tools specification, in *Security Considerations*, states:
 Source: <https://modelcontextprotocol.io/specification/2026-07-28/server/tools#security-considerations>
 
 The server advertises `2026-07-28` (`tests/test_mcp_e2e.py`, `MODERN_PROTOCOL_VERSION`), so this is
-the requirement that applies to it.
+the requirement that applies to it. It is now **implemented**, not accepted as a residual risk.
 
 ## Concurrency is not rate
 
@@ -26,7 +26,7 @@ The two controls answer different questions and must not be described as one ano
 | Control | Question it answers | Setting | Default | Ceiling |
 |---|---|---|---|---|
 | Concurrency semaphore | How many HTTP requests may overlap? | `SOPHOS_MAX_CONCURRENCY` | `4` | `64` |
-| Invocation rate | How many tool invocations may a client issue over time? | none | — | — |
+| Invocation rate | How many `tools/call` requests may a client issue over time? | `SOPHOS_INVOCATION_RATE_PER_MINUTE` / `SOPHOS_INVOCATION_BURST` | `60`/min, burst `10` | `6000`/min, burst `1000` |
 
 `SOPHOS_MAX_CONCURRENCY` bounds *in-flight* requests. It does not bound the number of invocations a
 client may issue: a client can make an unbounded number of sequential calls, each of which waits for
@@ -56,21 +56,22 @@ configuration.
 **Impact of rapid repeated calls.**
 
 - *Reads* are idempotent. A burst loads the appliance's management plane and the connection pool;
-  the semaphore caps the overlap at `SOPHOS_MAX_CONCURRENCY`, and the appliance enforces its own
-  rate limits.
+  the semaphore caps the overlap at `SOPHOS_MAX_CONCURRENCY`, and the invocation limiter caps the
+  sustained rate.
 - *Writes* are the dangerous class. A runaway loop that mutates rules or NAT entries is bounded by
-  read-only mode (mutation tools are not registered at all when `SOPHOS_READ_ONLY_MODE=true`), by
-  the Sophos administrator profile behind the API key (the actual authorization boundary), and by
-  the fact that writes are never retried.
-- *The server itself* has no unbounded queue or per-call allocation that a rate limiter would
-  protect: each call is one HTTP request plus a JSON decode, and the semaphore prevents
-  connection-pool exhaustion.
+  the invocation limiter, by read-only mode (mutation tools are not registered at all when
+  `SOPHOS_READ_ONLY_MODE=true`), by the Sophos administrator profile behind the API key (the actual
+  authorization boundary), and by the fact that writes are never retried.
+- *The server itself* has no unbounded queue or per-call allocation that the limiter would protect:
+  each call is one HTTP request plus a JSON decode, and the semaphore prevents connection-pool
+  exhaustion.
 
-**Existing controls.**
+**Controls.**
 
 - The STDIO transport limits access to the one local client that spawned the process. The MCP
   security guidance itself recommends STDIO for local servers precisely to "limit access to just
   the MCP client".
+- The invocation-rate limiter bounds the sustained `tools/call` rate (this document).
 - The concurrency semaphore bounds the load a fan-out can place on the appliance.
 - The appliance rate-limits on its own side and returns errors the server surfaces as sanitized
   `ToolError`s.
@@ -80,83 +81,82 @@ configuration.
 
 ## Decision
 
-**This server does not implement a server-side invocation-rate limiter.** The MCP `2026-07-28`
-Tools specification says servers **MUST** "Rate limit tool invocations"; this server does not, and
-this document records that as an **accepted residual risk** for the local-STDIO,
-one-client-per-process deployment model. It does **not** discharge the MUST, and it is not a claim
-that the requirement is met.
+**The server enforces a process-local invocation-rate limit at the MCP tool-dispatch boundary.** It
+is a `ServerMiddleware` (`src/sophos_firewall_mcp/ratelimit.py`) registered in `create_server`, so it
+sees every `tools/call` request before any handler runs.
 
-The risk is accepted because the following controls bound the exposure in this deployment:
+**Algorithm: token bucket.** `SOPHOS_INVOCATION_RATE_PER_MINUTE` tokens are added per minute, up to
+`SOPHOS_INVOCATION_BURST`; each `tools/call` consumes one token. The bucket uses `time.monotonic`, so
+a wall-clock step cannot grant or withhold tokens unexpectedly.
 
-1. The STDIO transport restricts callers to the one local MCP client that owns the process.
-2. The concurrency semaphore bounds the simultaneous load on the appliance.
-3. The appliance enforces its own rate limits, and the server surfaces those errors.
-4. The client/host owns the model's call rate (timeouts, loop detection, user confirmation).
+**Defaults: 60 invocations per minute, burst 10.** A firewall management API is not a
+high-throughput data plane: a human-driven session rarely exceeds a few calls per minute, and an
+agent that needs more can still make one call per second. Ten back-to-back invocations cover a short
+fan-out (a model listing several collections, or a composite plus a few follow-up reads) without
+letting a runaway loop empty a large bucket at once. Both values are configurable and validated;
+zero, negative or absurd values fail startup, and there is no unlimited/off default. A blank value
+(`SOPHOS_INVOCATION_RATE_PER_MINUTE=` or `SOPHOS_INVOCATION_BURST=`) is treated as unset and falls
+back to the default, consistent with `SOPHOS_TIMEOUT` and `SOPHOS_MAX_CONCURRENCY`: that is
+fail-safe — the limiter stays on — but an operator who writes a blank value gets the default rather
+than an error.
 
-Points 1–3 are access-control, concurrency and downstream controls, not server-side invocation-rate
-limiting. Point 4 delegates to the client, and the relevant client-side guidance is a **SHOULD**
-("Implement timeouts for tool calls", "Prompt for user confirmation on sensitive operations"), not a
-MUST. None of the four is the server rate-limiting invocations, so the MUST remains unmet by design.
+**One invocation per `tools/call`.** A composite tool (`audit_firewall_rules`,
+`explain_connectivity`, `find_object_usage`) consumes one token, not one per internal adapter read,
+because the limiter sits above the handler rather than around the HTTP client. This is the reason
+the limiter is not in `SophosRestClient._send`: that layer would count each internal read of a
+composite as a separate invocation and throttle the tools it is meant to protect.
 
-The semaphore is a concurrency bound and is never described as a rate limiter. This is a deliberate,
-recorded judgment, not an oversight; the conditions under which the acceptance no longer holds are
-listed below.
+**MRTR accounting: every incoming `tools/call` consumes one token, including a resume.** A resume
+that carries `requestState` is a new request and is charged as one. The alternative — charging a
+resume to its originating call — would need cross-request state and would let a client mint repeated
+resumes without paying for them. Charging every request is conservative and cannot be bypassed by
+repeated resumes; the replay guard independently makes a sealed state single-use, so a replayed
+resume is refused even when it has a token.
 
-## Why not at the HTTP client layer
+**Ordering: outermost, before the MRTR replay guard.** A throttled call is rejected before the
+replay guard reserves the single-use confirmation, so a throttled MRTR resume does not consume the
+confirmation state; the client can retry the resume after the limit resets. The limiter also runs
+before the SDK's `RequestStateBoundary`, so it counts the request even when the boundary later
+rejects a malformed state — a request is a request.
 
-If a limiter were required, the HTTP client layer would be the wrong place for it. A tool invocation
-is not an HTTP request: the composite tools (`audit_firewall_rules`, `explain_connectivity`,
-`find_object_usage`) perform many bounded internal reads — up to 80 pages per tool call — through
-the same `get`/`get_page` primitives as a single-resource tool. A limiter wrapped around `_send`
-would count each of those reads as a separate invocation, so a legitimate composite would consume
-dozens of tokens and be delayed or rejected, while a single-resource tool would consume one. That
-would break the tools the limit is supposed to protect.
+**Fail fast, no waiter queue.** When the bucket is empty the call returns an `isError` tool result
+that names the configured rate, burst and retry delay. Nothing waits for a token, so a throttled
+call cannot block shutdown, grow memory, or be cancelled while holding a slot. A cancelled call has
+already consumed its token, which is the safe direction.
 
-A correct tool-invocation limiter therefore belongs at the tool dispatch layer, where one
-`tools/call` is one invocation regardless of how many adapter reads it performs. That layer is
-outside this change's scope (it is owned by the concurrent protocol work), and the deployment model
-does not require it today.
+**Sanitized, actionable error.** The result is a normal MCP tool execution error (`isError: true`
+with `resultType: "complete"`), not a JSON-RPC protocol error, because the model can self-correct by
+waiting and retrying. The message exposes only the configured policy and the retry delay; it never
+includes arguments, credentials, appliance data or internal bucket state.
+
+**Observability.** A throttled call logs one `WARNING` naming the tool and the retry delay. The tool
+name is a public catalog identifier; arguments, credentials and appliance data are never logged.
 
 ## Residual risk
 
-- **A runaway model loop can issue many sequential calls.** The server will not stop it; the
-  semaphore only bounds overlap. The appliance may throttle or return errors, and the client/host
-  may time out. This is the accepted residual risk, and it is the risk the MUST is meant to reduce.
-- **The client-side obligation is a SHOULD, not a MUST.** The MCP client guidance says clients
-  *SHOULD* implement timeouts for tool calls and *SHOULD* prompt for confirmation on sensitive
-  operations. A client that does neither leaves the loop unbounded; the server does not compensate.
-- **Practical ceiling of a runaway loop.** The semaphore allows `C` concurrent requests, so with an
-  appliance round trip of `L` seconds the sustained ceiling is roughly `C / L` requests per second
-  (ignoring client and server overhead). With the default `C = 4` and a 50–200 ms round trip that is
-  about **20–80 requests/second**; a purely sequential loop is about `1 / L`, or **5–20/second**.
-  At the `SOPHOS_MAX_CONCURRENCY` ceiling of 64 the same arithmetic gives roughly **320–1280
-  requests/second**. These are order-of-magnitude estimates, not measurements; they show that the
-  semaphore does not make a sustained loop cheap.
-- **The appliance's own rate limiting is the backstop.** If it is disabled or generous, a sustained
-  sequential loop can load the management plane for longer than the semaphore alone would suggest.
-- **A future HTTP transport or shared multi-client process invalidates this decision.** The STDIO
-  single-client assumption is load-bearing; without it, the transport no longer restricts callers
-  and a tool-invocation limiter becomes necessary.
-
-## Conditions that would change the decision
-
-Add a process-local, tool-invocation limiter (token bucket or sliding window, cancellation-safe,
-configurable, with a sanitized actionable error) at the tool dispatch layer if any of these becomes
-true:
-
-- the server gains an HTTP/SSE transport or is shared by more than one client per process;
-- the deployment model stops treating the MCP client as trusted to bound its own model;
-- the appliance's rate limiting is removed or shown to be insufficient for a sustained sequential
-  loop.
+- **The bucket is process-local.** A client that restarts the server (or a deployment that runs
+  several processes) gets a fresh bucket per process. This is consistent with the STDIO model, where
+  one client owns one process, and with the SDK's process-local request-state key.
+- **The limiter is not an authorization boundary.** It bounds the rate, not what a caller may do;
+  the Sophos administrator profile behind the API key remains the authorization boundary.
+- **A sustained loop is slowed, not stopped.** At the default rate a runaway loop can still make one
+  call per second after the burst; the appliance's own rate limiting and the client/host's timeouts
+  remain the backstop for a long-running loop.
+- **A future HTTP transport or shared multi-client process needs a shared limiter.** The current
+  bucket is per process; a multi-process deployment would need a shared store to enforce one global
+  rate.
 
 ## What is tested
 
-- `tests/test_client.py::test_sequential_http_requests_are_not_rate_limited` guards the HTTP client
-  layer: many sequential requests all succeed, so there is no hidden limiter there.
-- `tests/test_mcp_e2e.py::test_tool_calls_are_not_rate_limited_through_the_mcp_client` guards the
-  tool-invocation layer the policy is about: 50 `tools/call` requests through the real SDK `Client`
-  all succeed.
-- `tests/test_client.py::test_concurrent_requests_are_bounded_by_the_semaphore` (existing) proves
-  the concurrency bound is real and configurable.
-- `tests/test_config.py` asserts the `DEFAULT_MAX_CONCURRENCY` comment describes concurrency, not a
-  rate limiter, and that this decision record and the README section exist and stay consistent.
+- `tests/test_ratelimit.py` drives the token bucket with a fake monotonic clock and proves the burst,
+  refill, partial-refill and capacity boundaries, the rejection wait, concurrent calls consuming
+  exactly the burst, cancellation leaving the bucket consistent, fail-fast rejection without a
+  waiter queue, the MRTR resume consuming a token, and the limiter being the outermost middleware.
+- `tests/test_mcp_e2e.py::test_a_rate_limited_tool_call_returns_an_iserror_result` proves the
+  sanitized `isError` result over the real SDK `Client` wire path.
+- `tests/test_mcp_e2e.py::test_tool_calls_within_the_configured_rate_are_accepted` proves the limiter
+  does not throttle a caller inside the configured policy.
+- `tests/test_config.py` proves the defaults are finite and non-zero, the settings are read from the
+  environment, and zero, negative, absurd and non-integer values fail startup.
+- `tests/test_client.py::test_concurrent_requests_are_bounded_by_the_semaphore` (existing) proves the
+  concurrency bound is independent and still enforced.

@@ -15,11 +15,15 @@ from pydantic import ValidationError
 from sophos_firewall_mcp import config as config_module
 from sophos_firewall_mcp.config import (
     API_PATH_PREFIX,
+    DEFAULT_INVOCATION_BURST,
+    DEFAULT_INVOCATION_RATE_PER_MINUTE,
     DEFAULT_MAX_CONCURRENCY,
     DEFAULT_PORT,
     DEFAULT_TIMEOUT,
     DOMAIN_DEPENDENCIES,
     MAX_CONCURRENCY_LIMIT,
+    MAX_INVOCATION_BURST,
+    MAX_INVOCATION_RATE_PER_MINUTE,
     TOOL_DOMAINS,
     ConfigurationError,
     Settings,
@@ -123,6 +127,8 @@ def test_settings_expose_only_the_documented_fields() -> None:
         "timeout",
         "read_only_mode",
         "max_concurrency",
+        "invocation_rate_per_minute",
+        "invocation_burst",
         "tool_domains",
     }
 
@@ -450,6 +456,85 @@ def test_max_concurrency_is_validated_on_direct_construction() -> None:
         Settings(host="fw.example.com", api_key=KEY, max_concurrency=0)
 
 
+# -- Invocation-rate bound ---------------------------------------------------
+
+
+def test_invocation_rate_defaults_are_finite_and_non_zero() -> None:
+    """The MCP rate-limit MUST is enforced by default; there is no unlimited/off default."""
+    settings = Settings.from_env(env())
+
+    assert settings.invocation_rate_per_minute == DEFAULT_INVOCATION_RATE_PER_MINUTE == 60
+    assert settings.invocation_burst == DEFAULT_INVOCATION_BURST == 10
+
+
+@pytest.mark.parametrize("raw", ["1", "60", "120", "6000"])
+def test_invocation_rate_is_read_from_env(raw: str) -> None:
+    assert Settings.from_env(
+        env(SOPHOS_INVOCATION_RATE_PER_MINUTE=raw)
+    ).invocation_rate_per_minute == int(raw)
+
+
+@pytest.mark.parametrize("raw", ["1", "10", "100", "1000"])
+def test_invocation_burst_is_read_from_env(raw: str) -> None:
+    assert Settings.from_env(env(SOPHOS_INVOCATION_BURST=raw)).invocation_burst == int(raw)
+
+
+def test_invocation_settings_are_stripped_like_every_other_optional_value() -> None:
+    settings = Settings.from_env(
+        env(SOPHOS_INVOCATION_RATE_PER_MINUTE=" 120 ", SOPHOS_INVOCATION_BURST=" 20 ")
+    )
+
+    assert settings.invocation_rate_per_minute == 120
+    assert settings.invocation_burst == 20
+
+
+def test_blank_invocation_settings_use_defaults() -> None:
+    settings = Settings.from_env(
+        env(SOPHOS_INVOCATION_RATE_PER_MINUTE="", SOPHOS_INVOCATION_BURST="")
+    )
+
+    assert settings.invocation_rate_per_minute == DEFAULT_INVOCATION_RATE_PER_MINUTE
+    assert settings.invocation_burst == DEFAULT_INVOCATION_BURST
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "6001", "100000"])
+def test_out_of_range_invocation_rate_is_rejected(raw: str) -> None:
+    """Zero, negative and absurd rates fail startup instead of disabling the control."""
+    with pytest.raises(ConfigurationError) as info:
+        Settings.from_env(env(SOPHOS_INVOCATION_RATE_PER_MINUTE=raw))
+
+    message = str(info.value)
+    assert "invocation_rate_per_minute" in message
+    assert str(MAX_INVOCATION_RATE_PER_MINUTE) in message
+    assert KEY not in message
+
+
+@pytest.mark.parametrize("raw", ["0", "-1", "1001", "100000"])
+def test_out_of_range_invocation_burst_is_rejected(raw: str) -> None:
+    with pytest.raises(ConfigurationError) as info:
+        Settings.from_env(env(SOPHOS_INVOCATION_BURST=raw))
+
+    message = str(info.value)
+    assert "invocation_burst" in message
+    assert str(MAX_INVOCATION_BURST) in message
+    assert KEY not in message
+
+
+@pytest.mark.parametrize("raw", ["abc", "2.5", "sixty"])
+def test_non_integer_invocation_settings_are_rejected(raw: str) -> None:
+    with pytest.raises(ConfigurationError):
+        Settings.from_env(env(SOPHOS_INVOCATION_RATE_PER_MINUTE=raw))
+    with pytest.raises(ConfigurationError):
+        Settings.from_env(env(SOPHOS_INVOCATION_BURST=raw))
+
+
+def test_invocation_settings_are_validated_on_direct_construction() -> None:
+    with pytest.raises(ValidationError):
+        Settings(host="fw.example.com", api_key=KEY, invocation_rate_per_minute=0)
+    with pytest.raises(ValidationError):
+        Settings(host="fw.example.com", api_key=KEY, invocation_burst=0)
+
+
 # -- Secret handling ---------------------------------------------------------
 
 
@@ -664,10 +749,12 @@ def test_the_rate_policy_decision_record_cites_the_requirement() -> None:
 
     assert "Rate limit tool invocations" in document
     assert "2026-07-28/server/tools#security-considerations" in document
-    assert "does not implement a server-side invocation-rate limiter" in document
-    assert "accepted residual risk" in document
-    assert "discharge the MUST" in document
+    assert "**Status:** enforced" in document
+    assert "token bucket" in document.lower()
     assert "Residual risk" in document
+    # The accepted-risk statement from issue #63 must be gone now that the control exists.
+    assert "does not implement a server-side invocation-rate limiter" not in document
+    assert "accepted residual risk" not in document
 
 
 def test_readme_documents_the_invocation_rate_policy() -> None:
