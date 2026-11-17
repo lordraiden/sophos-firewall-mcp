@@ -94,7 +94,11 @@ high-throughput data plane: a human-driven session rarely exceeds a few calls pe
 agent that needs more can still make one call per second. Ten back-to-back invocations cover a short
 fan-out (a model listing several collections, or a composite plus a few follow-up reads) without
 letting a runaway loop empty a large bucket at once. Both values are configurable and validated;
-zero, negative or absurd values fail startup, and there is no unlimited/off default.
+zero, negative or absurd values fail startup, and there is no unlimited/off default. A blank value
+(`SOPHOS_INVOCATION_RATE_PER_MINUTE=` or `SOPHOS_INVOCATION_BURST=`) is treated as unset and falls
+back to the default, consistent with `SOPHOS_TIMEOUT` and `SOPHOS_MAX_CONCURRENCY`: that is
+fail-safe — the limiter stays on — but an operator who writes a blank value gets the default rather
+than an error.
 
 **One invocation per `tools/call`.** A composite tool (`audit_firewall_rules`,
 `explain_connectivity`, `find_object_usage`) consumes one token, not one per internal adapter read,

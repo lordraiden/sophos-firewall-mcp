@@ -12,12 +12,19 @@ import asyncio
 import time
 from typing import Any
 
+import httpx
 import pytest
+import respx
 
+from mcp import Client, types
 from mcp.server.context import ServerRequestContext
 
 from sophos_firewall_mcp.config import Settings
-from sophos_firewall_mcp.mrtr import mrtr_replay_guard
+from sophos_firewall_mcp.mrtr import (
+    consumed_state_count,
+    mrtr_replay_guard,
+    reset_consumed_states,
+)
 from sophos_firewall_mcp.ratelimit import (
     DEFAULT_INVOCATION_BURST,
     DEFAULT_INVOCATION_RATE_PER_MINUTE,
@@ -25,6 +32,10 @@ from sophos_firewall_mcp.ratelimit import (
     TokenBucket,
 )
 from sophos_firewall_mcp.server import create_server
+
+HOST = "fw.example.com"
+KEY = "sfos_test_key_0123456789abcdef"
+BASE = f"https://{HOST}:4444/api/firewall-config/v1"
 
 
 class FakeClock:
@@ -209,3 +220,70 @@ def test_the_limiter_is_the_outermost_middleware() -> None:
 def test_the_defaults_are_finite_and_non_zero() -> None:
     assert DEFAULT_INVOCATION_RATE_PER_MINUTE == 60
     assert DEFAULT_INVOCATION_BURST == 10
+
+
+async def test_a_throttled_mrtr_resume_does_not_consume_the_confirmation() -> None:
+    """The ordering rationale, behaviourally: a throttled resume leaves the state unconsumed.
+
+    The limiter is outermost, so a throttled resume is rejected before ``mrtr_replay_guard``
+    reserves the single-use confirmation. After the bucket refills, the same resume succeeds
+    and consumes the confirmation exactly once.
+    """
+    reset_consumed_states()
+    clock = FakeClock()
+    server = create_server(
+        Settings(
+            host=HOST,
+            api_key=KEY,
+            invocation_rate_per_minute=60,
+            invocation_burst=1,
+        )
+    )
+    # Replace the server's limiter with one on the fake clock so the refill is deterministic.
+    server.middleware[0] = InvocationRateLimiter(rate_per_minute=60, burst=1, clock=clock)
+
+    name = "firewall_rule_delete"
+    args = {"ip_family": "ipv4", "id_or_name": "allow-lan-to-wan"}
+
+    async def accept(context: Any, params: types.ElicitRequestParams) -> types.ElicitResult:
+        return types.ElicitResult(action="accept", content={"confirm": True})
+
+    try:
+        with respx.mock(assert_all_called=False) as router:
+            router.delete(f"{BASE}/firewall/rules/ipv4/allow-lan-to-wan").mock(
+                return_value=httpx.Response(200, json={"deleted": True})
+            )
+            async with Client(server, elicitation_callback=accept) as client:
+                first = await client.session.call_tool(name, args, allow_input_required=True)
+                assert isinstance(first, types.InputRequiredResult)
+                key = next(iter(first.input_requests or {}))
+                answer = types.ElicitResult(action="accept", content={"confirm": True})
+
+                # The initial round consumed the only token, so the resume is throttled.
+                throttled = await client.session.call_tool(
+                    name,
+                    args,
+                    allow_input_required=True,
+                    input_responses={key: answer},
+                    request_state=first.request_state,
+                )
+                assert isinstance(throttled, types.CallToolResult)
+                assert throttled.is_error is True
+                assert "Rate limit exceeded" in throttled.content[0].text
+                # The replay guard never saw the throttled resume: the confirmation is intact.
+                assert consumed_state_count() == 0
+
+                # After the refill the same resume succeeds and consumes the confirmation.
+                clock.advance(1.0)
+                resumed = await client.session.call_tool(
+                    name,
+                    args,
+                    allow_input_required=True,
+                    input_responses={key: answer},
+                    request_state=first.request_state,
+                )
+                assert isinstance(resumed, types.CallToolResult)
+                assert resumed.is_error is False
+                assert consumed_state_count() == 1
+    finally:
+        reset_consumed_states()
