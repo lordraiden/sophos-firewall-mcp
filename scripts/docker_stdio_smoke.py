@@ -38,8 +38,17 @@ import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-#: The protocol revision the server advertises; the driver validates the negotiated value.
-PROTOCOL_VERSION = "2026-07-28"
+#: The version the driver offers in ``initialize``. The server negotiates down to the latest
+#: handshake revision it supports (``2025-11-25`` with mcp 2.3.0); the driver validates what
+#: comes back against :data:`SUPPORTED_HANDSHAKE_VERSIONS`.
+REQUESTED_PROTOCOL_VERSION = "2026-07-28"
+
+#: Handshake revisions the server may negotiate through ``initialize``.
+#:
+#: ``2026-07-28`` is a per-request envelope, not a handshake revision, so it is never returned
+#: here. The list mirrors ``mcp.types.version.HANDSHAKE_PROTOCOL_VERSIONS`` (mcp 2.3.0) without
+#: importing the SDK: this script runs on the CI runner, which does not install the project.
+SUPPORTED_HANDSHAKE_VERSIONS = frozenset({"2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"})
 
 #: The default tool surface of a writable server (read-only mode publishes 74).
 DEFAULT_EXPECTED_TOOLS = 112
@@ -176,7 +185,7 @@ class StdioDriver:
                     "id": 1,
                     "method": "initialize",
                     "params": {
-                        "protocolVersion": PROTOCOL_VERSION,
+                        "protocolVersion": REQUESTED_PROTOCOL_VERSION,
                         "capabilities": {},
                         "clientInfo": {"name": "docker-stdio-smoke", "version": "1"},
                     },
@@ -263,6 +272,11 @@ class StdioDriver:
         version = result.get("protocolVersion")
         if not isinstance(version, str) or not version:
             raise SmokeFailure("initialize response has no protocolVersion")
+        if version not in SUPPORTED_HANDSHAKE_VERSIONS:
+            raise SmokeFailure(
+                f"initialize negotiated unsupported handshake revision {version!r}; "
+                f"expected one of {sorted(SUPPORTED_HANDSHAKE_VERSIONS)}"
+            )
         return version
 
     def _validate_tools(self, message: dict[str, Any]) -> list[dict[str, Any]]:
@@ -300,14 +314,26 @@ class StdioDriver:
             self._terminate_and_reap()
 
     def _terminate_and_reap(self) -> None:
+        """Terminate and reap the process without replacing the caller's diagnostic.
+
+        A reaping failure (the process ignores SIGTERM and even SIGKILL) must not mask the
+        protocol failure that triggered the cleanup, so both waits are guarded.
+        """
         if self._process.poll() is not None:
             return
-        self._process.terminate()
         try:
+            self._process.terminate()
             self._process.wait(timeout=self._reap_timeout)
-        except subprocess.TimeoutExpired:
+            return
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
             self._process.kill()
             self._process.wait(timeout=self._reap_timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            # The process did not die even after SIGKILL. The caller's SmokeFailure is the
+            # useful diagnostic; do not replace it with a reaping error.
+            pass
 
     def _stderr_text(self) -> str:
         self._stderr.join(timeout=_STDERR_JOIN_TIMEOUT)

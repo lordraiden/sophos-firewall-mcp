@@ -113,6 +113,7 @@ class FakeProcess:
         mode: str = "happy",
         stderr: str = "",
         tool_count: int = 112,
+        unkillable: bool = False,
     ) -> None:
         self.stdout = FakeStdout()
         self.stderr = FakeStderr(stderr)
@@ -123,6 +124,7 @@ class FakeProcess:
         self.timeline: list[str] = []
         self._mode = mode
         self._tool_count = tool_count
+        self._unkillable = unkillable
         self._initialize_responded = False
 
     def on_write(self, data: bytes) -> None:
@@ -158,6 +160,17 @@ class FakeProcess:
         if self._mode == "unexpected-id":
             self.stdout.feed(self._frame({"jsonrpc": "2.0", "id": 99, "result": {}}))
             return
+        if self._mode == "unsupported-version":
+            self.stdout.feed(
+                self._frame(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {"protocolVersion": "1999-01-01"},
+                    }
+                )
+            )
+            return
         if self._mode == "notification-first":
             self.stdout.feed(
                 self._frame(
@@ -174,7 +187,10 @@ class FakeProcess:
                     "jsonrpc": "2.0",
                     "id": 1,
                     "result": {
-                        "protocolVersion": "2026-07-28",
+                        # The real server negotiates the latest handshake revision it
+                        # supports (2025-11-25 with mcp 2.3.0); 2026-07-28 is a per-request
+                        # envelope, never an initialize response value.
+                        "protocolVersion": "2025-11-25",
                         "capabilities": {"tools": {}},
                         "serverInfo": {"name": "sophos-firewall-mcp", "version": "0.0.0"},
                     },
@@ -204,7 +220,7 @@ class FakeProcess:
         self.stdout.close()
 
     def wait(self, timeout: float | None = None) -> int:
-        if self.returncode is None:
+        if self._unkillable or self.returncode is None:
             raise subprocess.TimeoutExpired(cmd="fake", timeout=timeout or 0)
         return self.returncode
 
@@ -223,7 +239,7 @@ def test_happy_path_waits_for_each_response_before_sending_the_next_message() ->
 
     result = make_driver(process).run()
 
-    assert result.protocol_version == "2026-07-28"
+    assert result.protocol_version == "2025-11-25"
     assert len(result.tools) == 112
     assert process.stdin.closed is True
     assert "ordering-violation" not in process.timeline
@@ -238,7 +254,7 @@ def test_a_notification_before_the_response_is_ignored() -> None:
 
     result = make_driver(process).run()
 
-    assert result.protocol_version == "2026-07-28"
+    assert result.protocol_version == "2025-11-25"
     assert len(result.tools) == 112
 
 
@@ -280,6 +296,20 @@ def test_a_stalled_process_is_terminated_and_reaped() -> None:
     assert "terminate" in process.timeline
 
 
+def test_an_unkillable_process_does_not_replace_the_protocol_diagnostic() -> None:
+    """A reaping timeout must not mask the protocol failure that triggered the cleanup."""
+    process = FakeProcess(mode="stall", unkillable=True)
+
+    with pytest.raises(driver.SmokeFailure) as excinfo:
+        make_driver(process).run()
+
+    message = str(excinfo.value)
+    assert "timed out" in message
+    assert "request id 1" in message
+    assert process.terminated is True
+    assert process.killed is True
+
+
 def test_a_process_that_dies_before_responding_fails_with_its_stderr() -> None:
     process = FakeProcess(mode="die", stderr="container exited 1")
 
@@ -298,6 +328,17 @@ def test_an_unexpected_response_id_fails() -> None:
         make_driver(process).run()
 
     assert "unexpected response id 99" in str(excinfo.value)
+
+
+def test_an_unsupported_negotiated_version_fails() -> None:
+    process = FakeProcess(mode="unsupported-version")
+
+    with pytest.raises(driver.SmokeFailure) as excinfo:
+        make_driver(process).run()
+
+    message = str(excinfo.value)
+    assert "unsupported handshake revision" in message
+    assert "1999-01-01" in message
 
 
 def test_the_wrong_tool_count_fails() -> None:
