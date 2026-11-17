@@ -29,9 +29,9 @@ Two layers are covered:
 
 from __future__ import annotations
 
-from typing import Any
-
+import asyncio
 import time
+from typing import Any
 
 import httpx
 import pytest
@@ -709,6 +709,158 @@ async def test_a_legitimate_state_whose_handler_failed_stays_consumed(router: An
             )
 
     assert rejected.value.code == types.INVALID_PARAMS
+    assert route.call_count == 1
+
+
+# -- Cancellation and concurrency ------------------------------------------------------
+
+
+class _GuardContext:
+    """The two attributes the replay guard reads."""
+
+    def __init__(self, state: str) -> None:
+        self.method = "tools/call"
+        self.params = {"requestState": state}
+
+
+async def test_the_guard_keeps_the_reservation_on_cancellation() -> None:
+    """Cancellation is not a boundary rejection: the confirmation stays used."""
+    reset_consumed_states()
+    ctx = _GuardContext("v1.cancelled-state")
+
+    async def call_next(_: Any) -> Any:
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await mrtr.mrtr_replay_guard(ctx, call_next)
+
+    assert consumed_state_count() == 1
+
+
+async def test_the_guard_releases_the_reservation_on_a_boundary_rejection() -> None:
+    """A state the boundary rejects was never accepted, so it must not fill the cache."""
+    reset_consumed_states()
+    ctx = _GuardContext("v1.rejected-state")
+
+    async def call_next(_: Any) -> Any:
+        raise MCPError(code=types.INVALID_PARAMS, message="Invalid or expired requestState")
+
+    with pytest.raises(MCPError):
+        await mrtr.mrtr_replay_guard(ctx, call_next)
+
+    assert consumed_state_count() == 0
+
+
+@pytest.mark.parametrize("name", sorted(GATED))
+async def test_cancellation_after_the_delete_reached_the_appliance_keeps_the_state(
+    router: Any, name: str
+) -> None:
+    """An ambiguous write must not become repeatable after cancellation.
+
+    The mocked DELETE records that it reached the transport, then blocks. The tool task is
+    cancelled before the response; the same sealed state must then be refused, with only
+    the one DELETE ever started.
+    """
+    args = GATED[name]
+    reached = asyncio.Event()
+    release = asyncio.Event()
+    started: list[httpx.Request] = []
+
+    async def _blocking_delete(request: httpx.Request) -> httpx.Response:
+        started.append(request)
+        reached.set()
+        await release.wait()
+        return httpx.Response(200, json={"deleted": True})
+
+    if name == "network_interface_delete_vlan":
+        router.get(INTERFACE_ITEM).mock(
+            return_value=httpx.Response(200, json={"name": "VLAN 20", "type": "vlan"})
+        )
+    router.delete(DELETE_PATHS[name]).mock(side_effect=_blocking_delete)
+
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, args, allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+        key = next(iter(first.input_requests or {}))
+        answer = types.ElicitResult(action="accept", content={"confirm": True})
+
+        task = asyncio.create_task(
+            client.session.call_tool(
+                name,
+                args,
+                allow_input_required=True,
+                input_responses={key: answer},
+                request_state=first.request_state,
+            )
+        )
+        await asyncio.wait_for(reached.wait(), timeout=5)
+        assert len(started) == 1
+
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(task, timeout=5)
+
+        # The confirmation was used: the reservation survives the cancellation.
+        assert consumed_state_count() == 1
+
+        release.set()
+        await asyncio.sleep(0)
+
+        with pytest.raises(MCPError) as rejected:
+            await asyncio.wait_for(
+                client.session.call_tool(
+                    name,
+                    args,
+                    allow_input_required=True,
+                    input_responses={key: answer},
+                    request_state=first.request_state,
+                ),
+                timeout=5,
+            )
+
+    assert rejected.value.code == types.INVALID_PARAMS
+    assert "already used" in str(rejected.value)
+    assert len(started) == 1
+
+
+async def test_concurrent_reuse_of_one_state_permits_at_most_one_execution(
+    router: Any,
+) -> None:
+    """Two concurrent resumes with the same state: one executes, one is refused."""
+    name = "firewall_rule_delete"
+    args = GATED[name]
+    route = _mock_delete(router, name)
+
+    async with Client(
+        make_server(), elicitation_callback=_elicitation_callback("accept", confirm=True)
+    ) as client:
+        first = await client.session.call_tool(name, args, allow_input_required=True)
+        assert isinstance(first, types.InputRequiredResult)
+        key = next(iter(first.input_requests or {}))
+        answer = types.ElicitResult(action="accept", content={"confirm": True})
+
+        async def resume() -> Any:
+            return await client.session.call_tool(
+                name,
+                args,
+                allow_input_required=True,
+                input_responses={key: answer},
+                request_state=first.request_state,
+            )
+
+        results = await asyncio.gather(resume(), resume(), return_exceptions=True)
+
+    successes = [
+        result
+        for result in results
+        if isinstance(result, types.CallToolResult) and not result.is_error
+    ]
+    rejections = [result for result in results if isinstance(result, MCPError)]
+    assert len(successes) == 1, results
+    assert len(rejections) == 1, results
+    assert rejections[0].code == types.INVALID_PARAMS
     assert route.call_count == 1
 
 
