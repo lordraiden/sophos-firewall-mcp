@@ -1,5 +1,12 @@
 # Live evidence — phase 3 read-only matrix (15 November 2026)
 
+> **Correction (17 November 2026).** This record says the lab key belongs to a read-only
+> administrator. That was an inference from the profile's display name, and it is **wrong**: on
+> 16 November 2026 the key created and deleted a disposable MAC object. See
+> [`api-write-capability-2026-11-16.md`](api-write-capability-2026-11-16.md). The matrix result is
+> unaffected — the run sent only `GET` requests and forced `SOPHOS_READ_ONLY_MODE=true` — but the
+> permission claim must not be relied on.
+
 **Scope:** read-only verification of the complete 152-tool MCP surface against the lab
 appliance, for issue [#32](https://github.com/lordraiden/sophos-firewall-mcp/issues/32)
 (T34). **Only `GET` requests were sent.** No `POST`, `PATCH`, `DELETE`, bulk delete, move,
